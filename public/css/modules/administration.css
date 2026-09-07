@@ -1,0 +1,44 @@
+/* public/css/modules/administration.css */
+
+/* Extracted inline styles */
+.mod-administration-style-1 {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.mod-administration-style-2 {
+  margin: 0;
+}
+
+.mod-administration-style-3 {
+  padding: 6px 14px;
+  font-size: 0.85rem;
+  font-weight: 600;
+}
+
+.mod-administration-style-4 {
+  margin-right: 6px;
+}
+
+.mod-administration-style-5 {
+  margin-top: 24px;
+}
+
+.mod-administration-style-6 {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+  gap: 1rem;
+}
+
+.mod-administration-style-7 {
+  background-color: var(--primary-color);
+  border: none;
+  font-weight: 600;
+}

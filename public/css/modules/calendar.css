@@ -1,0 +1,127 @@
+/* public/css/modules/calendar.css - Optimized Calendar Workspace Layout for 100% Zoom */
+
+/* Workspace Header & Action Bar */
+.workspace-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    padding: 10px 16px;
+    margin-bottom: 0.85rem;
+    flex-wrap: nowrap;
+}
+
+.month-nav {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-shrink: 0;
+}
+
+.nav-arrow-btn {
+    width: 28px;
+    height: 28px;
+    padding: 0;
+    font-size: 0.8rem;
+}
+
+.month-label {
+    font-size: 1.1rem;
+    min-width: 110px;
+    margin: 0;
+    text-align: center;
+}
+
+.btn-today {
+    height: 28px;
+    padding: 0 10px !important;
+    font-size: 0.8rem !important;
+}
+
+.header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: nowrap;
+    flex-shrink: 0;
+}
+
+.view-toggle {
+    padding: 2px;
+    gap: 2px;
+}
+
+.toggle-btn {
+    padding: 4px 10px;
+    font-size: 0.8rem;
+}
+
+.mod-calendar-style-1 {
+    height: 30px !important;
+    gap: 5px !important;
+    font-size: 0.8rem !important;
+    padding: 0 12px !important;
+}
+
+.mod-calendar-style-2 {
+    height: 30px !important;
+    width: 30px !important;
+    font-size: 0.8rem !important;
+}
+
+/* Calendar Card & Grid Container */
+.calendar-grid-card {
+    margin-bottom: 0;
+}
+
+.calendar-header-bar {
+    padding: 8px 16px;
+}
+
+.calendar-header-title {
+    font-size: 0.8rem;
+}
+
+.calendar-legend {
+    gap: 12px;
+}
+
+.legend-item {
+    font-size: 0.72rem;
+}
+
+.calendar-grid-container {
+    padding: 6px;
+}
+
+.calendar-weekdays {
+    padding: 4px 0;
+    font-size: 0.7rem;
+    font-weight: 700;
+}
+
+.calendar-days {
+    gap: 3px;
+    padding-top: 3px;
+}
+
+.calendar-day-cell {
+    min-height: 68px;
+    padding: 3px 5px;
+    border-radius: 4px;
+}
+
+.day-number {
+    font-size: 0.78rem;
+    margin-bottom: 2px;
+}
+
+.day-appointments {
+    max-height: 46px;
+    gap: 2px;
+}
+
+.appt-badge {
+    font-size: 0.68rem;
+    padding: 1px 4px;
+}

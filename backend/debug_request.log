@@ -1,0 +1,261 @@
+{
+    "METHOD": "POST",
+    "URI": "\/pf_ehr\/public\/api\/login",
+    "HTTP_COOKIE": "NONE",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/api\/me",
+    "HTTP_COOKIE": "PHPSESSID=6m3v2gop8lor8u4a79uem8o3q8",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "POST",
+    "URI": "\/pf_ehr\/public\/api\/user",
+    "HTTP_COOKIE": "NONE",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/api\/users",
+    "HTTP_COOKIE": "PHPSESSID=vtunbpg217f2fkg4aio6l4321t",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/api\/me",
+    "HTTP_COOKIE": "PHPSESSID=vtunbpg217f2fkg4aio6l4321t",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/api\/intake\/view?token=f988c1f45da8ce1a65943100e67e03128e837f93ea13766af0a1fe730678007d",
+    "HTTP_COOKIE": "PHPSESSID=6vnb0sjqvsatb5ocmoqlp524l9",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/api\/intake\/view?token=f988c1f45da8ce1a65943100e67e03128e837f93ea13766af0a1fe730678007d",
+    "HTTP_COOKIE": "PHPSESSID=6vnb0sjqvsatb5ocmoqlp524l9",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/api\/intake\/view?token=f988c1f45da8ce1a65943100e67e03128e837f93ea13766af0a1fe730678007d",
+    "HTTP_COOKIE": "PHPSESSID=6vnb0sjqvsatb5ocmoqlp524l9",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "POST",
+    "URI": "\/pf_ehr\/public\/api\/login",
+    "HTTP_COOKIE": "NONE",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "POST",
+    "URI": "\/pf_ehr\/public\/api\/user",
+    "HTTP_COOKIE": "NONE",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "POST",
+    "URI": "\/pf_ehr\/public\/api\/login",
+    "HTTP_COOKIE": "NONE",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "POST",
+    "URI": "\/pf_ehr\/public\/api\/user",
+    "HTTP_COOKIE": "NONE",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/",
+    "HTTP_COOKIE": "NONE",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/",
+    "HTTP_COOKIE": "NONE",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "POST",
+    "URI": "\/pf_ehr\/public\/api\/login",
+    "HTTP_COOKIE": "NONE",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "POST",
+    "URI": "\/pf_ehr\/public\/api\/user",
+    "HTTP_COOKIE": "PHPSESSID=n7jveiav4ujsoe9g6edft8dkrb",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/",
+    "HTTP_COOKIE": "PHPSESSID=umf2c54dlg7uujekg6i1gve84l",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/api\/appointments",
+    "HTTP_COOKIE": "PHPSESSID=umf2c54dlg7uujekg6i1gve84l",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/api\/me",
+    "HTTP_COOKIE": "PHPSESSID=umf2c54dlg7uujekg6i1gve84l",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/api\/me",
+    "HTTP_COOKIE": "PHPSESSID=umf2c54dlg7uujekg6i1gve84l",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/api\/me",
+    "HTTP_COOKIE": "PHPSESSID=umf2c54dlg7uujekg6i1gve84l",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/api\/settings",
+    "HTTP_COOKIE": "PHPSESSID=umf2c54dlg7uujekg6i1gve84l",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "POST",
+    "URI": "\/pf_ehr\/public\/api\/login",
+    "HTTP_COOKIE": "NONE",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/api\/me",
+    "HTTP_COOKIE": "PHPSESSID=f2uj6f9ata33oq0k5pubn5rqdd",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "POST",
+    "URI": "\/pf_ehr\/public\/api\/login",
+    "HTTP_COOKIE": "NONE",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/",
+    "HTTP_COOKIE": "PHPSESSID=7c1qik1ruf752ofa3f7c5q3cv1",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/",
+    "HTTP_COOKIE": "PHPSESSID=7c1qik1ruf752ofa3f7c5q3cv1",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/",
+    "HTTP_COOKIE": "PHPSESSID=7c1qik1ruf752ofa3f7c5q3cv1",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}
+{
+    "METHOD": "GET",
+    "URI": "\/pf_ehr\/public\/",
+    "HTTP_COOKIE": "PHPSESSID=7c1qik1ruf752ofa3f7c5q3cv1",
+    "HTTP_HOST": "127.0.0.1",
+    "HTTP_X_CSRF_TOKEN": "NONE",
+    "SESSION_ID_BEFORE": "",
+    "SESSION_USER_ID": "NONE"
+}

@@ -1,0 +1,581 @@
+/* public/css/modules/patients.css - OpenEMR Tabbed Demographics Styling */
+
+.openemr-demographics-card {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 8px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+    overflow: hidden;
+}
+
+.openemr-demo-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 16px;
+    background: #f8fafc;
+    border-bottom: 1px solid #e2e8f0;
+}
+
+.openemr-demo-header h2 {
+    margin: 0;
+    font-size: 1.15rem;
+    font-weight: 700;
+    color: #0284c7;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.openemr-demo-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.openemr-tabs-nav {
+    display: flex;
+    background: #007bff; /* OpenEMR Blue Header Bar */
+    padding: 0;
+    margin: 0;
+    list-style: none;
+    overflow-x: auto;
+}
+
+.openemr-tab-item {
+    flex: 0 0 auto;
+}
+
+.openemr-tab-btn {
+    background: transparent;
+    border: none;
+    color: #ffffff;
+    padding: 10px 18px;
+    font-size: 0.9rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    border-bottom: 3px solid transparent;
+}
+
+.openemr-tab-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+}
+
+.openemr-tab-btn.active {
+    background: #ffffff;
+    color: #007bff;
+    border-bottom: 3px solid #0056b3;
+    font-weight: 700;
+}
+
+.openemr-tab-content-container {
+    padding: 20px;
+    background: #ffffff;
+    min-height: 240px;
+}
+
+.openemr-tab-pane {
+    display: none;
+}
+
+.openemr-tab-pane.active {
+    display: block;
+}
+
+.openemr-fields-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px 24px;
+}
+
+.openemr-field-group {
+    display: flex;
+    flex-direction: column;
+}
+
+.openemr-field-label {
+    font-size: 0.82rem;
+    font-weight: 700;
+    color: #475569;
+    margin-bottom: 4px;
+}
+
+.openemr-field-value {
+    font-size: 0.95rem;
+    color: #0f172a;
+    font-weight: 500;
+}
+
+.openemr-warning-icon {
+    color: #000000;
+    background: #facc15;
+    border-radius: 50%;
+    width: 18px;
+    height: 18px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 11px;
+    font-weight: 900;
+}
+
+/* Registration Stepper Wizard Styles */
+.reg-wizard-swal-popup {
+    padding: 20px 24px !important;
+    max-height: 90vh !important;
+}
+
+.reg-wizard-container {
+    padding: 6px;
+    max-height: 72vh;
+    overflow-y: auto;
+    padding-right: 12px;
+    scroll-behavior: smooth;
+}
+
+.reg-stepper-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 18px 24px;
+    margin-bottom: 24px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.reg-step-item {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    cursor: pointer;
+}
+
+.reg-step-circle {
+    width: 38px;
+    height: 38px;
+    border-radius: 50%;
+    background: #f1f5f9;
+    color: #64748b;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-weight: 700;
+    font-size: 15px;
+    border: 2px solid #cbd5e1;
+    transition: all 0.2s ease;
+}
+
+.reg-step-item.active .reg-step-circle {
+    background: #0284c7;
+    color: #ffffff;
+    border-color: #0284c7;
+    box-shadow: 0 0 0 4px rgba(2, 132, 199, 0.15);
+}
+
+.reg-step-item.completed .reg-step-circle {
+    background: #10b981;
+    color: #ffffff;
+    border-color: #10b981;
+}
+
+.reg-step-info {
+    display: flex;
+    flex-direction: column;
+}
+
+.reg-step-title {
+    font-size: 0.9rem;
+    font-weight: 700;
+    color: #1e293b;
+}
+
+.reg-step-sub {
+    font-size: 0.75rem;
+    color: #64748b;
+}
+
+.reg-step-divider {
+    flex: 1;
+    height: 2px;
+    background: #e2e8f0;
+    margin: 0 16px;
+}
+
+.reg-wizard-body {
+    display: block;
+}
+
+.reg-wizard-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 24px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+
+.reg-sidebar-summary {
+    background: #f0f9ff;
+    border: 1px solid #bae6fd;
+    border-radius: 12px;
+    padding: 20px;
+    height: fit-content;
+}
+
+.reg-form-grid-3col {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+}
+
+.reg-form-grid-2col {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: 16px;
+}
+
+.reg-section-title {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 6px;
+}
+
+.reg-section-desc {
+    font-size: 0.85rem;
+    color: #64748b;
+    margin-bottom: 20px;
+}
+
+/* OpenEMR Medical Record Dashboard Layout */
+.emr-dash-container {
+    background: #f8fafc;
+    border-radius: 8px;
+    padding: 16px;
+    text-align: left;
+    max-height: 75vh;
+    overflow-y: auto;
+    padding-right: 8px;
+}
+
+.emr-dash-top-bar {
+    display: flex;
+    gap: 16px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid #cbd5e1;
+    margin-bottom: 16px;
+    overflow-x: auto;
+}
+
+.emr-dash-top-bar span {
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #475569;
+    cursor: pointer;
+    transition: color 0.2s;
+}
+
+.emr-dash-top-bar span:hover, .emr-dash-top-bar span.active {
+    color: #0284c7;
+    font-weight: 700;
+}
+
+.emr-dash-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+}
+
+.emr-dash-box {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 6px;
+    padding: 14px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.05);
+}
+
+.emr-dash-box-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    border-bottom: 1px solid #f1f5f9;
+    padding-bottom: 8px;
+    margin-bottom: 10px;
+}
+
+.emr-dash-box-header h4 {
+    margin: 0;
+    font-size: 0.95rem;
+    font-weight: 700;
+    color: #0284c7;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.emr-dash-box-content {
+    font-size: 0.85rem;
+    color: #334155;
+    line-height: 1.6;
+}
+
+.emr-portal-box {
+    background: #e0f2fe;
+    border: 1px solid #bae6fd;
+    border-radius: 6px;
+    padding: 12px;
+    margin-bottom: 10px;
+}
+
+.action-buttons-flex {
+    display: flex;
+    align-items: center;
+    justify-content: flex-start;
+    gap: 8px;
+}
+
+.btn-outline-edit, .btn-outline-delete {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 6px !important;
+    padding: 6px 12px !important;
+    font-size: 0.82rem !important;
+    font-weight: 700 !important;
+    border-radius: 6px !important;
+    line-height: 1 !important;
+    height: 32px !important;
+    box-sizing: border-box !important;
+    vertical-align: middle !important;
+}
+
+.btn-outline-edit i, .btn-outline-delete i {
+    font-size: 0.88rem !important;
+    line-height: 1 !important;
+    margin: 0 !important;
+    padding: 0 !important;
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    transform: translateY(0) !important;
+}
+
+.btn-outline-edit {
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    color: #0f172a;
+}
+
+.btn-outline-edit:hover {
+    background: #f8fafc;
+    border-color: #94a3b8;
+}
+
+.btn-outline-delete {
+    background: #fef2f2;
+    border: 1px solid #fca5a5;
+    color: #991b1b;
+}
+
+.btn-outline-delete:hover {
+    background: #fee2e2;
+}
+
+#register-patient-btn {
+    display: inline-flex !important;
+    align-items: center !important;
+    justify-content: center !important;
+    gap: 10px !important;
+    padding: 10px 22px !important;
+    background: #0284c7 !important;
+    color: #ffffff !important;
+    font-weight: 700 !important;
+    font-size: 0.95rem !important;
+    border-radius: 10px !important;
+    box-shadow: 0 4px 12px rgba(2, 132, 199, 0.25) !important;
+    border: none !important;
+    transition: all 0.2s ease !important;
+}
+
+#register-patient-btn i {
+    font-size: 1.05rem !important;
+    margin: 0 !important;
+}
+
+#register-patient-btn:hover {
+    background: #0369a1 !important;
+    box-shadow: 0 6px 16px rgba(2, 132, 199, 0.35) !important;
+    transform: translateY(-1px) !important;
+}
+
+.reg-text-link {
+    background: none !important;
+    background-color: transparent !important;
+    border: none !important;
+    box-shadow: none !important;
+    outline: none !important;
+    padding: 0 !important;
+    margin: 0 !important;
+    color: #0284c7 !important;
+    font-weight: 600 !important;
+    font-size: 0.88rem !important;
+    cursor: pointer !important;
+    text-decoration: none !important;
+    display: inline-block !important;
+}
+
+.reg-text-link:hover {
+    color: #0369a1 !important;
+    text-decoration: underline !important;
+    background: transparent !important;
+}
+
+/* Dedicated 3-Column Patient Registration View Styles */
+.reg-form-3col-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+}
+
+@media (max-width: 1200px) {
+    .reg-form-3col-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.reg-column-card {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 20px 22px;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.02);
+}
+
+/* Patient Details Chart View (Ref: media_1787731362274.png) */
+.patient-chart-wrapper {
+    display: flex;
+    background: #ffffff;
+    border: 1px solid #cbd5e1;
+    border-radius: 10px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.06);
+    overflow: hidden;
+    min-height: 80vh;
+}
+
+.patient-chart-sidebar {
+    width: 210px;
+    background: #f8fafc;
+    border-right: 1px solid #e2e8f0;
+    padding: 12px 0;
+    flex-shrink: 0;
+}
+
+.chart-side-nav {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.chart-side-nav li a {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    padding: 9px 18px;
+    font-size: 0.88rem;
+    font-weight: 600;
+    color: #475569;
+    text-decoration: none;
+    transition: all 0.15s ease;
+    border-left: 3px solid transparent;
+}
+
+.chart-side-nav li.active a, .chart-side-nav li a:hover {
+    background: #e0f2fe;
+    color: #0284c7;
+    border-left-color: #0284c7;
+}
+
+.chart-top-tabs-bar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 20px;
+    border-bottom: 1px solid #e2e8f0;
+    background: #ffffff;
+}
+
+.chart-sub-tabs {
+    display: flex;
+    gap: 24px;
+    list-style: none;
+    margin: 0;
+    padding: 0;
+}
+
+.chart-sub-tabs li a {
+    display: block;
+    padding: 14px 0;
+    font-size: 0.9rem;
+    font-weight: 600;
+    color: #64748b;
+    text-decoration: none;
+    border-bottom: 3px solid transparent;
+    transition: all 0.15s ease;
+}
+
+.chart-sub-tabs li.active a {
+    color: #0d9488;
+    border-bottom-color: #0d9488;
+}
+
+.demo-data-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 20px;
+}
+
+@media (max-width: 1200px) {
+    .demo-data-grid {
+        grid-template-columns: 1fr;
+    }
+}
+
+.demo-card-box {
+    background: #ffffff;
+    border: 1px solid #e2e8f0;
+    border-radius: 8px;
+    padding: 18px 20px;
+    box-shadow: 0 1px 3px rgba(0,0,0,0.03);
+}
+
+.demo-card-box h3 {
+    margin: 0 0 16px 0;
+    font-size: 1.05rem;
+    font-weight: 700;
+    color: #1e293b;
+    border-bottom: 1px solid #f1f5f9;
+    padding-bottom: 8px;
+}
+
+.demo-field-row {
+    display: flex;
+    justify-content: space-between;
+    padding: 6px 0;
+    font-size: 0.88rem;
+    border-bottom: 1px dashed #f1f5f9;
+}
+
+.demo-field-label {
+    color: #64748b;
+    font-weight: 500;
+}
+
+.demo-field-val {
+    color: #0f172a;
+    font-weight: 700;
+    text-align: right;
+}
+
+

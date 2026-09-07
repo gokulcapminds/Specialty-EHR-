@@ -1,0 +1,293 @@
+/* public/css/modules/billing.css */
+
+/* Extracted inline styles */
+.mod-billing-style-1 {
+  color:var(--text-secondary);
+  margin-top:2px;
+}
+
+.mod-billing-style-2 {
+  display:flex;
+  gap:12px;
+  align-items:center;
+}
+
+.mod-billing-style-3 {
+  display:flex;
+  gap:0;
+  border-bottom:2px solid var(--border-color);
+  margin-bottom:20px;
+}
+
+.mod-billing-style-4 {
+  padding:10px 20px;
+  border:none;
+  background:none;
+  cursor:pointer;
+  font-weight:600;
+  color:var(--primary-color);
+  border-bottom:2px solid var(--primary-color);
+  margin-bottom:-2px;
+  transition:all 0.2s;
+}
+
+.billing-tab-btn.active {
+  color: var(--primary-color) !important;
+  border-bottom: 2px solid var(--primary-color) !important;
+}
+
+.mod-billing-style-5 {
+  margin-left:6px;
+}
+
+.mod-billing-style-6 {
+  padding:10px 20px;
+  border:none;
+  background:none;
+  cursor:pointer;
+  font-weight:600;
+  color:var(--text-secondary);
+  border-bottom:2px solid transparent;
+  margin-bottom:-2px;
+  transition:all 0.2s;
+}
+
+.mod-billing-style-7 {
+  display:flex;
+  justify-content:space-between;
+  align-items:center;
+  margin-bottom:16px;
+}
+
+.mod-billing-style-8 {
+  margin:0;
+}
+
+.mod-billing-style-9 {
+  color:var(--warning-color);
+  margin-right:8px;
+}
+
+.mod-billing-style-10 {
+  color:var(--text-secondary);
+  margin-bottom:16px;
+}
+
+.mod-billing-style-11 {
+  text-align:center;
+  padding:30px;
+  color:var(--text-secondary);
+}
+
+.mod-billing-style-12 {
+  display:none;
+}
+
+.mod-billing-style-13 {
+  color:var(--primary-color);
+  margin-right:8px;
+}
+
+.mod-billing-style-14 {
+  display:flex;
+  gap:8px;
+  align-items:center;
+}
+
+.mod-billing-style-15 {
+  width:160px;
+  padding:6px 10px;
+}
+
+.mod-billing-style-16 {
+  color:var(--success-color);
+  margin-right:8px;
+}
+
+.mod-billing-style-17 {
+  display:flex;
+  gap:12px;
+  margin-bottom:16px;
+}
+
+.mod-billing-style-18 {
+  max-width:300px;
+}
+
+.mod-billing-style-19 {
+  width:160px;
+}
+
+.mod-billing-style-20 {
+  z-index:1100;
+}
+
+.mod-billing-style-21 {
+  max-width:900px;
+  max-height:90vh;
+  overflow-y:auto;
+}
+
+.mod-billing-style-22 {
+  margin:0;
+  font-size:1.2rem;
+}
+
+.mod-billing-style-23 {
+  padding:20px;
+}
+
+.mod-billing-style-24 {
+  display:grid;
+  grid-template-columns:1fr 1fr;
+  gap:16px;
+  margin-bottom:20px;
+  background:var(--bg-secondary);
+  padding:16px;
+  border-radius:8px;
+}
+
+.mod-billing-style-25 {
+  margin:0;
+  font-size:0.75rem;
+  color:var(--text-secondary);
+  text-transform:uppercase;
+  font-weight:600;
+}
+
+.mod-billing-style-26 {
+  margin:4px 0 0;
+  font-weight:700;
+  font-size:1rem;
+}
+
+.mod-billing-style-27 {
+  margin:4px 0 0;
+  font-weight:600;
+  font-size:0.9rem;
+}
+
+.mod-billing-style-28 {
+  display:grid;
+  grid-template-columns:1fr 1fr 1fr;
+  gap:16px;
+  margin-bottom:20px;
+}
+
+.mod-billing-style-29 {
+  margin:0 0 12px;
+  font-size:0.95rem;
+  font-weight:700;
+  color:var(--text-primary);
+}
+
+.mod-billing-style-30 {
+  color:var(--primary-color);
+  margin-right:6px;
+}
+
+.mod-billing-style-31 {
+  color:var(--text-secondary);
+  font-weight:400;
+}
+
+.mod-billing-style-32 {
+  margin-bottom:12px;
+}
+
+.mod-billing-style-33 {
+  margin-bottom:20px;
+}
+
+.mod-billing-style-34 {
+  display:flex;
+  justify-content:flex-end;
+  margin-bottom:20px;
+}
+
+.mod-billing-style-35 {
+  min-width:280px;
+  background:var(--bg-secondary);
+  border-radius:8px;
+  padding:16px;
+}
+
+.mod-billing-style-36 {
+  display:flex;
+  justify-content:space-between;
+  margin-bottom:8px;
+}
+
+.mod-billing-style-37 {
+  color:var(--text-secondary);
+}
+
+.mod-billing-style-38 {
+  color:var(--danger-color);
+}
+
+.mod-billing-style-39 {
+  display:flex;
+  justify-content:space-between;
+  padding-top:8px;
+  border-top:2px solid var(--border-color);
+}
+
+.mod-billing-style-40 {
+  font-weight:700;
+  font-size:1.1rem;
+}
+
+.mod-billing-style-41 {
+  font-size:1.2rem;
+  color:var(--primary-color);
+}
+
+.mod-billing-style-42 {
+  display:flex;
+  gap:12px;
+  justify-content:flex-end;
+}
+
+.mod-billing-style-43 {
+  max-width:820px;
+  max-height:90vh;
+  overflow-y:auto;
+}
+
+.mod-billing-style-44 {
+  padding:24px;
+}
+
+.mod-billing-style-45 {
+  padding:16px 24px;
+  border-top:1px solid var(--border-color);
+  display:flex;
+  gap:12px;
+  align-items:center;
+}
+
+.mod-billing-style-46 {
+  font-weight:600;
+  white-space:nowrap;
+}
+
+.mod-billing-style-47 {
+  max-width:150px;
+}
+
+.mod-billing-style-48 {
+  max-width:480px;
+}
+
+.mod-billing-style-49 {
+  margin:0;
+  font-size:1.1rem;
+}
+
+.mod-billing-style-50 {
+  display:flex;
+  gap:12px;
+  justify-content:flex-end;
+  margin-top:16px;
+}
