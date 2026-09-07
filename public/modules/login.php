@@ -28,15 +28,13 @@
                 <div class="input-icon-wrapper">
                     <i class="fas fa-stethoscope input-icon-left"></i>
                     <select class="form-control input-with-icon-left" id="login-specialty" name="specialty" required style="height: 44px; font-size: 0.92rem;">
-                        <option value="Primary Care / Family Medicine">Primary Care / Family Medicine</option>
-                        <option value="Cardiology">Cardiology</option>
-                        <option value="Orthopedics">Orthopedics</option>
-                        <option value="Dermatology">Dermatology</option>
-                        <option value="Neurology">Neurology</option>
-                        <option value="Oncology">Oncology</option>
-                        <option value="Ophthalmology">Ophthalmology</option>
-                        <option value="Pediatrics">Pediatrics</option>
-                        <option value="Physical Therapy">Physical Therapy</option>
+                        <option value="Cardiology">Cardiology EHR</option>
+                        <option value="Orthopedics">Orthopedic EHR</option>
+                        <option value="Dermatology">Dermatology EHR</option>
+                        <option value="Neurology">Neurology EHR</option>
+                        <option value="Oncology">Oncology EHR</option>
+                        <option value="Ophthalmology">Ophthalmology EHR</option>
+                        <option value="Physical Therapy">Physical Therapy EHR</option>
                     </select>
                 </div>
             </div>

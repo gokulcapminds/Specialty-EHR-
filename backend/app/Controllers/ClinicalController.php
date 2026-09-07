@@ -122,7 +122,7 @@ class ClinicalController {
 
         $sql = "INSERT INTO clinical_notes 
                 (patient_id, provider_id, note_date, encounter_type, vital_temp, vital_bp_systolic, vital_bp_diastolic, vital_heart_rate, vital_resp_rate, vital_spo2, vital_height, vital_weight, vital_bmi, vital_pulse_pattern, vital_pulse_volume, allergies, pmh, current_medications, icd10_codes, family_history, fm_assessment, functional_assessment, primary_care_data, peds_newborn_data, peds_one_month_data, peds_two_month_data, peds_four_month_data, peds_six_month_data, peds_nine_month_data, peds_twelve_month_data, peds_fifteen_month_data, peds_eighteen_month_data, chief_complaint, hpi, ros, pe_general, pe_heent, pe_cardio, pe_resp, pe_abdomen, pe_neuro, pe_skin, growth_weight_percentile, growth_height_percentile, immunizations_administered, obgyn_lmp, obgyn_edd, obgyn_gravida, obgyn_para, obgyn_abortions, obgyn_living, obgyn_fundal_height, obgyn_fetal_heart_rate, pediatric_data, obgyn_data, ortho_data, derma_data, neuro_data, onco_data, ophthal_data, pt_data, cardio_data, clinical_summary, signed_by_name, signed_by_credentials, signed_at, signed_signature_data) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         
         Database::query($sql, [
             $patientId,

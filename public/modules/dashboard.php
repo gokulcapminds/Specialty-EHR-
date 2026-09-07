@@ -32,9 +32,10 @@
         <div class="card quick-actions">
             <h2>Quick Clinical Actions</h2>
             <div class="actions-group">
-                <a href="#patients" class="btn btn-primary">Register New Patient</a>
-                <a href="#calendar" class="btn btn-primary">Schedule Appointment</a>
-                <a href="#messaging" class="btn btn-primary">Send Secure Message</a>
+                <a href="#patients" class="btn btn-primary" id="btn-dash-specialty-enc"><i class="fas fa-notes-medical" style="margin-right: 6px;"></i> New Encounter</a>
+                <a href="#patients" class="btn btn-primary"><i class="fas fa-user-plus" style="margin-right: 6px;"></i> Register Patient</a>
+                <a href="#calendar" class="btn btn-primary"><i class="fas fa-calendar-plus" style="margin-right: 6px;"></i> Schedule Appointment</a>
+                <a href="#messaging" class="btn btn-primary"><i class="fas fa-comment-medical" style="margin-right: 6px;"></i> Send Message</a>
             </div>
         </div>
     </main>

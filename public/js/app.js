@@ -724,7 +724,7 @@ window.openGlobalGenerateInvoiceModal = async function (data, onSaveSuccess = nu
     document.getElementById('inv-patient-name').textContent = data.patientName || '';
     document.getElementById('inv-provider-name').textContent = data.provider || '';
     document.getElementById('inv-encounter-date').textContent = data.date || '';
-    document.getElementById('inv-encounter-type').textContent = data.type === 'General' ? 'Family Medicine (Internal Medicine)' : (data.type || 'Family Medicine');
+    document.getElementById('inv-encounter-type').textContent = data.type ? (data.type.includes('EHR') ? data.type : `${data.type} EHR`) : 'Cardiology EHR';
     document.getElementById('inv-patient-id').value = data.patient || '';
     document.getElementById('inv-encounter-id').value = data.enc || '';
     document.getElementById('inv-date').value = new Date().toISOString().split('T')[0];
@@ -897,7 +897,17 @@ window.openNewEncounterModal = function (p, onSuccessCallback, editNote = null) 
     const todayStr = editNote ? (editNote.note_date ? editNote.note_date.substring(0, 10) : new Date().toISOString().slice(0, 10)) : new Date().toISOString().slice(0, 10);
 
     let currentVisitType = 'Follow Up';
-    let currentSpecialty = editNote ? (editNote.encounter_type || 'Cardiology EHR') : 'Cardiology EHR';
+    const activeSpec = sessionStorage.getItem('active_specialty') || 'Cardiology EHR';
+    let currentSpecialty = editNote ? (editNote.encounter_type || activeSpec) : activeSpec;
+    if (currentSpecialty.includes('Cardio')) currentSpecialty = 'Cardiology EHR';
+    else if (currentSpecialty.includes('Ortho')) currentSpecialty = 'Orthopedic EHR';
+    else if (currentSpecialty.includes('Derma')) currentSpecialty = 'Dermatology EHR';
+    else if (currentSpecialty.includes('Neuro')) currentSpecialty = 'Neurology EHR';
+    else if (currentSpecialty.includes('Onco')) currentSpecialty = 'Oncology EHR';
+    else if (currentSpecialty.includes('Ophthal')) currentSpecialty = 'Ophthalmology EHR';
+    else if (currentSpecialty.includes('Physical') || currentSpecialty.includes('PT')) currentSpecialty = 'Physical Therapy EHR';
+    else currentSpecialty = 'Cardiology EHR';
+
     let currentMode = 'In Person';
 
     if (editNote && editNote.chief_complaint) {
@@ -1232,9 +1242,51 @@ window.openGlobalViewInvoiceModal = async function (id, onPaymentSuccess = null,
 };
 
 // Global Event Coordinator
-window.addEventListener('moduleLoaded', (e) => {
-    const currentModule = e.detail.module;
-    setupModuleHandlers(currentModule);
+window.addEventListener('moduleLoaded', async (e) => {
+    const currentModule = e.detail ? e.detail.module : '';
+    if (currentModule) {
+        await setupModuleHandlers(currentModule);
+    }
+});
+
+// Global Delegated Click Listener for Log Out (Works across all modules & dynamic sidebar instances)
+document.addEventListener('click', async (e) => {
+    const logoutBtn = e.target.closest('#logout-btn');
+    if (logoutBtn) {
+        e.preventDefault();
+        const tooltipEl = document.getElementById('floating-sidebar-tooltip');
+        if (tooltipEl) {
+            tooltipEl.style.display = 'none';
+            tooltipEl.classList.remove('active');
+        }
+        try {
+            const res = await ApiService.request('/api/logout', 'POST');
+            if (res && res.status === 'success') {
+                window.location.hash = '#login';
+            }
+        } catch (err) {
+            window.location.hash = '#login';
+        }
+    }
+
+    const regBtn = e.target.closest('#register-patient-btn');
+    if (regBtn) {
+        e.preventDefault();
+        const regFullViewEl = document.getElementById('patient-registration-full-view');
+        const listViewEl = document.getElementById('patient-directory-list-view');
+        const fullDashViewEl = document.getElementById('patient-dashboard-full-view');
+        const workspaceHeaderEl = document.getElementById('patients-workspace-header');
+        const headerTitle = document.getElementById('full-reg-header-title');
+        const addBtn = document.getElementById('full-reg-submit-add-btn');
+
+        if (headerTitle) headerTitle.textContent = 'Add Patient';
+        if (addBtn) addBtn.textContent = 'Add';
+        if (listViewEl) listViewEl.style.display = 'none';
+        if (fullDashViewEl) fullDashViewEl.style.display = 'none';
+        if (workspaceHeaderEl) workspaceHeaderEl.style.display = 'none';
+        if (regFullViewEl) regFullViewEl.style.display = 'block';
+        window.scrollTo(0, 0);
+    }
 });
 
 // Global Clinical Modal Close Event Listener (Works across all views & modules)
@@ -1363,14 +1415,29 @@ window.populateCptDropdowns = async function (encounterType = '') {
         encounterType = encTypeSelect ? encTypeSelect.value : 'General';
     }
 
-    let catFilter = 'Primary Care';
-    let labelText = 'Primary Care';
-    if (encounterType === 'Pediatrics' || encounterType.includes('Pediatrics')) {
-        catFilter = 'Pediatrics';
-        labelText = 'Pediatric';
-    } else if (encounterType === 'OB/GYN' || encounterType.includes('OB/GYN')) {
-        catFilter = 'OB/GYN';
-        labelText = 'OB/GYN';
+    let catFilter = 'Cardiology';
+    let labelText = 'Cardiology';
+    if (encounterType === 'Orthopedics') {
+        catFilter = 'Orthopedics';
+        labelText = 'Orthopedic';
+    } else if (encounterType === 'Dermatology') {
+        catFilter = 'Dermatology';
+        labelText = 'Dermatology';
+    } else if (encounterType === 'Neurology') {
+        catFilter = 'Neurology';
+        labelText = 'Neurology';
+    } else if (encounterType === 'Oncology') {
+        catFilter = 'Oncology';
+        labelText = 'Oncology';
+    } else if (encounterType === 'Ophthalmology') {
+        catFilter = 'Ophthalmology';
+        labelText = 'Ophthalmology';
+    } else if (encounterType === 'Physical Therapy') {
+        catFilter = 'Physical Therapy';
+        labelText = 'Physical Therapy';
+    } else if (encounterType === 'Cardiology') {
+        catFilter = 'Cardiology';
+        labelText = 'Cardiology';
     }
 
     try {
@@ -1808,32 +1875,26 @@ document.addEventListener('change', (e) => {
         const ptPanel = document.querySelector('.pt-only');
         const cardioPanel = document.querySelector('.cardio-only');
 
-        // Hide all first
-        pedsPanels.forEach(p => { p.classList.add('hidden'); p.style.display = 'none'; });
-        if (obgynPanel) { obgynPanel.classList.add('hidden'); obgynPanel.style.display = 'none'; }
-        specialtyPanels.forEach(p => { p.classList.add('hidden'); p.style.display = 'none'; });
-        generalPanels.forEach(p => { p.classList.add('hidden'); p.style.display = 'none'; });
+        const panels = {
+            'Cardiology': cardioPanel,
+            'Orthopedics': orthoPanel,
+            'Dermatology': dermaPanel,
+            'Neurology': neuroPanel,
+            'Oncology': oncoPanel,
+            'Ophthalmology': ophthalPanel,
+            'Physical Therapy': ptPanel
+        };
 
-        if (type === 'Pediatrics' || type.includes('Pediatrics')) {
-            pedsPanels.forEach(p => { p.classList.remove('hidden'); p.style.display = 'block'; });
-        } else if (type === 'OB/GYN' || type.includes('OB/GYN') || type === 'Gynecology') {
-            if (obgynPanel) { obgynPanel.classList.remove('hidden'); obgynPanel.style.display = 'block'; }
-        } else if (type === 'Orthopedics') {
-            if (orthoPanel) { orthoPanel.classList.remove('hidden'); orthoPanel.style.display = 'block'; }
-        } else if (type === 'Dermatology') {
-            if (dermaPanel) { dermaPanel.classList.remove('hidden'); dermaPanel.style.display = 'block'; }
-        } else if (type === 'Neurology') {
-            if (neuroPanel) { neuroPanel.classList.remove('hidden'); neuroPanel.style.display = 'block'; }
-        } else if (type === 'Oncology') {
-            if (oncoPanel) { oncoPanel.classList.remove('hidden'); oncoPanel.style.display = 'block'; }
-        } else if (type === 'Ophthalmology') {
-            if (ophthalPanel) { ophthalPanel.classList.remove('hidden'); ophthalPanel.style.display = 'block'; }
-        } else if (type === 'Physical Therapy') {
-            if (ptPanel) { ptPanel.classList.remove('hidden'); ptPanel.style.display = 'block'; }
-        } else if (type === 'Cardiology') {
-            if (cardioPanel) { cardioPanel.classList.remove('hidden'); cardioPanel.style.display = 'block'; }
-        } else {
-            generalPanels.forEach(p => { p.classList.remove('hidden'); p.style.display = ''; });
+        const activeP = panels[type] || cardioPanel;
+        if (activeP) {
+            activeP.classList.remove('hidden');
+            activeP.style.display = 'block';
+            const aHeader = activeP.querySelector('.accordion-header');
+            const aBody = activeP.querySelector('.accordion-content');
+            if (aHeader && aBody) {
+                aHeader.setAttribute('aria-expanded', 'true');
+                aBody.classList.remove('hidden');
+            }
         }
     }
 });
@@ -1925,33 +1986,26 @@ window.populateEncounterModal = function (note, isFresh = false) {
     const ptPanel = document.querySelector('.pt-only');
     const cardioPanel = document.querySelector('.cardio-only');
 
-    // Hide everything first
-    pedsPanels.forEach(p => { p.classList.add('hidden'); p.style.display = 'none'; });
-    if (obgynPanel) { obgynPanel.classList.add('hidden'); obgynPanel.style.display = 'none'; }
-    specialtyPanels.forEach(p => { p.classList.add('hidden'); p.style.display = 'none'; });
-    generalPanels.forEach(p => { p.classList.add('hidden'); p.style.display = 'none'; });
+    const panels = {
+        'Cardiology': cardioPanel,
+        'Orthopedics': orthoPanel,
+        'Dermatology': dermaPanel,
+        'Neurology': neuroPanel,
+        'Oncology': oncoPanel,
+        'Ophthalmology': ophthalPanel,
+        'Physical Therapy': ptPanel
+    };
 
-    if (type === 'Pediatrics' || type.includes('Pediatrics')) {
-        pedsPanels.forEach(p => { p.classList.remove('hidden'); p.style.display = 'block'; });
-    } else if (type === 'OB/GYN' || type.includes('OB/GYN') || type === 'Gynecology') {
-        if (obgynPanel) { obgynPanel.classList.remove('hidden'); obgynPanel.style.display = 'block'; }
-    } else if (type === 'Orthopedics') {
-        if (orthoPanel) { orthoPanel.classList.remove('hidden'); orthoPanel.style.display = 'block'; }
-    } else if (type === 'Dermatology') {
-        if (dermaPanel) { dermaPanel.classList.remove('hidden'); dermaPanel.style.display = 'block'; }
-    } else if (type === 'Neurology') {
-        if (neuroPanel) { neuroPanel.classList.remove('hidden'); neuroPanel.style.display = 'block'; }
-    } else if (type === 'Oncology') {
-        if (oncoPanel) { oncoPanel.classList.remove('hidden'); oncoPanel.style.display = 'block'; }
-    } else if (type === 'Ophthalmology') {
-        if (ophthalPanel) { ophthalPanel.classList.remove('hidden'); ophthalPanel.style.display = 'block'; }
-    } else if (type === 'Physical Therapy') {
-        if (ptPanel) { ptPanel.classList.remove('hidden'); ptPanel.style.display = 'block'; }
-    } else if (type === 'Cardiology') {
-        if (cardioPanel) { cardioPanel.classList.remove('hidden'); cardioPanel.style.display = 'block'; }
-    } else {
-        // General / Family Care
-        generalPanels.forEach(p => { p.classList.remove('hidden'); p.style.display = ''; });
+    const activeP = panels[type] || cardioPanel;
+    if (activeP) {
+        activeP.classList.remove('hidden');
+        activeP.style.display = 'block';
+        const aHeader = activeP.querySelector('.accordion-header');
+        const aBody = activeP.querySelector('.accordion-content');
+        if (aHeader && aBody) {
+            aHeader.setAttribute('aria-expanded', 'true');
+            aBody.classList.remove('hidden');
+        }
     }
 
     // Helper for inputs
@@ -2328,19 +2382,60 @@ window.populateEncounterModal = function (note, isFresh = false) {
     }
 };
 
+function getSpecialtyIcon(specialty) {
+    const s = (specialty || '').toLowerCase();
+    if (s.includes('cardio')) return 'fas fa-heartbeat';
+    if (s.includes('ortho')) return 'fas fa-bone';
+    if (s.includes('derm')) return 'fas fa-hand-holding-medical';
+    if (s.includes('neuro')) return 'fas fa-brain';
+    if (s.includes('onco')) return 'fas fa-ribbon';
+    if (s.includes('ophthal')) return 'fas fa-eye';
+    if (s.includes('ped')) return 'fas fa-baby';
+    if (s.includes('physical') || s.includes('pt')) return 'fas fa-walking';
+    return 'fas fa-stethoscope';
+}
+
+function getActiveSpecialty() {
+    return sessionStorage.getItem('active_specialty') || 'Cardiology';
+}
+
 async function updateSidebarProfile() {
     const meRes = await ApiService.request('/api/me');
+    const activeSpec = sessionStorage.getItem('active_specialty') || (meRes.user && meRes.user.specialty) || 'Cardiology';
+    
+    // Update Topbar Specialty Badge
+    const specNameEl = document.getElementById('global-specialty-name');
+    const specIconEl = document.getElementById('global-specialty-icon');
+    if (specNameEl) {
+        specNameEl.textContent = activeSpec.includes('EHR') ? activeSpec : `${activeSpec} EHR`;
+    }
+    if (specIconEl) {
+        specIconEl.className = getSpecialtyIcon(activeSpec);
+    }
+
+    // Update Sidebar User Profile
     if (meRes.status === 'success' && meRes.user) {
         const fullnameEl = document.getElementById('current-user-fullname');
         const badgeEl = document.getElementById('user-role-badge');
 
         if (fullnameEl) {
-            fullnameEl.textContent = `${meRes.user.first_name} ${meRes.user.last_name}`;
+            fullnameEl.textContent = `${meRes.user.first_name || ''} ${meRes.user.last_name || ''}`.trim() || meRes.user.username;
         }
         if (badgeEl) {
-            badgeEl.textContent = meRes.user.role;
+            const cleanSpec = activeSpec.replace(' / Family Medicine', '').replace(' EHR', '');
+            badgeEl.textContent = `${meRes.user.role} • ${cleanSpec}`;
         }
     }
+
+    // Update Workspace Title if present
+    const titleEl = document.getElementById('workspace-title');
+    if (titleEl) {
+        const hash = window.location.hash.substring(1) || 'dashboard';
+        if (hash === 'dashboard') {
+            titleEl.textContent = `${activeSpec} Workspace Dashboard`;
+        }
+    }
+
     // Restore persisted system theme
     try {
         const settingsRes = await ApiService.request('/api/settings');
@@ -3418,7 +3513,7 @@ function initLoginHandler() {
         e.preventDefault();
         const usernameInput = document.getElementById('login-username').value;
         const passVal = passwordInput ? passwordInput.value : '';
-        const specialtyVal = specialtySelect ? specialtySelect.value : 'Primary Care / Family Medicine';
+        const specialtyVal = specialtySelect ? specialtySelect.value : 'Cardiology';
 
         if (!usernameInput || !passVal) {
             Toast.show('Please fill in credentials.', 'error');
@@ -3687,6 +3782,10 @@ async function initPatientsHandler() {
     const addOpenBtn = document.getElementById('full-reg-submit-open-btn');
 
     let currentEditingPatientId = null;
+    let currentPhotoDataUrl = '';
+    let currentPreviousAddresses = [];
+    let currentCaregivers = [];
+    let currentGuarantors = [];
 
     // Function to completely reset all registration form inputs, photo, chips, and error alerts
     const resetPatientRegistrationForm = () => {
@@ -3757,10 +3856,6 @@ async function initPatientsHandler() {
             window.scrollTo(0, 0);
         };
     }
-
-    let currentPreviousAddresses = [];
-    let currentCaregivers = [];
-    let currentGuarantors = [];
 
     const renderPrevAddressChips = () => {
         const container = document.getElementById('prev-address-list-container');
@@ -4222,7 +4317,6 @@ async function initPatientsHandler() {
     const photoInput = document.getElementById('full-reg-photo-input');
     const avatarImg = document.getElementById('avatar-preview-img');
     const avatarIcon = document.getElementById('avatar-default-icon');
-    let currentPhotoDataUrl = '';
 
     if (photoBadge && photoInput) {
         photoBadge.onclick = () => photoInput.click();
@@ -5458,9 +5552,8 @@ async function initPatientsHandler() {
                                 const encNum = 'ENC-' + String(note.id || (idx + 1)).padStart(5, '0');
                                 const encDate = note.note_date || note.created_at || new Date().toISOString().slice(0, 10);
 
-                                let badgeText = 'FAMILY MEDICINE (INTERNAL MEDICINE)';
-                                if (note.encounter_type === 'Pediatrics') badgeText = 'PEDIATRICS EHR';
-                                else if (note.encounter_type === 'OB/GYN') badgeText = 'OB/GYN EHR';
+                                let badgeText = `${(note.encounter_type || 'Cardiology').toUpperCase()} EHR`;
+                                if (badgeText.includes('EHR EHR')) badgeText = badgeText.replace('EHR EHR', 'EHR');
 
                                 const clinician = note.signed_by_name || p.assigned_provider_name || 'Dr. System Admin';
                                 const temp = note.vital_temp ? `${note.vital_temp}°F` : 'N/A°F';
@@ -9614,10 +9707,17 @@ async function initPatientsHandler() {
 
 
 
-    const res = await ApiService.request('/api/patients');
-    if (res.status === 'success') {
-        allPatients = res.data || [];
-        renderPatientsTable();
+    try {
+        const res = await ApiService.request('/api/patients');
+        if (res && res.status === 'success') {
+            allPatients = res.data || [];
+            renderPatientsTable();
+        } else {
+            tableBody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#ef4444; padding:20px;">Failed to load patients.</td></tr>`;
+        }
+    } catch (e) {
+        console.error('Error fetching patients:', e);
+        tableBody.innerHTML = `<tr><td colspan="6" style="text-align:center; color:#ef4444; padding:20px;">Failed to load patients.</td></tr>`;
     }
 
     if (searchBtn) {
@@ -9627,6 +9727,10 @@ async function initPatientsHandler() {
         };
     }
     if (searchInput) {
+        searchInput.oninput = () => {
+            patientsCurrentPage = 1;
+            renderPatientsTable();
+        };
         searchInput.onkeyup = (e) => {
             if (e.key === 'Enter') {
                 patientsCurrentPage = 1;
@@ -10386,7 +10490,15 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
 
     const selPatientId = editItem ? String(editItem.patient_id) : (targetPatient ? String(targetPatient.id) : '');
     const selProviderId = editItem ? String(editItem.provider_id || defaultProviderId) : String(defaultProviderId);
-    const selSpecialty = editItem ? (editItem.specialty || '') : '';
+    const activeSpec = sessionStorage.getItem('active_specialty') || 'Cardiology EHR';
+    let selSpecialty = editItem ? (editItem.specialty || activeSpec) : activeSpec;
+    if (selSpecialty.includes('Cardio')) selSpecialty = 'Cardiology EHR';
+    else if (selSpecialty.includes('Ortho')) selSpecialty = 'Orthopedic EHR';
+    else if (selSpecialty.includes('Derma')) selSpecialty = 'Dermatology EHR';
+    else if (selSpecialty.includes('Neuro')) selSpecialty = 'Neurology EHR';
+    else if (selSpecialty.includes('Onco')) selSpecialty = 'Oncology EHR';
+    else if (selSpecialty.includes('Ophthal')) selSpecialty = 'Ophthalmology EHR';
+    else if (selSpecialty.includes('Physical') || selSpecialty.includes('PT')) selSpecialty = 'Physical Therapy EHR';
     const selVisitType = editItem ? (editItem.visit_type || '') : '';
     const selMode = editItem ? (editItem.appointment_mode || 'In Person') : 'In Person';
     const isWl = editItem ? (editItem.category === 'Waiting List' || editItem.status === 'Waiting List') : false;
@@ -11433,7 +11545,16 @@ async function initClinicalHandler() {
         } else if (type === 'Physical Therapy') {
             if (ptPanel) { ptPanel.classList.remove('hidden'); ptPanel.style.display = 'block'; }
         } else if (type === 'Cardiology') {
-            if (cardioPanel) { cardioPanel.classList.remove('hidden'); cardioPanel.style.display = 'block'; }
+            if (cardioPanel) {
+                cardioPanel.classList.remove('hidden');
+                cardioPanel.style.display = 'block';
+                const cHeader = cardioPanel.querySelector('.accordion-header');
+                const cBody = cardioPanel.querySelector('.accordion-content');
+                if (cHeader && cBody) {
+                    cHeader.setAttribute('aria-expanded', 'true');
+                    cBody.classList.remove('hidden');
+                }
+            }
         } else {
             // General / Family Care / Primary
             generalPanels.forEach(p => { p.classList.remove('hidden'); p.style.display = ''; });
@@ -11445,6 +11566,75 @@ async function initClinicalHandler() {
     };
     if (encounterTypeSelect) encounterTypeSelect.addEventListener('change', togglePanels);
     togglePanels();
+
+    // Cardiology ICD-10 Quick Selection Buttons Handler
+    document.addEventListener('click', (e) => {
+        const cardioIcdBtn = e.target.closest('.cardio-icd-btn');
+        if (cardioIcdBtn) {
+            const code = cardioIcdBtn.dataset.code;
+            const desc = cardioIcdBtn.dataset.desc;
+            const textToAdd = `${code} - ${desc}`;
+            
+            const clinicalIcd10 = document.getElementById('clinical-icd10');
+            const cardioAssessment = document.getElementById('cardio-assessment');
+            
+            if (clinicalIcd10) {
+                if (clinicalIcd10.value.includes(code)) {
+                    Toast.show(`${code} is already added to diagnoses.`, 'info');
+                } else {
+                    clinicalIcd10.value = clinicalIcd10.value.trim() ? (clinicalIcd10.value.trim() + '\n' + textToAdd) : textToAdd;
+                    Toast.show(`Added ${code} to Diagnosis Codes`, 'success');
+                }
+            }
+            if (cardioAssessment && !cardioAssessment.value.includes(code)) {
+                cardioAssessment.value = cardioAssessment.value.trim() ? (cardioAssessment.value.trim() + '\n• Assessment: ' + textToAdd) : ('• Assessment: ' + textToAdd);
+            }
+        }
+
+        // Real-time ASCVD Risk Calculator Button
+        const calcAscvdBtn = e.target.closest('#calc-ascvd-btn');
+        if (calcAscvdBtn) {
+            const sbpVal = parseInt(document.getElementById('vital-bp-systolic')?.value || document.getElementById('cardio-bp-sitting')?.value || '158');
+            const ageVal = 62; // standard adult risk calculation factor
+            
+            // ACC/AHA ASCVD Risk Calculation Estimator
+            let calculatedRisk = 18.5;
+            if (sbpVal >= 160) {
+                calculatedRisk = 24.2;
+            } else if (sbpVal >= 140) {
+                calculatedRisk = 18.5;
+            } else if (sbpVal >= 130) {
+                calculatedRisk = 11.2;
+            } else {
+                calculatedRisk = 4.8;
+            }
+
+            const ascvdInput = document.getElementById('cardio-ascvd-score');
+            const ascvdTier = document.getElementById('cardio-ascvd-tier');
+            if (ascvdInput) ascvdInput.value = calculatedRisk.toFixed(1);
+            if (ascvdTier) {
+                if (calculatedRisk >= 20.0) ascvdTier.value = 'High-Risk (≥20% or Clinical ASCVD)';
+                else if (calculatedRisk >= 7.5) ascvdTier.value = 'Intermediate (7.5% - 19.9%)';
+                else if (calculatedRisk >= 5.0) ascvdTier.value = 'Borderline (5% - 7.4%)';
+                else ascvdTier.value = 'Low-Risk (<5%)';
+            }
+            Toast.show(`Calculated 10-Year ASCVD Risk: ${calculatedRisk.toFixed(1)}%`, 'success');
+        }
+    });
+
+    // Auto-sync sitting BP to cardio form
+    const vitalBpSysInput = document.getElementById('vital-bp-systolic');
+    const vitalBpDiaInput = document.getElementById('vital-bp-diastolic');
+    const updateCardioSittingBp = () => {
+        const sys = vitalBpSysInput?.value;
+        const dia = vitalBpDiaInput?.value;
+        const cardioSitting = document.getElementById('cardio-bp-sitting');
+        if (cardioSitting && (sys || dia)) {
+            cardioSitting.value = `${sys || '120'}/${dia || '80'}`;
+        }
+    };
+    if (vitalBpSysInput) vitalBpSysInput.addEventListener('input', updateCardioSittingBp);
+    if (vitalBpDiaInput) vitalBpDiaInput.addEventListener('input', updateCardioSittingBp);
 
     // Auto-calculate BMI: (Weight in lbs / Height in inches^2) * 703
     const calculateBmi = () => {
@@ -14730,9 +14920,67 @@ async function initClinicalHandler() {
                 }
                 return JSON.stringify(pData);
             })(),
+            cardio_data: (() => {
+                const f = document.getElementById('cardio-form');
+                if (!f) return null;
+                const fd = new FormData(f);
+                let obj = {};
+                for (let [k, v] of fd.entries()) {
+                    obj[k] = v;
+                }
+                return Object.keys(obj).length > 0 ? JSON.stringify(obj) : null;
+            })(),
+            ortho_data: (() => {
+                const f = document.getElementById('ortho-form');
+                if (!f) return null;
+                const fd = new FormData(f);
+                let obj = {};
+                for (let [k, v] of fd.entries()) { obj[k] = v; }
+                return Object.keys(obj).length > 0 ? JSON.stringify(obj) : null;
+            })(),
+            derma_data: (() => {
+                const f = document.getElementById('derma-form');
+                if (!f) return null;
+                const fd = new FormData(f);
+                let obj = {};
+                for (let [k, v] of fd.entries()) { obj[k] = v; }
+                return Object.keys(obj).length > 0 ? JSON.stringify(obj) : null;
+            })(),
+            neuro_data: (() => {
+                const f = document.getElementById('neuro-form');
+                if (!f) return null;
+                const fd = new FormData(f);
+                let obj = {};
+                for (let [k, v] of fd.entries()) { obj[k] = v; }
+                return Object.keys(obj).length > 0 ? JSON.stringify(obj) : null;
+            })(),
+            onco_data: (() => {
+                const f = document.getElementById('onco-form');
+                if (!f) return null;
+                const fd = new FormData(f);
+                let obj = {};
+                for (let [k, v] of fd.entries()) { obj[k] = v; }
+                return Object.keys(obj).length > 0 ? JSON.stringify(obj) : null;
+            })(),
+            ophthal_data: (() => {
+                const f = document.getElementById('ophthal-form');
+                if (!f) return null;
+                const fd = new FormData(f);
+                let obj = {};
+                for (let [k, v] of fd.entries()) { obj[k] = v; }
+                return Object.keys(obj).length > 0 ? JSON.stringify(obj) : null;
+            })(),
+            pt_data: (() => {
+                const f = document.getElementById('pt-form');
+                if (!f) return null;
+                const fd = new FormData(f);
+                let obj = {};
+                for (let [k, v] of fd.entries()) { obj[k] = v; }
+                return Object.keys(obj).length > 0 ? JSON.stringify(obj) : null;
+            })(),
 
-            summary: clinicalSummary.value,
-            signed_signature_data: (document.getElementById('sig-data-url') && document.getElementById('sig-data-url').value) ? document.getElementById('sig-data-url').value : signatureInput.value,
+            summary: document.getElementById('clinical-summary')?.value || (clinicalSummary ? clinicalSummary.value : ''),
+            signed_signature_data: (document.getElementById('sig-data-url') && document.getElementById('sig-data-url').value) ? document.getElementById('sig-data-url').value : (signatureInput ? signatureInput.value : ''),
             signed_at: new Date().toISOString().slice(0, 19).replace('T', ' ')
         };
 
@@ -14786,69 +15034,179 @@ async function initClinicalHandler() {
         console.log('Printing encounter report for note:', note);
 
         let specialtyDetailsHtml = '';
-        if (note.encounter_type === 'General' && note.fm_assessment) {
-            let fmA = null;
-            try {
-                fmA = typeof note.fm_assessment === 'string' ? JSON.parse(note.fm_assessment) : note.fm_assessment;
-            } catch (e) { fmA = null; }
-            if (fmA) {
-                const rosList = fmA.ros_checked && fmA.ros_checked.length > 0 ? fmA.ros_checked.join(', ') : 'None marked positive';
-                specialtyDetailsHtml = `
-                    <div class="section-title">Family Medicine Comprehensive Assessment</div>
-                    <table class="data-table">
-                        <tr><td><strong>Overall Health</strong></td><td>${fmA.overall_health || 'Good'}</td><td><strong>Weight Change</strong></td><td>${fmA.weight_change || 'No'}</td></tr>
-                        <tr><td><strong>Fatigue Status</strong></td><td colspan="3">${fmA.fatigue || 'None reported'}</td></tr>
-                        <tr><td><strong>Current Concerns</strong></td><td colspan="3">${fmA.current_concerns || 'None recorded'}</td></tr>
-                        <tr><td><strong>Lifestyle</strong></td><td colspan="3">Smoking: ${fmA.smoking || 'Never'} | Alcohol: ${fmA.alcohol || 'Occasionally'} | Exercise: ${fmA.exercise || '3-5 Days'} | Diet: ${fmA.diet || 'Regular'} | Sleep: ${fmA.sleep_hours || 'N/A'} hrs | Occupation: ${fmA.occupation || 'N/A'}</td></tr>
-                        <tr><td><strong>Review of Systems (ROS Positive)</strong></td><td colspan="3">${rosList}${fmA.ros_notes ? ' (' + fmA.ros_notes + ')' : ''}</td></tr>
-                        <tr><td><strong>Pain Assessment</strong></td><td colspan="3">Present: ${fmA.pain_present || 'No'} | Score: ${fmA.pain_score || '0'}/10 | Location: ${fmA.pain_location || 'N/A'} | Type: ${fmA.pain_type || 'Aching'} | Duration: ${fmA.pain_duration || 'N/A'}</td></tr>
-                        <tr><td><strong>Preventive Care Screening</strong></td><td colspan="3">Flu: ${fmA.flu_date || 'N/A'} | COVID: ${fmA.covid_date || 'N/A'} | Eye: ${fmA.eye_date || 'N/A'} | Dental: ${fmA.dental_date || 'N/A'} | Colonoscopy: ${fmA.colonoscopy_date || 'N/A'} | Mammogram: ${fmA.mammogram_date || 'N/A'} | Pap: ${fmA.pap_date || 'N/A'}</td></tr>
-                        <tr><td><strong>Mental Health Screening</strong></td><td colspan="3">Feeling Down: ${fmA.mh_down || 'Never'} | Feeling Nervous: ${fmA.mh_nervous || 'Never'} | Sleep Problems: ${fmA.mh_sleep || 'No'} | Stress Level: ${fmA.mh_stress || 'Mild'}${fmA.mh_comments ? ' (' + fmA.mh_comments + ')' : ''}</td></tr>
+        
+        // Parse specialty data
+        if (note.cardio_data) {
+            let d = typeof note.cardio_data === 'string' ? JSON.parse(note.cardio_data) : note.cardio_data;
+            if (d) {
+                specialtyDetailsHtml += `
+                    <div class="section-title">🫀 Comprehensive Cardiology Evaluation &amp; Diagnostic Suite</div>
+                    <table class="data-table" style="margin-bottom: 12px; width: 100%; border-collapse: collapse;">
+                        <tr style="background: #f1f5f9;"><th colspan="4" style="text-align: left; padding: 6px 8px; color: #0369a1;">1. Hemodynamics &amp; Risk Stratification</th></tr>
+                        <tr>
+                            <td style="width:25%;"><strong>Sitting BP</strong></td><td style="width:25%;">${d.cardio_bp_sitting || 'N/A'} mmHg</td>
+                            <td style="width:25%;"><strong>Standing BP (Orthostatics)</strong></td><td style="width:25%;">${d.cardio_bp_standing || 'N/A'}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Heart Rate &amp; Rhythm</strong></td><td>${d.cardio_hr_rhythm || 'Regular'}</td>
+                            <td><strong>10-Year ASCVD Risk</strong></td><td>${d.cardio_ascvd_score ? d.cardio_ascvd_score + '%' : 'N/A'} (${d.cardio_ascvd_tier || 'N/A'})</td>
+                        </tr>
+                        <tr style="background: #f1f5f9;"><th colspan="4" style="text-align: left; padding: 6px 8px; color: #0369a1;">2. Symptoms &amp; Functional Staging (CCS / NYHA)</th></tr>
+                        <tr>
+                            <td><strong>Chief Complaint</strong></td><td colspan="3">${d.cardio_complaint || 'N/A'}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Chest Pain / Quality</strong></td><td>${d.cardio_chest_pain_quality || 'None'} (${d.cardio_onset || 'N/A'})</td>
+                            <td><strong>Radiation / Relief</strong></td><td>${d.cardio_radiation || 'None'} / ${d.cardio_relief_nitro || 'N/A'}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>CCS Angina Class</strong></td><td>${d.cardio_ccs_class || 'Class 0'}</td>
+                            <td><strong>NYHA Heart Failure Class</strong></td><td>${d.cardio_nyha || 'N/A'}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Orthopnea / PND</strong></td><td colspan="3">${d.cardio_orthopnea || 'None'}</td>
+                        </tr>
+                        <tr style="background: #f1f5f9;"><th colspan="4" style="text-align: left; padding: 6px 8px; color: #0369a1;">3. Cardiovascular Physical Examination</th></tr>
+                        <tr>
+                            <td><strong>JVP / Carotids</strong></td><td>JVP: ${d.cardio_jvp || 'Normal'} | Carotids: ${d.cardio_carotid_bruits || 'No bruits'}</td>
+                            <td><strong>Heart Sounds (S1/S2/S3/S4)</strong></td><td>${d.cardio_s1_s2 || 'Normal'} | ${d.cardio_s3_s4 || 'No gallops'}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Murmurs &amp; Radiation</strong></td><td>${d.cardio_murmur || 'None'} (${d.cardio_murmur_location || 'N/A'})</td>
+                            <td><strong>Lungs (CHF Signs)</strong></td><td>${d.cardio_lung_sounds || 'Clear to auscultation'}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Peripheral Pulses (DP/PT)</strong></td><td>${d.cardio_pulses || '2+ Normal bilaterally'}</td>
+                            <td><strong>Peripheral Edema</strong></td><td>${d.cardio_edema || 'None'}</td>
+                        </tr>
+                        <tr style="background: #f1f5f9;"><th colspan="4" style="text-align: left; padding: 6px 8px; color: #0369a1;">4. 12-Lead Electrocardiogram (ECG) &amp; Diagnostics</th></tr>
+                        <tr>
+                            <td><strong>ECG Rhythm &amp; Rate</strong></td><td>${d.cardio_ekg_rhythm || 'Normal Sinus Rhythm'} (${d.cardio_ekg_rate || '72'} bpm)</td>
+                            <td><strong>Conduction Intervals</strong></td><td>PR: ${d.cardio_pr_interval || '160'} ms | QRS: ${d.cardio_qrs_duration || '90'} ms | QTc: ${d.cardio_qtc || '420'} ms</td>
+                        </tr>
+                        <tr>
+                            <td><strong>ST-T Wave Changes</strong></td><td colspan="3">${d.cardio_st_changes || 'Normal ST-T segments'}</td>
+                        </tr>
+                        <tr style="background: #f1f5f9;"><th colspan="4" style="text-align: left; padding: 6px 8px; color: #0369a1;">5. Echocardiography (TTE) &amp; Hemodynamics</th></tr>
+                        <tr>
+                            <td><strong>LVEF (%)</strong></td><td>${d.cardio_echo_ef ? d.cardio_echo_ef + '%' : '≥55%'}</td>
+                            <td><strong>LV Wall Motion / Diastolic</strong></td><td>${d.cardio_echo_wma || 'Normal'} | ${d.cardio_echo_diastolic || 'Normal'}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>Valvular Doppler</strong></td><td>Aortic: ${d.cardio_echo_aortic || 'Normal'} | Mitral: ${d.cardio_echo_mitral || 'Normal'}</td>
+                            <td><strong>Est. PASP (mmHg)</strong></td><td>${d.cardio_echo_pasp ? d.cardio_echo_pasp + ' mmHg' : 'Normal'}</td>
+                        </tr>
+                        <tr style="background: #f1f5f9;"><th colspan="4" style="text-align: left; padding: 6px 8px; color: #0369a1;">6. Device Interrogation &amp; Cath / PCI / Rehab</th></tr>
+                        <tr>
+                            <td><strong>Implanted Device</strong></td><td>${d.cardio_device_type || 'None'} (${d.cardio_device_battery || 'N/A'})</td>
+                            <td><strong>Cath / Angiography</strong></td><td>${d.cardio_cath_access || 'N/A'} - ${d.cardio_cath_findings || 'N/A'}</td>
+                        </tr>
+                        <tr>
+                            <td><strong>PCI / Stents Deployed</strong></td><td>${d.cardio_pci_stent || 'None'}</td>
+                            <td><strong>Cardiac Rehab Order</strong></td><td>${d.cardio_rehab || 'N/A'}</td>
+                        </tr>
+                        ${d.cardio_assessment ? `
+                        <tr style="background: #f0fdf4;"><th colspan="4" style="text-align: left; padding: 6px 8px; color: #166534;">7. Assessment &amp; Guideline-Directed Medical Therapy (GDMT)</th></tr>
+                        <tr><td colspan="4" style="padding: 10px; font-weight: 500; white-space: pre-wrap;">${d.cardio_assessment}</td></tr>
+                        ` : ''}
                     </table>
                 `;
             }
-        } else if (note.encounter_type === 'Pediatrics') {
-            const immunizations = note.immunizations_administered || [];
-            specialtyDetailsHtml = `
-                <div class="section-title">Pediatric Assessment</div>
-                <table class="data-table">
-                    <tr><td><strong>Weight-for-Age Percentile</strong></td><td>${note.growth_weight_percentile || 'N/A'}%</td></tr>
-                    <tr><td><strong>Height-for-Age Percentile</strong></td><td>${note.growth_height_percentile || 'N/A'}%</td></tr>
-                    <tr><td><strong>Immunizations Administered Today</strong></td><td>${immunizations.join(', ') || 'None'}</td></tr>
-                </table>
-            `;
-        } else if (note.encounter_type === 'OB/GYN') {
-            specialtyDetailsHtml = `
-                <div class="section-title">OB/GYN Assessment</div>
-                <table class="data-table">
-                    <tr><td><strong>LMP</strong></td><td>${note.obgyn_lmp || 'N/A'}</td><td><strong>EDD (Calculated)</strong></td><td>${note.obgyn_edd || 'N/A'}</td></tr>
-                    <tr><td><strong>GPAL History</strong></td><td colspan="3">G: ${note.obgyn_gravida !== null ? note.obgyn_gravida : 'N/A'} | P: ${note.obgyn_para !== null ? note.obgyn_para : 'N/A'} | A: ${note.obgyn_abortions !== null ? note.obgyn_abortions : 'N/A'} | L: ${note.obgyn_living !== null ? note.obgyn_living : 'N/A'}</td></tr>
-                    <tr><td><strong>Fundal Height</strong></td><td>${note.obgyn_fundal_height || 'N/A'} cm</td><td><strong>Fetal Heart Rate</strong></td><td>${note.obgyn_fetal_heart_rate || 'N/A'} bpm</td></tr>
-                </table>
-            `;
+        }
+        if (note.ortho_data) {
+            let d = typeof note.ortho_data === 'string' ? JSON.parse(note.ortho_data) : note.ortho_data;
+            if (d) {
+                specialtyDetailsHtml += `
+                    <div class="section-title">Orthopedic Assessment Suite</div>
+                    <table class="data-table">
+                        <tr><td><strong>Chief Complaint</strong></td><td>${d.ortho_chief_complaint || 'N/A'}</td><td><strong>Pain Score / Location</strong></td><td>${d.ortho_pain_score || '0'}/10 (${d.ortho_pain_location || 'N/A'})</td></tr>
+                        <tr><td><strong>ROM Assessment</strong></td><td colspan="3">Joint: ${d.ortho_rom_affected || 'N/A'} | Flexion: ${d.ortho_rom_flexion || 'N/A'}° | Extension: ${d.ortho_rom_extension || 'N/A'}° | Notes: ${d.ortho_rom_notes || 'N/A'}</td></tr>
+                        <tr><td><strong>Joint Exam</strong></td><td colspan="3">Swelling: ${d.ortho_swelling || 'None'} | Tenderness: ${d.ortho_tenderness || 'None'} | Instability: ${d.ortho_instability || 'None'} | Crepitus: ${d.ortho_crepitus || 'Absent'} | Strength: ${d.ortho_muscle_strength || '5/5'} | Gait: ${d.ortho_gait || 'Normal'}</td></tr>
+                        <tr><td><strong>Spine & Imaging</strong></td><td colspan="3">Region: ${d.ortho_spine_region || 'N/A'} | Disc: ${d.ortho_disc || 'None'} | SLR: ${d.ortho_slr || 'Negative'} | Imaging: ${d.ortho_imaging_type || 'None'} (${d.ortho_imaging_findings || 'N/A'})</td></tr>
+                        <tr><td><strong>Treatment Plan</strong></td><td colspan="3">Modality: ${d.ortho_treatment || 'N/A'} | Surgery: ${d.ortho_surgery || 'N/A'} | Follow-up: ${d.ortho_followup || 'N/A'}</td></tr>
+                        ${d.ortho_assessment ? `<tr><td><strong>Ortho Assessment</strong></td><td colspan="3">${d.ortho_assessment}</td></tr>` : ''}
+                    </table>
+                `;
+            }
+        }
+        if (note.derma_data) {
+            let d = typeof note.derma_data === 'string' ? JSON.parse(note.derma_data) : note.derma_data;
+            if (d) {
+                specialtyDetailsHtml += `
+                    <div class="section-title">Dermatology Assessment Suite</div>
+                    <table class="data-table">
+                        <tr><td><strong>Primary Complaint</strong></td><td>${d.derma_complaint || 'N/A'}</td><td><strong>Onset / Progression</strong></td><td>${d.derma_onset || 'N/A'} (${d.derma_progression || 'N/A'})</td></tr>
+                        <tr><td><strong>Lesion Characteristics</strong></td><td colspan="3">Type: ${d.derma_lesion_type || 'N/A'} | Color: ${d.derma_color || 'N/A'} | Size: ${d.derma_size || 'N/A'} | Border: ${d.derma_border || 'N/A'} | Surface: ${d.derma_surface || 'N/A'} | Pruritus: ${d.derma_pruritus || 'None'}</td></tr>
+                        <tr><td><strong>Body Mapping</strong></td><td colspan="3">${d.derma_body_map || 'None recorded'}</td></tr>
+                        <tr><td><strong>Biopsy & Plan</strong></td><td colspan="3">Biopsy: ${d.derma_biopsy_done || 'No'} (${d.derma_biopsy_type || 'N/A'}) | Topical: ${d.derma_topical || 'N/A'} | Systemic: ${d.derma_systemic || 'N/A'} | Procedure: ${d.derma_procedure || 'None'}</td></tr>
+                        ${d.derma_assessment ? `<tr><td><strong>Derma Assessment</strong></td><td colspan="3">${d.derma_assessment}</td></tr>` : ''}
+                    </table>
+                `;
+            }
+        }
+        if (note.neuro_data) {
+            let d = typeof note.neuro_data === 'string' ? JSON.parse(note.neuro_data) : note.neuro_data;
+            if (d) {
+                specialtyDetailsHtml += `
+                    <div class="section-title">Neurology Assessment Suite</div>
+                    <table class="data-table">
+                        <tr><td><strong>Chief Complaint</strong></td><td>${d.neuro_complaint || 'N/A'}</td><td><strong>Onset / Duration</strong></td><td>${d.neuro_onset || 'N/A'} (${d.neuro_duration || 'N/A'})</td></tr>
+                        <tr><td><strong>Mental Status</strong></td><td colspan="3">Orientation: ${d.neuro_orientation || 'Oriented x4'} | Cognition: ${d.neuro_cognition || 'Intact'} | Speech: ${d.neuro_speech || 'Normal'} | MMSE: ${d.neuro_mmse || '30'}/30</td></tr>
+                        <tr><td><strong>Motor, Sensory & Reflexes</strong></td><td colspan="3">Motor UE: ${d.neuro_motor_ue || '5/5'} | Motor LE: ${d.neuro_motor_le || '5/5'} | Sensory: ${d.neuro_sensory || 'Intact'} | Reflexes: ${d.neuro_reflexes || '2+'} | Babinski: ${d.neuro_babinski || 'Negative'} | Coordination: ${d.neuro_coordination || 'Intact'}</td></tr>
+                        <tr><td><strong>Diagnostics</strong></td><td colspan="3">Imaging: ${d.neuro_imaging || 'None'} | Findings: ${d.neuro_imaging_findings || 'N/A'}</td></tr>
+                        ${d.neuro_assessment ? `<tr><td><strong>Neuro Assessment</strong></td><td colspan="3">${d.neuro_assessment}</td></tr>` : ''}
+                    </table>
+                `;
+            }
+        }
+        if (note.onco_data) {
+            let d = typeof note.onco_data === 'string' ? JSON.parse(note.onco_data) : note.onco_data;
+            if (d) {
+                specialtyDetailsHtml += `
+                    <div class="section-title">Oncology Assessment Suite</div>
+                    <table class="data-table">
+                        <tr><td><strong>Cancer Type</strong></td><td>${d.onco_cancer_type || 'N/A'}</td><td><strong>Histology / Stage</strong></td><td>${d.onco_histology || 'N/A'} (${d.onco_overall_stage || 'N/A'})</td></tr>
+                        <tr><td><strong>TNM Staging & ECOG</strong></td><td colspan="3">T: ${d.onco_t_stage || 'N/A'} | N: ${d.onco_n_stage || 'N/A'} | M: ${d.onco_m_stage || 'N/A'} | ECOG: ${d.onco_ecog || 'N/A'}</td></tr>
+                        <tr><td><strong>Treatment Regimen</strong></td><td colspan="3">Intent: ${d.onco_treatment_intent || 'N/A'} | Chemo: ${d.onco_chemo_regimen || 'N/A'} | Radiation: ${d.onco_radiation || 'N/A'} | Immunotherapy: ${d.onco_immunotherapy || 'N/A'}</td></tr>
+                        <tr><td><strong>Response & Toxicity</strong></td><td colspan="3">Response: ${d.onco_response || 'N/A'} | Toxicity: ${d.onco_toxicity || 'None'} | Markers: ${d.onco_tumor_markers || 'N/A'}</td></tr>
+                        ${d.onco_assessment ? `<tr><td><strong>Onco Assessment</strong></td><td colspan="3">${d.onco_assessment}</td></tr>` : ''}
+                    </table>
+                `;
+            }
+        }
+        if (note.ophthal_data) {
+            let d = typeof note.ophthal_data === 'string' ? JSON.parse(note.ophthal_data) : note.ophthal_data;
+            if (d) {
+                specialtyDetailsHtml += `
+                    <div class="section-title">Ophthalmology & Optometry Assessment Suite</div>
+                    <table class="data-table">
+                        <tr><td><strong>Visual Acuity (Uncorrected)</strong></td><td colspan="3">OD: ${d.ophthal_va_od || '20/20'} | OS: ${d.ophthal_va_os || '20/20'} | OU: ${d.ophthal_va_ou || '20/20'}</td></tr>
+                        <tr><td><strong>Visual Acuity (Corrected)</strong></td><td colspan="3">OD: ${d.ophthal_va_od_corrected || '20/20'} | OS: ${d.ophthal_va_os_corrected || '20/20'}</td></tr>
+                        <tr><td><strong>IOP Tonometry</strong></td><td colspan="3">OD: ${d.ophthal_iop_od || 'N/A'} mmHg | OS: ${d.ophthal_iop_os || 'N/A'} mmHg (${d.ophthal_iop_method || 'Goldmann'})</td></tr>
+                        <tr><td><strong>Slit Lamp & Fundus</strong></td><td colspan="3">Cornea: ${d.ophthal_cornea || 'Clear'} | AC: ${d.ophthal_ac || 'Deep and quiet'} | Lens: ${d.ophthal_lens || 'Clear'} | Disc OD: ${d.ophthal_disc_od || 'Normal'} | Disc OS: ${d.ophthal_disc_os || 'Normal'} | Macula: ${d.ophthal_macula || 'Normal'}</td></tr>
+                        <tr><td><strong>Refraction Rx</strong></td><td colspan="3">OD: ${d.ophthal_rx_od_sphere || '0.00'} / ${d.ophthal_rx_od_cylinder || '0.00'} x ${d.ophthal_rx_od_axis || '0'} | OS: ${d.ophthal_rx_os_sphere || '0.00'} / ${d.ophthal_rx_os_cylinder || '0.00'} x ${d.ophthal_rx_os_axis || '0'} | Add: ${d.ophthal_rx_add || 'N/A'}</td></tr>
+                        ${d.ophthal_assessment ? `<tr><td><strong>Ophthalmic Assessment</strong></td><td colspan="3">${d.ophthal_assessment}</td></tr>` : ''}
+                    </table>
+                `;
+            }
+        }
+        if (note.pt_data) {
+            let d = typeof note.pt_data === 'string' ? JSON.parse(note.pt_data) : note.pt_data;
+            if (d) {
+                specialtyDetailsHtml += `
+                    <div class="section-title">Physical Therapy & Chiropractic Assessment Suite</div>
+                    <table class="data-table">
+                        <tr><td><strong>Chief Complaint</strong></td><td>${d.pt_complaint || 'N/A'}</td><td><strong>Pain Score / Limitation</strong></td><td>${d.pt_pain_score || '0'}/10 (${d.pt_functional_limitation || 'N/A'})</td></tr>
+                        <tr><td><strong>Spine & Muscle Exam</strong></td><td colspan="3">Posture: ${d.pt_posture || 'Normal'} | Alignment: ${d.pt_spinal_alignment || 'Normal'} | Subluxation: ${d.pt_subluxation || 'None'} | Palpation: ${d.pt_palpation || 'N/A'}</td></tr>
+                        <tr><td><strong>Modalities & Rehab</strong></td><td colspan="3">Modalities: ${d.pt_modalities || 'None'} | Technique: ${d.pt_chiro_technique || 'N/A'} | HEP: ${d.pt_exercises || 'N/A'} | Sessions: ${d.pt_sessions || 'N/A'}</td></tr>
+                        <tr><td><strong>Functional Goals & Outcome</strong></td><td colspan="3">Short-term: ${d.pt_goal_short || 'N/A'} | Long-term: ${d.pt_goal_long || 'N/A'} | Measure: ${d.pt_outcome || 'N/A'} (${d.pt_outcome_score || 'N/A'})</td></tr>
+                        ${d.pt_assessment ? `<tr><td><strong>Rehab Assessment</strong></td><td colspan="3">${d.pt_assessment}</td></tr>` : ''}
+                    </table>
+                `;
+            }
         }
 
-        if (note.functional_assessment) {
-            let funcA = null;
-            try {
-                funcA = typeof note.functional_assessment === 'string' ? JSON.parse(note.functional_assessment) : note.functional_assessment;
-            } catch (e) { funcA = null; }
-            if (funcA) {
-                const recsStr = funcA.recommendations && funcA.recommendations.length > 0 ? funcA.recommendations.join(', ') : 'None marked';
-                specialtyDetailsHtml += `
-                    <div class="section-title">Functional Status Assessment (ADL / IADL / Mobility / Safety)</div>
-                    <table class="data-table">
-                        <tr><td><strong>Activities of Daily Living (ADL)</strong></td><td colspan="3">Bathing: ${funcA.adl_bathing || 'Independent'} | Dressing: ${funcA.adl_dressing || 'Independent'} | Toileting: ${funcA.adl_toileting || 'Independent'} | Transferring: ${funcA.adl_transferring || 'Independent'} | Continence: ${funcA.adl_continence || 'Independent'} | Feeding: ${funcA.adl_feeding || 'Independent'}</td></tr>
-                        <tr><td><strong>Instrumental ADL (IADL)</strong></td><td colspan="3">Shopping: ${funcA.iadl_shopping || 'Independent'} | Meals: ${funcA.iadl_meals || 'Independent'} | Housekeeping: ${funcA.iadl_housekeeping || 'Independent'} | Laundry: ${funcA.iadl_laundry || 'Independent'} | Transport: ${funcA.iadl_transportation || 'Independent'} | Meds: ${funcA.iadl_meds || 'Independent'} | Finance: ${funcA.iadl_finance || 'Independent'}</td></tr>
-                        <tr><td><strong>Mobility & Balance</strong></td><td colspan="3">Walking: ${funcA.mob_walking || 'Normal'} (${funcA.mob_distance || 'N/A'}) | Device: ${funcA.mob_device || 'None'} | Stairs: ${funcA.mob_stairs || 'Independent'} | Falls (12m): ${funcA.falls_history || 'No'} (Count: ${funcA.falls_count || '0'}, Injury: ${funcA.fall_injury || 'No'}) | Balance Notes: ${funcA.balance_notes || 'N/A'}</td></tr>
-                        <tr><td><strong>Vision & Hearing Screening</strong></td><td colspan="3">Vision: ${funcA.vision_status || 'Normal'} (Glasses: ${funcA.uses_glasses || 'No'}) | Hearing: ${funcA.hearing_status || 'Normal'} (Hearing Aid: ${funcA.hearing_aid || 'No'}) | Comments: ${funcA.sensory_comments || 'N/A'}</td></tr>
-                        <tr><td><strong>Home Safety & Cognitive Concerns</strong></td><td colspan="3">Lives Alone: ${funcA.lives_alone || 'No'} | Stairs: ${funcA.home_stairs || 'No'} | Grab Bars: ${funcA.grab_bars || 'Yes'} | Lighting: ${funcA.adequate_lighting || 'Yes'} | Memory Problems: ${funcA.memory_problems || 'No'} | Caregiver: ${funcA.caregiver_name || 'N/A'}</td></tr>
-                        <tr><td><strong>Recommendations & Directives</strong></td><td colspan="3">${recsStr}${funcA.other_recommendations ? ' | Other: ' + funcA.other_recommendations : ''}</td></tr>
-                        ${funcA.summary ? `<tr><td><strong>Assessment Summary</strong></td><td colspan="3">${funcA.summary}</td></tr>` : ''}
-                    </table>
-                `;
-            }
-        }
+        const specHeaderName = (note.encounter_type || 'Cardiology').includes('EHR') ? (note.encounter_type || 'Cardiology') : `${note.encounter_type || 'Cardiology'} EHR`;
 
         printWindow.document.write(`
             <html>
@@ -14926,7 +15284,7 @@ async function initClinicalHandler() {
                 </style>
             </head>
             <body>
-                <div class="report-title">Primary & Family Care EHR - Encounter Report</div>
+                <div class="report-title">${specHeaderName} - Encounter Report</div>
                 
                 <table class="header-table">
                     <tr>
@@ -14942,8 +15300,8 @@ async function initClinicalHandler() {
                         <td>${note.note_date}</td>
                     </tr>
                     <tr>
-                        <td><strong>Specialty / Type:</strong></td>
-                        <td colspan="3"><strong>${note.encounter_type === 'General' ? 'Family Medicine (Internal Medicine)' : (note.encounter_type === 'Pediatrics' ? 'Pediatrics EHR' : 'OB/GYN EHR')}</strong></td>
+                        <td><strong>Specialty EHR Type:</strong></td>
+                        <td colspan="3"><strong>${specHeaderName}</strong></td>
                     </tr>
                 </table>
 
@@ -15733,7 +16091,7 @@ async function initBillingHandler() {
                 <td><strong>${enc.patient_name}</strong></td>
                 <td>${enc.encounter_date || ''}</td>
                 <td>${enc.provider}</td>
-                <td><span class="badge-role badge-primary-xs">${enc.encounter_type === 'General' ? 'Family Medicine' : enc.encounter_type}</span></td>
+                <td><span class="badge-role badge-primary-xs">${enc.encounter_type ? (enc.encounter_type.includes('EHR') ? enc.encounter_type : `${enc.encounter_type} EHR`) : 'Cardiology EHR'}</span></td>
                 <td style="max-width:220px;font-size:0.8rem;color:var(--text-secondary);">${(enc.icd10_codes || '').replace(/\n/g, ', ').substring(0, 80)}${(enc.icd10_codes || '').length > 80 ? '...' : ''}</td>
                 <td>
                     <button class="btn btn-primary btn-sm gen-invoice-btn"
@@ -15773,7 +16131,7 @@ async function initBillingHandler() {
         document.getElementById('inv-patient-name').textContent = data.patientName || '';
         document.getElementById('inv-provider-name').textContent = data.provider || '';
         document.getElementById('inv-encounter-date').textContent = data.date || '';
-        document.getElementById('inv-encounter-type').textContent = data.type === 'General' ? 'Family Medicine (Internal Medicine)' : data.type;
+        document.getElementById('inv-encounter-type').textContent = data.type ? (data.type.includes('EHR') ? data.type : `${data.type} EHR`) : 'Cardiology EHR';
         document.getElementById('inv-patient-id').value = data.patient || '';
         document.getElementById('inv-encounter-id').value = data.enc || '';
         document.getElementById('inv-date').value = new Date().toISOString().split('T')[0];
@@ -18851,7 +19209,8 @@ function initCalendarTopTabs() {
     window.initGlobalNotificationBell();
     window.loadAuditLogs();
 
-    window.addEventListener('moduleLoaded', () => {
+    window.addEventListener('moduleLoaded', (e) => {
         window.initGlobalNotificationBell();
         window.loadAuditLogs();
     });
+

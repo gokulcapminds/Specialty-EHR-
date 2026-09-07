@@ -10,9 +10,9 @@ class AuthController {
         $input = json_decode(file_get_contents('php://input'), true);
         $username = $input['username'] ?? '';
         $password = $input['password'] ?? '';
-        $specialty = trim($input['specialty'] ?? 'Primary Care / Family Medicine');
+        $specialty = trim($input['specialty'] ?? 'Cardiology');
         if (empty($specialty)) {
-            $specialty = 'Primary Care / Family Medicine';
+            $specialty = 'Cardiology';
         }
 
         header('Content-Type: application/json');
@@ -94,7 +94,7 @@ class AuthController {
                 'id' => $_SESSION['user_id'],
                 'username' => $_SESSION['username'],
                 'role' => $_SESSION['user_role'],
-                'specialty' => $_SESSION['active_specialty'] ?? 'Primary Care / Family Medicine',
+                'specialty' => $_SESSION['active_specialty'] ?? 'Cardiology',
                 'first_name' => $_SESSION['first_name'] ?? '',
                 'last_name' => $_SESSION['last_name'] ?? '',
                 'csrf_token' => CSRFTokenManager::generateToken()
