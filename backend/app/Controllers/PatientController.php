@@ -47,7 +47,7 @@ class PatientController {
                 FROM patients p
                 LEFT JOIN users u ON p.primary_provider_id = u.id
                 LEFT JOIN patient_insurance pi ON p.id = pi.patient_id
-                LEFT JOIN patient_intake_forms pif ON p.id = pif.patient_id
+                LEFT JOIN patient_intake_forms pif ON pif.id = (SELECT MAX(id) FROM patient_intake_forms WHERE patient_id = p.id)
                 WHERE p.id = ?";
 
         $pt = Database::fetch($sql, [$id]);
@@ -93,7 +93,7 @@ class PatientController {
                 FROM patients p
                 LEFT JOIN users u ON p.primary_provider_id = u.id
                 LEFT JOIN patient_insurance pi ON p.id = pi.patient_id
-                LEFT JOIN patient_intake_forms pif ON p.id = pif.patient_id
+                LEFT JOIN patient_intake_forms pif ON pif.id = (SELECT MAX(id) FROM patient_intake_forms WHERE patient_id = p.id)
                 ORDER BY p.id DESC";
         $params = [];
 
@@ -353,9 +353,19 @@ class PatientController {
         $newId = Database::lastInsertId();
 
         if (!empty($insuranceProvider) || !empty($insurancePolicy)) {
+            $payerId = $input['payer_id'] ?? '';
+            $groupNo = $input['group_number'] ?? '';
+            $planName = $input['plan_name'] ?? '';
+            $effDate = !empty($input['effective_date']) ? $input['effective_date'] : null;
+            $subName = $input['subscriber_name'] ?? '';
+            $subDob = !empty($input['subscriber_dob']) ? $input['subscriber_dob'] : null;
+            $subRel = $input['subscriber_relationship'] ?? '';
+            $copayVal = $input['copay'] ?? ($input['copay_amount'] ?? null);
+            $insPhoneVal = $input['insurance_phone'] ?? null;
+
             Database::query(
-                "INSERT INTO patient_insurance (patient_id, primary_provider, primary_policy_no) VALUES (?, ?, ?)",
-                [$newId, $insuranceProvider, $insurancePolicy]
+                "INSERT INTO patient_insurance (patient_id, primary_provider, payer_id, primary_policy_no, primary_group_no, plan_name, effective_date, subscriber_name, subscriber_dob, subscriber_relationship, copay, insurance_phone) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [$newId, $insuranceProvider, $payerId, $insurancePolicy, $groupNo, $planName, $effDate, $subName, $subDob, $subRel, $copayVal, $insPhoneVal]
             );
         }
 

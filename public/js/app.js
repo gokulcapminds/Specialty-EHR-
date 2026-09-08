@@ -4552,7 +4552,7 @@ async function initPatientsHandler() {
             is_po_box: isPoBox,
             county: county,
 
-            phone: cellPhone || homePhone || '555-0199',
+            phone: cellPhone || homePhone || '',
             home_phone: homePhone,
             work_phone: workPhone,
             work_phone_ext: workPhoneExt,
@@ -4588,11 +4588,12 @@ async function initPatientsHandler() {
             about_patient: aboutPatient,
             hear_source: hearSource,
             hear_specific_source: hearSpecificSource,
-
-            ssn: `XXX-XX-${Math.floor(1000 + Math.random() * 9000)}`,
-            insurance_provider: paymentSource || 'Blue Cross Blue Shield',
-            primary_provider_id: 1
         };
+
+        const ssnIdEntry = patientIdsList.find(idRow => (idRow.type || '').toUpperCase() === 'SSN');
+        if (ssnIdEntry && ssnIdEntry.val) {
+            payload.ssn = ssnIdEntry.val;
+        }
 
         const endpoint = currentEditingPatientId ? `/api/patient/${currentEditingPatientId}` : '/api/patient';
         const method = currentEditingPatientId ? 'PUT' : 'POST';
