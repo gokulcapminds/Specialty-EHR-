@@ -224,8 +224,10 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 -- doctor / DoctorPassword123!
 -- therapist / TherapistPassword123!
 -- billing / BillingPassword123!
+-- front_desk / FrontDeskPassword123!
 INSERT INTO users (username, password_hash, first_name, last_name, email, role, theme_preference) VALUES
 ('admin', '$2y$10$QfFvTum.HlOmRKtDt5plXerArLDkq.yIUP5bI/.bNZ51PqSHCMN1K', 'System', 'Admin', 'admin@bhevariol.health', 'Super Admin', 'dark'),
 ('dr_smith', '$2y$10$9ZsFoTAY7.PDaBUhysaV7Od63hkCe5Ftq8rmyEnCxu2miGSwoeh5y', 'John', 'Smith', 'smith@bhevariol.health', 'Doctor', 'light'),
 ('therapist_jane', '$2y$10$xznqJ.K94W8Se1tBCq0DUOwqWKtelBRNuN4I84Va9DaJdRlp6hYam', 'Jane', 'Doe', 'jane@bhevariol.health', 'Therapist', 'light'),
-('billing_staff', '$2y$10$b0W.kub8qC1jsodXi77QT.i23GsExUF0a2K4CESwn5z9jM1awq8SO', 'Bob', 'Johnson', 'bob@bhevariol.health', 'Billing Staff', 'classic');
+('billing_staff', '$2y$10$b0W.kub8qC1jsodXi77QT.i23GsExUF0a2K4CESwn5z9jM1awq8SO', 'Bob', 'Johnson', 'bob@bhevariol.health', 'Billing Staff', 'classic'),
+('front_desk', '$2y$10$oZ1uXVXYOSgnKVENh8abneqdM97XPR/2pCbyV4.MfH8E2KWDj7DiG', 'Sarah', 'Miller', 'frontdesk@bhevariol.health', 'Receptionist', 'light');

@@ -505,4 +505,75 @@ class BillingController {
         header('Content-Type: application/json');
         echo json_encode(['status' => 'error', 'message' => 'Use the new invoice API.']);
     }
+
+    // ---------------------------------------------------------------
+    // GET /api/billing/queue
+    // Phase 2 Billing Handoff (BILL-HANDOFF-001, BILL-HANDOFF-003)
+    // Returns signed/locked encounters with billing_queue_status = 'pending_review'
+    // for charge capture by billers. Core does NOT submit claims (BILL-HANDOFF-002).
+    // ---------------------------------------------------------------
+    public function billingQueue(): void {
+        $this->checkAccess(['Super Admin', 'Billing Staff', 'Doctor']);
+        header('Content-Type: application/json');
+
+        $sql = "SELECT
+                    cn.id               AS encounter_id,
+                    cn.patient_id,
+                    cn.provider_id,
+                    cn.note_date        AS encounter_date,
+                    cn.encounter_type   AS specialty,
+                    cn.visit_type,
+                    cn.encounter_mode,
+                    cn.encounter_status,
+                    cn.billing_queue_status,
+                    cn.chief_complaint,
+                    cn.icd10_codes,
+                    cn.signed_by_name,
+                    cn.signed_by_credentials,
+                    cn.signed_at,
+                    cn.locked_at,
+                    p.first_name_encrypted,
+                    p.last_name_encrypted,
+                    u.first_name        AS prov_first_name,
+                    u.last_name         AS prov_last_name
+                FROM clinical_notes cn
+                JOIN patients p ON cn.patient_id = p.id
+                JOIN users u    ON cn.provider_id = u.id
+                WHERE cn.lock_state = 1
+                  AND cn.billing_queue_status = 'pending_review'
+                ORDER BY cn.locked_at DESC";
+
+        $rows = Database::fetchAll($sql, []);
+        $result = [];
+        foreach ($rows as $r) {
+            $result[] = [
+                'encounter_id'        => $r['encounter_id'],
+                'patient_id'          => $r['patient_id'],
+                'patient_name'        => $this->decryptPatientName($r),
+                'provider'            => 'Dr. ' . $r['prov_first_name'] . ' ' . $r['prov_last_name'],
+                'encounter_date'      => $r['encounter_date'],
+                'specialty'           => $r['specialty'],
+                'visit_type'          => $r['visit_type'],
+                'encounter_mode'      => $r['encounter_mode'],
+                'chief_complaint'     => $r['chief_complaint'],
+                'icd10_codes'         => $r['icd10_codes'],
+                'signed_by'           => $r['signed_by_name'] . ($r['signed_by_credentials'] ? ', ' . $r['signed_by_credentials'] : ''),
+                'signed_at'           => $r['signed_at'],
+                'locked_at'           => $r['locked_at'],
+                'billing_queue_status'=> $r['billing_queue_status'],
+            ];
+        }
+
+        AuditLogger::log(
+            $_SESSION['user_id'] ?? null,
+            $_SESSION['username'] ?? '',
+            $_SESSION['user_role'] ?? '',
+            null,
+            'View Billing Queue',
+            'Billing',
+            null
+        );
+
+        echo json_encode(['status' => 'success', 'data' => $result, 'count' => count($result)]);
+    }
 }

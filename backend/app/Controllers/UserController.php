@@ -56,11 +56,13 @@ class UserController {
             return;
         }
 
-        $hash = password_hash($password, PASSWORD_BCRYPT);
-        $sql = "INSERT INTO users (username, password_hash, first_name, last_name, role, specialty, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, 1, NOW())";
-        Database::query($sql, [$username, $hash, $first, $last, $role, $specialty]);
+        $email = trim($input['email'] ?? ($username . '@bhevariol.health'));
 
-        AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], null, 'Create User: ' . $username, 'Administration');
+        $hash = password_hash($password, PASSWORD_BCRYPT);
+        $sql = "INSERT INTO users (username, password_hash, first_name, last_name, email, role, specialty, is_active, created_at) VALUES (?, ?, ?, ?, ?, ?, ?, 1, NOW())";
+        Database::query($sql, [$username, $hash, $first, $last, $email, $role, $specialty]);
+
+        AuditLogger::log($_SESSION['user_id'] ?? 1, $_SESSION['username'] ?? 'admin', $_SESSION['user_role'] ?? 'Super Admin', null, 'Create User: ' . $username, 'Administration');
 
         echo json_encode(['status' => 'success', 'message' => 'User created successfully.']);
     }

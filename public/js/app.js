@@ -2710,13 +2710,7 @@ async function openSpecialistReferralModal(targetPatient = null, refToEdit = nul
             <div style="margin-bottom: 16px;">
                 <label style="display: block; font-weight: 600; margin-bottom: 6px; color: #1e293b;">Specialty <span style="color:#ef4444;">*</span></label>
                 <select id="ref-modal-specialty" class="form-control" style="width: 100%; height: 42px; font-size: 0.9rem; border-radius: 6px;" ${refToEdit ? 'disabled' : ''}>
-                    <option value="Cardiology" ${selectedSpecialty === 'Cardiology' ? 'selected' : ''}>Cardiology EHR</option>
-                    <option value="Orthopedics" ${selectedSpecialty === 'Orthopedics' ? 'selected' : ''}>Orthopedic EHR</option>
-                    <option value="Dermatology" ${selectedSpecialty === 'Dermatology' ? 'selected' : ''}>Dermatology EHR</option>
-                    <option value="Neurology" ${selectedSpecialty === 'Neurology' ? 'selected' : ''}>Neurology EHR</option>
-                    <option value="Oncology" ${selectedSpecialty === 'Oncology' ? 'selected' : ''}>Oncology EHR</option>
-                    <option value="Ophthalmology" ${selectedSpecialty === 'Ophthalmology' ? 'selected' : ''}>Ophthalmology EHR (covers optometry)</option>
-                    <option value="Physical Therapy" ${selectedSpecialty === 'Physical Therapy' ? 'selected' : ''}>Physical Therapy EHR (covers chiropractic)</option>
+                    ${window.SPECIALTY_REGISTRY.map(s => `<option value="${s.key}" ${selectedSpecialty === s.key ? 'selected' : ''}>${s.label}</option>`).join('')}
                 </select>
             </div>
 
@@ -10493,13 +10487,16 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
     const selProviderId = editItem ? String(editItem.provider_id || defaultProviderId) : String(defaultProviderId);
     const activeSpec = sessionStorage.getItem('active_specialty') || 'Cardiology EHR';
     let selSpecialty = editItem ? (editItem.specialty || activeSpec) : activeSpec;
-    if (selSpecialty.includes('Cardio')) selSpecialty = 'Cardiology EHR';
-    else if (selSpecialty.includes('Ortho')) selSpecialty = 'Orthopedic EHR';
-    else if (selSpecialty.includes('Derma')) selSpecialty = 'Dermatology EHR';
-    else if (selSpecialty.includes('Neuro')) selSpecialty = 'Neurology EHR';
-    else if (selSpecialty.includes('Onco')) selSpecialty = 'Oncology EHR';
-    else if (selSpecialty.includes('Ophthal')) selSpecialty = 'Ophthalmology EHR';
-    else if (selSpecialty.includes('Physical') || selSpecialty.includes('PT')) selSpecialty = 'Physical Therapy EHR';
+    if (selSpecialty.includes('Cardio')) selSpecialty = 'Cardiology';
+    else if (selSpecialty.includes('Ortho')) selSpecialty = 'Orthopedics';
+    else if (selSpecialty.includes('Derma')) selSpecialty = 'Dermatology';
+    else if (selSpecialty.includes('Neuro')) selSpecialty = 'Neurology';
+    else if (selSpecialty.includes('Onco')) selSpecialty = 'Oncology';
+    else if (selSpecialty.includes('Ophthal')) selSpecialty = 'Ophthalmology';
+    else if (selSpecialty.includes('Physical') || selSpecialty.includes('PT')) selSpecialty = 'Physical Therapy';
+    const specialtyOptionsHtml = window.SPECIALTY_REGISTRY.map(s =>
+        `<option value="${s.key}" ${selSpecialty === s.key ? 'selected' : ''}>${s.label}</option>`
+    ).join('');
     const selVisitType = editItem ? (editItem.visit_type || '') : '';
     const selMode = editItem ? (editItem.appointment_mode || 'In Person') : 'In Person';
     const isWl = editItem ? (editItem.category === 'Waiting List' || editItem.status === 'Waiting List') : false;
@@ -10572,13 +10569,7 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
                     <label style="font-weight: 600; font-size: 0.9rem; text-align: right;">Specialty Type <span style="color:#ef4444;">*</span></label>
                     <select id="swal-appt-specialty" class="form-control" style="height:36px; border-radius:4px; font-size:0.9rem;">
                         <option value="">--Select--</option>
-                        <option value="Cardiology EHR" ${selSpecialty === 'Cardiology EHR' || selSpecialty === 'Cardiology' ? 'selected' : ''}>Cardiology EHR</option>
-                        <option value="Orthopedic EHR" ${selSpecialty === 'Orthopedic EHR' || selSpecialty === 'Orthopedics' ? 'selected' : ''}>Orthopedic EHR</option>
-                        <option value="Dermatology EHR" ${selSpecialty === 'Dermatology EHR' || selSpecialty === 'Dermatology' ? 'selected' : ''}>Dermatology EHR</option>
-                        <option value="Neurology EHR" ${selSpecialty === 'Neurology EHR' || selSpecialty === 'Neurology' ? 'selected' : ''}>Neurology EHR</option>
-                        <option value="Oncology EHR" ${selSpecialty === 'Oncology EHR' || selSpecialty === 'Oncology' ? 'selected' : ''}>Oncology EHR</option>
-                        <option value="Ophthalmology EHR" ${selSpecialty === 'Ophthalmology EHR' || selSpecialty === 'Ophthalmology' ? 'selected' : ''}>Ophthalmology EHR (covers optometry)</option>
-                        <option value="Physical Therapy EHR" ${selSpecialty === 'Physical Therapy EHR' || selSpecialty === 'Physical Therapy' ? 'selected' : ''}>Physical Therapy EHR (covers chiropractic)</option>
+                        ${specialtyOptionsHtml}
                     </select>
                 </div>
 
@@ -10810,13 +10801,7 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
                     <label style="font-weight: 600; font-size: 0.9rem; text-align: right;">Specialty Type <span style="color:#ef4444;">*</span></label>
                     <select id="swal-wl-specialty" class="form-control" style="height:36px; border-radius:4px; font-size:0.9rem;">
                         <option value="">--Select--</option>
-                        <option value="Cardiology EHR" ${selSpecialty === 'Cardiology EHR' || selSpecialty === 'Cardiology' ? 'selected' : ''}>Cardiology EHR</option>
-                        <option value="Orthopedic EHR" ${selSpecialty === 'Orthopedic EHR' || selSpecialty === 'Orthopedics' ? 'selected' : ''}>Orthopedic EHR</option>
-                        <option value="Dermatology EHR" ${selSpecialty === 'Dermatology EHR' || selSpecialty === 'Dermatology' ? 'selected' : ''}>Dermatology EHR</option>
-                        <option value="Neurology EHR" ${selSpecialty === 'Neurology EHR' || selSpecialty === 'Neurology' ? 'selected' : ''}>Neurology EHR</option>
-                        <option value="Oncology EHR" ${selSpecialty === 'Oncology EHR' || selSpecialty === 'Oncology' ? 'selected' : ''}>Oncology EHR</option>
-                        <option value="Ophthalmology EHR" ${selSpecialty === 'Ophthalmology EHR' || selSpecialty === 'Ophthalmology' ? 'selected' : ''}>Ophthalmology EHR (covers optometry)</option>
-                        <option value="Physical Therapy EHR" ${selSpecialty === 'Physical Therapy EHR' || selSpecialty === 'Physical Therapy' ? 'selected' : ''}>Physical Therapy EHR (covers chiropractic)</option>
+                        ${specialtyOptionsHtml}
                     </select>
                 </div>
 
@@ -17727,7 +17712,7 @@ async function initAdministrationHandler() {
                                         <option value="Doctor" ${u.role === 'Doctor' ? 'selected' : ''}>Doctor</option>
                                         <option value="Therapist" ${u.role === 'Therapist' ? 'selected' : ''}>Therapist</option>
                                         <option value="Nurse" ${u.role === 'Nurse' ? 'selected' : ''}>Nurse</option>
-                                        <option value="Receptionist" ${u.role === 'Receptionist' ? 'selected' : ''}>Receptionist</option>
+                                        <option value="Receptionist" ${u.role === 'Receptionist' ? 'selected' : ''}>Receptionist / Front Desk</option>
                                         <option value="Billing Staff" ${u.role === 'Billing Staff' ? 'selected' : ''}>Billing Staff</option>
                                     </select>
                                 </div>
@@ -17859,7 +17844,7 @@ async function initAdministrationHandler() {
                             <option value="Doctor">Doctor</option>
                             <option value="Therapist">Therapist</option>
                             <option value="Nurse">Nurse</option>
-                            <option value="Receptionist">Receptionist</option>
+                            <option value="Receptionist">Receptionist / Front Desk</option>
                             <option value="Billing Staff">Billing Staff</option>
                         </select>
                     </div>

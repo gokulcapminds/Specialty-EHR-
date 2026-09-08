@@ -2,7 +2,12 @@
 <div id="clinical-encounter-modal" class="modal-backdrop hidden">
     <div class="modal-dialog mod-clinical-style-8">
         <div class="modal-header mod-clinical-style-9">
-            <h2 class="mod-clinical-style-10" id="clinical-modal-title">New Clinical Encounter</h2>
+            <div style="display:flex;align-items:center;gap:12px;flex:1;">
+                <h2 class="mod-clinical-style-10" id="clinical-modal-title">New Clinical Encounter</h2>
+                <!-- Phase 2: Encounter status badge (ENC lifecycle indicator) -->
+                <span id="encounter-status-badge" class="enc-status-badge enc-status-draft" title="Encounter Status">Draft</span>
+                <span id="encounter-lock-badge" class="enc-lock-badge hidden" title="Encounter is locked and read-only">🔒 Locked</span>
+            </div>
             <button type="button" class="modal-close" id="close-clinical-modal-btn">&times;</button>
         </div>
         <div class="modal-body mod-clinical-style-11">
@@ -22,13 +27,9 @@
                                 <div class="form-group">
                                     <label class="form-label" for="encounter-type-select">Encounter Type / Specialty</label>
                                     <select id="encounter-type-select" class="form-control mod-clinical-style-14">
-                                        <option value="Cardiology">Cardiology EHR</option>
-                                        <option value="Orthopedics">Orthopedic EHR</option>
-                                        <option value="Dermatology">Dermatology EHR</option>
-                                        <option value="Neurology">Neurology EHR</option>
-                                        <option value="Oncology">Oncology EHR</option>
-                                        <option value="Ophthalmology">Ophthalmology EHR (covers optometry)</option>
-                                        <option value="Physical Therapy">Physical Therapy EHR (covers chiropractic)</option>
+                                        <?php foreach (require __DIR__ . '/../../backend/config/specialties.php' as $specKey => $specDef): ?>
+                                        <option value="<?= htmlspecialchars($specKey) ?>"><?= htmlspecialchars($specDef['label']) ?></option>
+                                        <?php endforeach; ?>
                                     </select>
                                 </div>
                                 <div class="form-group">
@@ -72,6 +73,35 @@
                                 <div class="form-group">
                                     <label class="form-label" for="vital-bmi">Calculated BMI</label>
                                     <input type="number" step="0.1" id="vital-bmi" class="form-control mod-clinical-style-17" readonly placeholder="22.8">
+                                </div>
+                            </div>
+                            <!-- Phase 2 VIT-CORE-001: Pain Score (0-10) -->
+                            <div class="mod-clinical-style-16">
+                                <div class="form-group">
+                                    <label class="form-label" for="vital-pain-score">Pain Score (0–10)</label>
+                                    <input type="number" min="0" max="10" id="vital-pain-score" class="form-control" placeholder="0–10">
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="encounter-visit-type">Visit Type</label>
+                                    <select id="encounter-visit-type" class="form-control">
+                                        <option value="">-- Select --</option>
+                                        <option value="New Patient">New Patient</option>
+                                        <option value="Follow-up">Follow-up</option>
+                                        <option value="Urgent Care">Urgent Care</option>
+                                        <option value="Annual Wellness">Annual Wellness</option>
+                                        <option value="Telehealth">Telehealth</option>
+                                        <option value="Procedure">Procedure</option>
+                                        <option value="Consultation">Consultation</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label class="form-label" for="encounter-mode-select">Encounter Mode</label>
+                                    <select id="encounter-mode-select" class="form-control">
+                                        <option value="In-Person">In-Person</option>
+                                        <option value="Telehealth">Telehealth</option>
+                                        <option value="Walk-In">Walk-In</option>
+                                        <option value="Phone">Phone</option>
+                                    </select>
                                 </div>
                             </div>
                         </form>
@@ -658,8 +688,13 @@
                             
                             <div class="flex-row-end">
                                 <button type="button" class="btn btn-secondary" id="cancel-encounter-btn">Cancel</button>
+                                <!-- Phase 2: Save draft without locking -->
+                                <button type="button" class="btn btn-secondary" id="save-draft-btn">💾 Save Draft</button>
                                 <button type="button" class="btn btn-primary hidden" id="update-encounter-btn">Update Encounter</button>
-                                <button type="button" class="btn btn-primary" id="save-encounter-btn">Submit & Sign Encounter</button>
+                                <!-- Phase 2: Sign & Finalize (SIGN-001) — triggers lock workflow -->
+                                <button type="button" class="btn btn-success" id="sign-finalize-btn">✅ Sign &amp; Finalize</button>
+                                <!-- Phase 2: Addendum button — visible only when locked (SIGN-005) -->
+                                <button type="button" class="btn btn-warning hidden" id="add-addendum-btn">📝 Add Addendum</button>
                             </div>
                         </form>
                     </div>
@@ -669,3 +704,82 @@
         </div>
     </div>
 </div>
+
+<!-- ================================================================
+     Phase 2: Addendum Modal (SIGN-005 / SIGN-006)
+     Appends a timestamped correction to a locked encounter without
+     overwriting the original signed clinical content.
+     ================================================================ -->
+<div id="addendum-modal" class="modal-backdrop hidden">
+    <div class="modal-dialog" style="max-width:560px;">
+        <div class="modal-header mod-clinical-style-9">
+            <h3 style="margin:0;">📝 Add Signed Addendum</h3>
+            <button type="button" class="modal-close" id="close-addendum-modal-btn">&times;</button>
+        </div>
+        <div class="modal-body" style="padding:24px;">
+            <p class="text-secondary" style="font-size:0.85rem;margin-bottom:16px;">
+                This encounter is <strong>locked</strong>. Your addendum will be appended to the record with your name, role, and timestamp. The original signed note will be preserved unchanged.
+            </p>
+            <div class="form-group">
+                <label class="form-label" for="addendum-text">Addendum Note <span style="color:#e53935;">*</span></label>
+                <textarea id="addendum-text" class="form-control" rows="5" placeholder="Describe the correction or supplementary clinical information..."></textarea>
+            </div>
+            <div id="addendum-status-msg" style="display:none;padding:8px 12px;border-radius:6px;font-size:0.85rem;margin-top:12px;"></div>
+        </div>
+        <div class="modal-footer" style="display:flex;justify-content:flex-end;gap:10px;padding:16px 24px;border-top:1px solid rgba(255,255,255,0.1);">
+            <button type="button" class="btn btn-secondary" id="cancel-addendum-btn">Cancel</button>
+            <button type="button" class="btn btn-warning" id="submit-addendum-btn">Submit Addendum</button>
+        </div>
+    </div>
+</div>
+
+<!-- Phase 2: Encounter Status & Lock CSS tokens -->
+<style>
+.enc-status-badge {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    letter-spacing: 0.04em;
+    text-transform: uppercase;
+}
+.enc-status-draft        { background: rgba(120,120,120,0.25); color: #bbb; }
+.enc-status-in_progress  { background: rgba(33,150,243,0.2);  color: #64b5f6; }
+.enc-status-ready_for_sign { background: rgba(255,193,7,0.2);  color: #ffd54f; }
+.enc-status-signed       { background: rgba(76,175,80,0.2);   color: #81c784; }
+.enc-status-locked       { background: rgba(244,67,54,0.15);  color: #ef9a9a; }
+.enc-lock-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 10px;
+    border-radius: 999px;
+    font-size: 0.72rem;
+    font-weight: 700;
+    background: rgba(244,67,54,0.15);
+    color: #ef9a9a;
+    border: 1px solid rgba(244,67,54,0.3);
+}
+/* Lock overlay: when encounter is locked, dim all editable inputs */
+.encounter-locked input:not([readonly]),
+.encounter-locked textarea,
+.encounter-locked select {
+    opacity: 0.55;
+    pointer-events: none;
+    cursor: not-allowed;
+}
+.btn-success {
+    background: linear-gradient(135deg, #2e7d32, #43a047);
+    color: #fff;
+    border: none;
+}
+.btn-success:hover { background: linear-gradient(135deg, #1b5e20, #2e7d32); }
+.btn-warning {
+    background: linear-gradient(135deg, #e65100, #f57c00);
+    color: #fff;
+    border: none;
+}
+.btn-warning:hover { background: linear-gradient(135deg, #bf360c, #e65100); }
+</style>

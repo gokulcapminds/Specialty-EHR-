@@ -63,11 +63,14 @@ if ($apiPos !== false) {
 
     <!-- Global Application and UI component scripts -->
     <!-- <script type="module" src="js/security/inspector.js?v=<?= time() ?>"></script> -->
+    <script src="js/specialty-registry.js?v=<?= time() ?>"></script>
     <script type="module" src="js/components/toast.js?v=<?= time() ?>"></script>
     <script type="module" src="js/components/modal.js?v=<?= time() ?>"></script>
     <script type="module" src="js/components/accordion.js?v=<?= time() ?>"></script>
     <script type="module" src="js/api.js?v=<?= time() ?>"></script>
     <script type="module" src="js/router.js?v=<?= time() ?>"></script>
     <script type="module" src="js/app.js?v=<?= time() ?>"></script>
+    <!-- Phase 2: Core Clinical Encounter lifecycle (Sign/Lock/Addendum/BMI/Status) -->
+    <script type="module" src="js/encounter_lifecycle.js?v=<?= time() ?>"></script>
 </body>
 </html>

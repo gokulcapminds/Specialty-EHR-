@@ -61,6 +61,10 @@ $router->get('/api/clinical/note-single/{id}', ClinicalController::class . '@get
 $router->put('/api/clinical/notes/{id}', ClinicalController::class . '@update', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->delete('/api/clinical/notes/{id}', ClinicalController::class . '@delete', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->get('/api/clinical/icd10-search', ClinicalController::class . '@searchIcd10', [AuthenticationMiddleware::class]);
+// Phase 2 — Core Encounter lifecycle routes
+$router->post('/api/clinical/notes/{id}/sign', ClinicalController::class . '@signAndLock', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->post('/api/clinical/notes/{id}/addendum', ClinicalController::class . '@addAddendum', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->put('/api/clinical/notes/{id}/status', ClinicalController::class . '@updateStatus', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 
 // Document Routes
 $router->post('/api/documents/upload', DocumentController::class . '@upload', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
@@ -115,6 +119,8 @@ $router->delete('/api/billing/invoice/{id}', BillingController::class . '@delete
 // Legacy claims routes (kept for compatibility)
 $router->get('/api/billing/claims', BillingController::class . '@listInvoices', [AuthenticationMiddleware::class]);
 $router->post('/api/billing/claims', BillingController::class . '@store', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+// Phase 2 — Billing handoff queue (signed/locked encounters ready for charge capture)
+$router->get('/api/billing/queue', BillingController::class . '@billingQueue', [AuthenticationMiddleware::class]);
 
 // User Administration & RBAC Routes
 $router->get('/api/users', \App\Controllers\UserController::class . '@index', [AuthenticationMiddleware::class]);
