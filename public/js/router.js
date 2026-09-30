@@ -12,11 +12,15 @@ export class Router {
             'messaging': 'modules/messaging.php',
             'billing': 'modules/billing.php',
             'referrals': 'modules/referrals.php',
+            'orders': 'modules/orders.php',
+            'medications': 'modules/medications.php',
+            'diagnoses': 'modules/diagnoses.php',
             'recalls': 'modules/recalls.php',
             'documents': 'modules/documents.php',
             'administration': 'modules/administration.php',
             'reports': 'modules/reports.php',
-            'settings': 'modules/settings.php'
+            'settings': 'modules/settings.php',
+            'change-password': 'modules/change_password.php'
         };
 
         window.addEventListener('hashchange', () => this.handleRouting());
@@ -48,6 +52,18 @@ export class Router {
             window.location.hash = '#login';
             return;
         } else if (me.status === 'success' && hash === 'login') {
+            window.location.hash = '#dashboard';
+            return;
+        }
+
+        // Admin-issued temporary password: force the change-password screen until it's cleared,
+        // and keep an already-changed user from wandering back onto it.
+        const mustChangePassword = me.status === 'success' && me.user && !!me.user.force_password_change;
+        if (mustChangePassword && hash !== 'change-password') {
+            window.location.hash = '#change-password';
+            return;
+        }
+        if (!mustChangePassword && hash === 'change-password') {
             window.location.hash = '#dashboard';
             return;
         }

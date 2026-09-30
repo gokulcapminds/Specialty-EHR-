@@ -3,17 +3,22 @@ namespace App\Services;
 
 class EmailService {
 
-    /**
-     * Send email via SMTP socket or PHP mail fallback
-     */
-    public static function send(string $toEmail, string $subject, string $bodyHtml, string $fromName = 'CareHealth Family Medicine'): bool {
-        $toEmail = trim($toEmail);
-        if (empty($toEmail) || !filter_var($toEmail, FILTER_VALIDATE_EMAIL)) {
-            error_log("EHR EmailService: Invalid recipient email address '{$toEmail}'.");
-            return false;
-        }
+    // Set by send()/sendSmtp() on failure so callers (like the Settings "Send Test Email"
+    // button) can surface *why* delivery failed instead of a generic true/false.
+    private static ?string $lastError = null;
 
-        // Fetch dynamic SMTP configuration from DB system_settings table
+    public static function getLastError(): ?string {
+        return self::$lastError;
+    }
+
+    // Whether real SMTP credentials are configured (DB or env) rather than relying on the
+    // unauthenticated local `mail()` fallback, which most real mail providers reject/spam-filter.
+    public static function isSmtpConfigured(): bool {
+        $config = self::resolveConfig();
+        return !empty($config['smtp_user']) && !empty($config['smtp_pass']);
+    }
+
+    private static function resolveConfig(): array {
         $dbSettings = [];
         try {
             $rows = \App\Models\Database::fetchAll("SELECT setting_key, setting_value FROM system_settings WHERE setting_key LIKE 'smtp_%'");
@@ -22,32 +27,64 @@ class EmailService {
             }
         } catch (\Throwable $t) {}
 
-        $smtpHost = !empty($dbSettings['smtp_host']) ? trim($dbSettings['smtp_host']) : (getenv('SMTP_HOST') ?: 'smtp.gmail.com');
-        $smtpPort = !empty($dbSettings['smtp_port']) ? intval($dbSettings['smtp_port']) : intval(getenv('SMTP_PORT') ?: 465);
-        $smtpUser = !empty($dbSettings['smtp_user']) ? trim($dbSettings['smtp_user']) : (getenv('SMTP_USER') ?: 'sssivaprasad6@gmail.com');
-        $smtpPass = !empty($dbSettings['smtp_pass']) ? trim($dbSettings['smtp_pass']) : (getenv('SMTP_PASS') ?: 'momhnyznniaayzvm');
-        $smtpSecure = !empty($dbSettings['smtp_secure']) ? trim($dbSettings['smtp_secure']) : (getenv('SMTP_SECURE') ?: 'ssl');
-        $fromEmail = !empty($dbSettings['smtp_from']) ? trim($dbSettings['smtp_from']) : (getenv('SMTP_FROM') ?: ($smtpUser ?: 'sssivaprasad6@gmail.com'));
+        return [
+            'smtp_host'   => !empty($dbSettings['smtp_host']) ? trim($dbSettings['smtp_host']) : (getenv('SMTP_HOST') ?: 'smtp.gmail.com'),
+            'smtp_port'   => !empty($dbSettings['smtp_port']) ? intval($dbSettings['smtp_port']) : intval(getenv('SMTP_PORT') ?: 465),
+            'smtp_user'   => !empty($dbSettings['smtp_user']) ? trim($dbSettings['smtp_user']) : (getenv('SMTP_USER') ?: ''),
+            'smtp_pass'   => !empty($dbSettings['smtp_pass']) ? trim($dbSettings['smtp_pass']) : (getenv('SMTP_PASS') ?: ''),
+            'smtp_secure' => !empty($dbSettings['smtp_secure']) ? trim($dbSettings['smtp_secure']) : (getenv('SMTP_SECURE') ?: 'ssl'),
+            'smtp_from'   => !empty($dbSettings['smtp_from']) ? trim($dbSettings['smtp_from']) : (getenv('SMTP_FROM') ?: ''),
+        ];
+    }
+
+    /**
+     * Send email via SMTP socket, falling back to PHP's local mail() only when no SMTP
+     * credentials are configured at all (kept only so an admin who hasn't set up SMTP yet
+     * doesn't lose outbound mail entirely - see isSmtpConfigured() to detect that state).
+     */
+    public static function send(string $toEmail, string $subject, string $bodyHtml, string $fromName = 'Specialty EHR'): bool {
+        self::$lastError = null;
+        $toEmail = trim($toEmail);
+        if (empty($toEmail) || !filter_var($toEmail, FILTER_VALIDATE_EMAIL)) {
+            self::$lastError = "Invalid recipient email address '{$toEmail}'.";
+            error_log("EHR EmailService: " . self::$lastError);
+            return false;
+        }
+
+        $config = self::resolveConfig();
+        $smtpHost = $config['smtp_host'];
+        $smtpPort = $config['smtp_port'];
+        $smtpUser = $config['smtp_user'];
+        $smtpPass = $config['smtp_pass'];
+        $smtpSecure = $config['smtp_secure'];
+        $fromEmail = $config['smtp_from'] ?: $smtpUser;
 
         // If SMTP credentials are provided, attempt socket SMTP connection
         if (!empty($smtpUser) && !empty($smtpPass)) {
             try {
                 $sent = self::sendSmtp($smtpHost, $smtpPort, $smtpUser, $smtpPass, $smtpSecure, $fromEmail, $fromName, $toEmail, $subject, $bodyHtml);
                 if ($sent) return true;
-                error_log("EHR EmailService: SMTP transport failed for user {$smtpUser} when sending to {$toEmail}.");
+                error_log("EHR EmailService: SMTP transport failed for user {$smtpUser} when sending to {$toEmail}: " . self::$lastError);
+                return false;
             } catch (\Throwable $e) {
-                error_log("EHR EmailService SMTP Exception: " . $e->getMessage());
+                self::$lastError = $e->getMessage();
+                error_log("EHR EmailService SMTP Exception: " . self::$lastError);
+                return false;
             }
         }
 
-        // Standard Mail Fallback
+        // No SMTP configured - fall back to local mail() (unauthenticated; commonly
+        // filtered as spam or blocked outright by mail providers).
+        self::$lastError = 'No SMTP credentials configured; used unauthenticated local mail() fallback.';
         $headers  = "MIME-Version: 1.0\r\n";
         $headers .= "Content-type: text/html; charset=utf-8\r\n";
         $headers .= "From: {$fromName} <{$fromEmail}>\r\n";
         $headers .= "Reply-To: {$fromEmail}\r\n";
         $headers .= "X-Mailer: PHP/" . phpversion();
 
-        return @mail($toEmail, $subject, $bodyHtml, $headers);
+        $sent = @mail($toEmail, $subject, $bodyHtml, $headers);
+        if ($sent) self::$lastError = null;
+        return $sent;
     }
 
     /**
@@ -68,7 +105,8 @@ class EmailService {
         $transport = ($secure === 'ssl') ? "ssl://{$host}" : $host;
         $socket = @fsockopen($transport, $port, $errno, $errstr, 10);
         if (!$socket) {
-            error_log("EHR EmailService: fsockopen failed to {$transport}:{$port} - Error: {$errno} {$errstr}");
+            self::$lastError = "Could not connect to {$host}:{$port} ({$errno} {$errstr}).";
+            error_log("EHR EmailService: " . self::$lastError);
             return false;
         }
         stream_set_timeout($socket, 10);
@@ -89,6 +127,7 @@ class EmailService {
 
         $banner = $read();
         if (empty($banner)) {
+            self::$lastError = "No greeting banner received from {$host}:{$port}.";
             fclose($socket);
             return false;
         }
@@ -101,6 +140,7 @@ class EmailService {
             $write("STARTTLS");
             $res = $read();
             if (strpos($res, '220') === false) {
+                self::$lastError = "STARTTLS was rejected by the server: " . trim($res);
                 fclose($socket);
                 return false;
             }
@@ -128,18 +168,26 @@ class EmailService {
         }
 
         if (strpos($res, '235') === false) {
-            error_log("EHR EmailService: SMTP AUTH LOGIN failed: " . trim($res));
+            self::$lastError = "SMTP authentication failed for {$user}: " . trim($res);
+            error_log("EHR EmailService: " . self::$lastError);
             fclose($socket);
             return false;
         }
 
         $write("MAIL FROM: <{$fromEmail}>");
         $mailFromRes = $read();
+        if (strpos($mailFromRes, '250') === false) {
+            self::$lastError = "MAIL FROM <{$fromEmail}> was rejected: " . trim($mailFromRes);
+            error_log("EHR EmailService: " . self::$lastError);
+            fclose($socket);
+            return false;
+        }
 
         $write("RCPT TO: <{$toEmail}>");
         $rcptRes = $read();
         if (strpos($rcptRes, '250') === false && strpos($rcptRes, '251') === false) {
-            error_log("EHR EmailService: RCPT TO rejected for {$toEmail}: " . trim($rcptRes));
+            self::$lastError = "Recipient {$toEmail} was rejected: " . trim($rcptRes);
+            error_log("EHR EmailService: " . self::$lastError);
             fclose($socket);
             return false;
         }
@@ -147,8 +195,11 @@ class EmailService {
         $write("DATA");
         $read();
 
-        $domainPart = (!empty($_SERVER['HTTP_HOST']) && strpos($_SERVER['HTTP_HOST'], '.') !== false) ? $_SERVER['HTTP_HOST'] : 'carehealth-ehr.local';
-        $msgId = "<" . time() . "." . uniqid() . "@" . preg_replace('/:[0-9]+$/', '', $domainPart) . ">";
+        // Message-ID must use the SENDER's domain (e.g. gmail.com), not the local dev server's
+        // hostname - a mismatched Message-ID domain vs. the From/envelope address is a real spam
+        // signal most providers check, and 'localhost'/a made-up local domain always mismatched.
+        $senderDomain = (strpos($fromEmail, '@') !== false) ? substr($fromEmail, strpos($fromEmail, '@') + 1) : $host;
+        $msgId = "<" . time() . "." . uniqid() . "@" . $senderDomain . ">";
         $dateStr = date('r');
 
         // Plain Text Fallback Generation from HTML for anti-spam multipart compliance
@@ -165,7 +216,10 @@ class EmailService {
         $headers .= "Subject: {$subject}\r\n";
         $headers .= "Date: {$dateStr}\r\n";
         $headers .= "Message-ID: {$msgId}\r\n";
-        $headers .= "X-Mailer: CareHealth EHR System\r\n";
+        // RFC 3834 - tells spam filters this is a legitimate automated/transactional message
+        // rather than a human-composed one, which some providers weigh in scoring.
+        $headers .= "Auto-Submitted: auto-generated\r\n";
+        $headers .= "X-Mailer: Specialty EHR System\r\n";
         $headers .= "Content-Type: multipart/alternative; boundary=\"{$boundary}\"\r\n\r\n";
 
         $mimeBody  = "--{$boundary}\r\n";
@@ -187,7 +241,8 @@ class EmailService {
 
         $success = (strpos($res, '250') !== false);
         if (!$success) {
-            error_log("EHR EmailService: SMTP DATA rejected: " . trim($res));
+            self::$lastError = "Message was rejected during DATA: " . trim($res);
+            error_log("EHR EmailService: " . self::$lastError);
         }
 
         return $success;

@@ -20,16 +20,18 @@
 
         <!-- MAIN CALENDAR WORKSPACE -->
         <div id="main-calendar-workspace" style="padding: 16px;">
-            <header class="workspace-header">
-                <div class="month-nav">
-                    <button class="nav-arrow-btn" id="cal-prev-month" aria-label="Previous Month"><i class="fas fa-chevron-left"></i></button>
-                    <h1 class="month-label" id="cal-month-label">Loading Month...</h1>
-                    <button class="nav-arrow-btn" id="cal-next-month" aria-label="Next Month"><i class="fas fa-chevron-right"></i></button>
-                    <button class="btn btn-secondary btn-today" id="cal-today-btn">Today</button>
+            <header class="workspace-header" style="display: flex; justify-content: space-between; align-items: center;">
+                <div class="month-nav" style="display: flex; align-items: center; gap: 12px;">
+                    <div style="display: flex; border: 1px solid #cbd5e1; border-radius: 6px; overflow: hidden; background: white;">
+                        <button class="nav-arrow-btn" id="cal-prev-month" aria-label="Previous Month" style="border: none; border-radius: 0; padding-top: 10px; background: white;"><i class="fas fa-chevron-left"></i></button>
+                        <h1 class="month-label" id="cal-month-label" style="padding: 6px 16px; margin: 0; background: white; line-height: 1.5; font-size: 1.1rem; display: flex; align-items: center;">Loading Month...</h1>
+                        <button class="nav-arrow-btn" id="cal-next-month" aria-label="Next Month" style="border: none; border-radius: 0; padding-top: 10px; background: white;"><i class="fas fa-chevron-right"></i></button>
+                    </div>
+                    <button class="btn btn-secondary btn-today" id="cal-today-btn" style="padding: 6px 16px; border-radius: 6px; background: white; border: 1px solid #cbd5e1;">Today</button>
                 </div>
 
                 <!-- Right Side: Action buttons and View/Mode controls -->
-                <div class="header-actions">
+                <div class="header-actions" style="display: flex; align-items: center; gap: 12px;">
                     <!-- View Selector: Calendar vs List -->
                     <div class="view-toggle">
                         <button class="toggle-btn active" id="toggle-view-calendar">Calendar View</button>
@@ -37,19 +39,19 @@
                     </div>
 
                     <!-- Unified Primary + Schedule Button -->
-                    <button class="btn btn-primary mod-calendar-style-1" id="schedule-appt-btn">
+                    <button class="btn btn-primary mod-calendar-style-1" id="schedule-appt-btn" style="border-radius: 20px; padding: 6px 16px;">
                         <i class="fas fa-plus"></i> Schedule
                     </button>
 
-                    <!-- Unified Secondary Profile Button -->
-                    <button class="btn btn-secondary mod-calendar-style-2" id="calendar-profile-btn" aria-label="Provider Profile Options" title="Provider Profile">
-                        <i class="fas fa-user-md"></i>
-                    </button>
-
-                    <!-- Unified Secondary Sync Button -->
-                    <button class="btn btn-secondary mod-calendar-style-2" id="calendar-sync-btn" aria-label="Sync Schedule" title="Sync Schedule">
-                        <i class="fas fa-sync-alt"></i>
-                    </button>
+                    <!-- Icon actions: calendar view filter, provider availability -->
+                    <div class="cal-icon-actions" style="display: flex; align-items: center; gap: 8px;">
+                        <button class="btn btn-secondary mod-calendar-style-2" id="calendar-profile-btn" onclick="openCalendarViewModal()" aria-label="Set calendar view" data-tip="Set calendar view" style="border-radius: 50%; width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center;">
+                            <i class="far fa-user"></i>
+                        </button>
+                        <button class="btn btn-secondary mod-calendar-style-2" id="cal-block-btn" aria-label="Provider availability" data-tip="Provider availability" style="border-radius: 50%; width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center;">
+                            <i class="fas fa-user-clock"></i>
+                        </button>
+                    </div>
 
                     <!-- Mode Switcher: Day, Week, Month -->
                     <div class="view-toggle" id="calendar-modes-toggle">
@@ -64,11 +66,6 @@
             <div class="card calendar-grid-card" id="calendar-grid-card">
                 <div class="calendar-header-bar">
                     <div class="calendar-header-title">Workspace Calendar</div>
-                    <div class="calendar-legend">
-                        <div class="legend-item"><span class="legend-dot status-scheduled"></span>Scheduled</div>
-                        <div class="legend-item"><span class="legend-dot status-completed"></span>Completed</div>
-                        <div class="legend-item"><span class="legend-dot status-cancelled"></span>Cancelled</div>
-                    </div>
                 </div>
                 
                 <div class="calendar-grid-container">
@@ -87,28 +84,11 @@
                 </div>
             </div>
 
-            <!-- Table List View (hidden by default) -->
-            <div class="card hidden" id="calendar-list-card">
-                <h2>Upcoming Scheduled Sessions</h2>
-                <div class="table-container">
-                    <table>
-                        <thead>
-                            <tr>
-                                <th>Patient Name</th>
-                                <th>Clinician</th>
-                                <th>Start Time</th>
-                                <th>End Time</th>
-                                <th>Status</th>
-                                <th>Notes</th>
-                                <th>Actions</th>
-                            </tr>
-                        </thead>
-                        <tbody id="calendar-appointments-list">
-                            <tr>
-                                <td colspan="7">Loading schedule...</td>
-                            </tr>
-                        </tbody>
-                    </table>
+            <!-- Agenda List View (hidden by default) -->
+            <div class="hidden" id="calendar-list-card">
+                <h2 class="agenda-title">Upcoming Clinical Appointments Agenda</h2>
+                <div id="calendar-appointments-list">
+                    <div class="agenda-empty">Loading schedule...</div>
                 </div>
             </div>
         </div>
@@ -180,6 +160,45 @@
             <!-- MONTH VIEW CARD: Grid (Matching Screenshot 3) -->
             <div class="card hidden" id="wl-month-view-card" style="background: #ffffff; border-radius: 8px; border: 1px solid #e2e8f0; padding: 16px; box-shadow: 0 1px 3px rgba(0,0,0,0.03);">
                 <div id="wl-month-grid-container"></div>
+            </div>
+        </div>
+
+        <!-- MODAL: Set Calendar View -->
+        <div class="modal fade" id="set-calendar-view-modal" tabindex="-1" aria-hidden="true">
+            <div class="modal-dialog modal-dialog-centered">
+                <div class="modal-content">
+                    <div class="modal-header">
+                        <h5 class="modal-title" style="font-weight: 700; color: #0f172a; font-size: 1.1rem;">Set Calendar View</h5>
+                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Close"></button>
+                    </div>
+                    <div class="modal-body">
+                        <div style="display: flex; gap: 16px; margin-bottom: 16px;">
+                            <div style="flex: 1;">
+                                <div style="font-size: 0.85rem; font-weight: 600; color: #475569; margin-bottom: 6px;">Location:</div>
+                                <select id="cal-view-location-select" style="width: 100%; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.95rem; color: #1e293b;">
+                                    <option value="all">All Locations</option>
+                                </select>
+                            </div>
+                            <div style="flex: 1;">
+                                <div style="font-size: 0.85rem; font-weight: 600; color: #475569; margin-bottom: 6px;">Clinician Type:</div>
+                                <select id="cal-view-clinician-type" style="width: 100%; padding: 8px 12px; border: 1px solid #cbd5e1; border-radius: 6px; font-size: 0.95rem; color: #1e293b;">
+                                    <option value="all">All Clinicians</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div style="border: 1px solid #cbd5e1; border-radius: 6px; padding: 16px; margin-bottom: 24px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid #e2e8f0; padding-bottom: 12px; margin-bottom: 12px;">
+                                <label style="display: flex; align-items: center; gap: 8px; font-weight: 600; color: #0f172a;"><input type="checkbox" id="cal-view-select-all" checked> <i class="far fa-calendar-alt" style="color:#0284c7;"></i> All</label>
+                                <span id="cal-view-selected-count" style="font-size: 0.85rem; color: #64748b; font-weight: 600;">All Selected</span>
+                            </div>
+                            <div id="cal-view-clinician-list" style="display: flex; flex-direction: column; gap: 12px;">
+                                <div style="text-align: center; color: #94a3b8; font-size: 0.9rem;">Loading clinicians...</div>
+                            </div>
+                        </div>
+                        <button class="btn btn-primary" style="padding: 10px 20px; font-size: 0.95rem; background: #0284c7; border: none; border-radius: 4px; color: white;" onclick="applyCalendarViewFilters()">Set Calendar View</button>
+                    </div>
+                </div>
             </div>
         </div>
     </main>

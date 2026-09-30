@@ -1,0 +1,8 @@
+# Playwright MCP / test artifacts
+.playwright-mcp/
+test-results/
+playwright-report/
+
+# Runtime / uploaded data
+storage/rate_limits.json
+storage/documents/

@@ -119,12 +119,12 @@
                 <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px;">
                     <div class="form-group">
                         <label class="form-label settings-field-label">SMTP Host</label>
-                        <input type="text" id="setting-smtp-host" class="form-control settings-field-input" placeholder="smtp.gmail.com" value="smtp.gmail.com">
+                        <input type="text" id="setting-smtp-host" class="form-control settings-field-input" placeholder="smtp.gmail.com">
                     </div>
                     <div class="form-group">
                         <label class="form-label settings-field-label">SMTP Port & Security</label>
                         <div style="display: flex; gap: 8px;">
-                            <input type="number" id="setting-smtp-port" class="form-control settings-field-input" placeholder="465" value="465" style="width: 100px;">
+                            <input type="number" id="setting-smtp-port" class="form-control settings-field-input" placeholder="465" style="width: 100px;">
                             <select id="setting-smtp-secure" class="form-control settings-field-input" style="flex: 1;">
                                 <option value="ssl" selected>SSL (Port 465)</option>
                                 <option value="tls">TLS (Port 587)</option>
@@ -133,21 +133,28 @@
                     </div>
                     <div class="form-group">
                         <label class="form-label settings-field-label">SMTP Username / Email</label>
-                        <input type="email" id="setting-smtp-user" class="form-control settings-field-input" placeholder="sivaprasad@capminds.com" value="sivaprasad@capminds.com">
+                        <input type="email" id="setting-smtp-user" class="form-control settings-field-input" placeholder="you@yourclinic.com">
                     </div>
                     <div class="form-group">
                         <label class="form-label settings-field-label">SMTP Password / App Password</label>
-                        <input type="password" id="setting-smtp-pass" class="form-control settings-field-input" placeholder="App Password" value="momh nyzn niaa yzvm">
+                        <input type="password" id="setting-smtp-pass" class="form-control settings-field-input" placeholder="Leave blank to keep the current saved password" autocomplete="new-password">
+                        <small id="setting-smtp-pass-status" style="color: #64748b; font-size: 0.76rem; margin-top: 4px; display: none;">A password is already saved. Leave this blank to keep it, or enter a new one to replace it.</small>
                     </div>
                     <div class="form-group">
                         <label class="form-label settings-field-label">Sender Email Address</label>
-                        <input type="email" id="setting-smtp-from" class="form-control settings-field-input" placeholder="sivaprasad@capminds.com" value="sivaprasad@capminds.com">
+                        <input type="email" id="setting-smtp-from" class="form-control settings-field-input" placeholder="you@yourclinic.com">
                     </div>
                     <div class="form-group" style="grid-column: 1 / -1;">
                         <label class="form-label settings-field-label">Public EHR Base URL (for Intake & Patient Links)</label>
                         <input type="text" id="setting-app-base-url" class="form-control settings-field-input" placeholder="e.g. http://localhost/Specialty%20EHR or https://myclinic.com" value="">
                         <small style="color: #64748b; font-size: 0.76rem; margin-top: 4px; display: block;">Leave blank for automatic detection of local server network IP, or enter your public domain/IP.</small>
                     </div>
+                </div>
+                <div style="display: flex; align-items: center; gap: 12px; margin-top: 18px; padding-top: 16px; border-top: 1px solid #e2e8f0;">
+                    <button type="button" class="btn btn-outline" id="send-test-email-btn">
+                        <i class="fas fa-paper-plane"></i> Send Test Email
+                    </button>
+                    <span id="test-email-status" style="font-size: 0.85rem;"></span>
                 </div>
             </div>
         </div>

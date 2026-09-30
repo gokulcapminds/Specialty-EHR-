@@ -337,7 +337,7 @@ class TelehealthController {
     }
 
     private function sendTelehealthEmail(string $patientName, string $patientEmail, string $joinUrl, string $roomName): bool {
-        $subject = "CareHealth Telehealth Consultation Link";
+        $subject = "Specialty EHR Telehealth Consultation Link";
         
         // Always use direct public HTTPS Jitsi URL (https://meet.jit.si/$roomName) for Telehealth emails so video calls connect directly on all devices
         $effectiveUrl = 'https://meet.jit.si/' . $roomName;
@@ -351,13 +351,13 @@ class TelehealthController {
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CareHealth Video Consultation</title>
+    <title>Specialty EHR Video Consultation</title>
 </head>
 <body style="font-family: Arial, sans-serif; background-color: #f4f6f9; margin: 0; padding: 20px; color: #333333;">
     <table align="center" border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 600px; background-color: #ffffff; border-radius: 8px; box-shadow: 0 4px 10px rgba(0,0,0,0.05); overflow: hidden; border: 1px solid #e2e8f0;">
         <tr>
             <td style="background-color: #0284c7; padding: 24px; text-align: center; color: #ffffff;">
-                <h1 style="margin: 0; font-size: 24px; font-weight: bold;">CareHealth Family Medicine</h1>
+                <h1 style="margin: 0; font-size: 24px; font-weight: bold;">Specialty EHR</h1>
                 <p style="margin: 6px 0 0 0; font-size: 14px; opacity: 0.9;">Secure Telehealth Consultation Link</p>
             </td>
         </tr>
@@ -365,7 +365,7 @@ class TelehealthController {
             <td style="padding: 30px 24px;">
                 <p style="font-size: 16px; margin-top: 0;">Dear <strong>' . $escapedName . '</strong>,</p>
                 <p style="font-size: 15px; line-height: 1.6; color: #475569;">
-                    Your healthcare provider at CareHealth Family Medicine has invited you to join a secure HIPAA-compliant video consultation.
+                    Your healthcare provider at Specialty EHR has invited you to join a secure HIPAA-compliant video consultation.
                 </p>
                 
                 <div style="background-color: #f0f9ff; border-left: 4px solid #0284c7; padding: 16px; border-radius: 4px; margin: 24px 0;">
@@ -397,13 +397,13 @@ class TelehealthController {
         </tr>
         <tr>
             <td style="background-color: #f8fafc; padding: 16px 24px; text-align: center; font-size: 12px; color: #94a3b8; border-top: 1px solid #e2e8f0;">
-                This is an automated message from CareHealth Family Medicine. Please do not reply directly to this email.
+                This is an automated message from Specialty EHR. Please do not reply directly to this email.
             </td>
         </tr>
     </table>
 </body>
 </html>';
 
-        return EmailService::send($patientEmail, $subject, $bodyHtml, 'CareHealth Telehealth');
+        return EmailService::send($patientEmail, $subject, $bodyHtml, 'Specialty EHR Telehealth');
     }
 }

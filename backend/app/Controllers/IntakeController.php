@@ -76,20 +76,20 @@ class IntakeController {
         // Attempt sending email via EmailService
         $emailSent = false;
         if (!empty($email) && filter_var($email, FILTER_VALIDATE_EMAIL)) {
-            $subject = "Welcome to CareHealth Family Medicine - Complete Your Patient Intake Forms";
+            $subject = "Welcome to Specialty EHR - Complete Your Patient Intake Forms";
             $htmlBody = "
                 <div style='font-family: Arial, sans-serif; background-color: #f8fafc; padding: 24px; color: #1e293b;'>
                     <div style='max-width: 600px; margin: 0 auto; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 32px;'>
-                        <h2 style='color: #0284c7; margin-top: 0;'>CareHealth Family Medicine</h2>
+                        <h2 style='color: #0284c7; margin-top: 0;'>Specialty EHR</h2>
                         <h3 style='color: #0f172a;'>Patient Intake Forms & Consent Request</h3>
                         <p>Hello <strong>{$firstName} {$lastName}</strong>,</p>
-                        <p>Welcome to CareHealth Family Medicine. Please complete your mandatory Patient Registration Intake Forms (Consent to Treat and HIPAA Privacy Notice) prior to your visit on any mobile phone, tablet, or computer.</p>
+                        <p>Welcome to Specialty EHR. Please complete your mandatory Patient Registration Intake Forms (Consent to Treat and HIPAA Privacy Notice) prior to your visit on any mobile phone, tablet, or computer.</p>
                         <div style='text-align: center; margin: 28px 0;'>
                             <a href='{$intakeUrl}' target='_blank' style='background-color: #0284c7; color: #ffffff; padding: 14px 32px; text-decoration: none; font-weight: bold; border-radius: 8px; font-size: 1.05rem; display: inline-block;'>Complete Intake Forms</a>
                         </div>
                         <p style='font-size: 0.85rem; color: #64748b;'>Or copy & paste link into browser:<br><a href='{$intakeUrl}' style='color: #0284c7; word-break: break-all;'>{$intakeUrl}</a></p>
                         <hr style='border: none; border-top: 1px solid #e2e8f0; margin: 24px 0;'>
-                        <p style='font-size: 0.8rem; color: #94a3b8; text-align: center;'>CareHealth Family Medicine &bull; Secure Encrypted Communication</p>
+                        <p style='font-size: 0.8rem; color: #94a3b8; text-align: center;'>Specialty EHR &bull; Secure Encrypted Communication</p>
                     </div>
                 </div>
             ";
@@ -251,7 +251,7 @@ class IntakeController {
             $clinicNoticeBody = "
                 <div style='font-family: Arial, sans-serif; background: #f8fafc; padding: 24px;'>
                     <div style='max-width: 600px; margin: 0 auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 28px;'>
-                        <h2 style='color: #0284c7; margin-top: 0;'>CareHealth EHR Notification</h2>
+                        <h2 style='color: #0284c7; margin-top: 0;'>Specialty EHR Notification</h2>
                         <h3 style='color: #0f172a;'>Patient Intake Forms Completed & Signed</h3>
                         <p>Patient <strong>{$patientName}</strong> has successfully completed and electronically signed their mandatory <strong>Consent to Treat</strong> and <strong>HIPAA Notice of Privacy Practices</strong> intake forms.</p>
                         <p style='font-size: 0.88rem; color: #475569;'>Signed Name: <strong>{$consentName}</strong> &bull; Date: <strong>{$consentDate}</strong></p>
@@ -260,24 +260,24 @@ class IntakeController {
                     </div>
                 </div>
             ";
-            \App\Services\EmailService::send('sssivaprasad6@gmail.com', $clinicNoticeSubject, $clinicNoticeBody, 'CareHealth EHR System');
+            \App\Services\EmailService::send('sssivaprasad6@gmail.com', $clinicNoticeSubject, $clinicNoticeBody, 'Specialty EHR System');
 
             // Send confirmation email to patient if email present
             if (!empty($patientEmail) && filter_var($patientEmail, FILTER_VALIDATE_EMAIL)) {
-                $patientConfSubject = "CareHealth Family Medicine - Intake Forms Submission Confirmation";
+                $patientConfSubject = "Specialty EHR - Intake Forms Submission Confirmation";
                 $patientConfBody = "
                     <div style='font-family: Arial, sans-serif; background: #f8fafc; padding: 24px;'>
                         <div style='max-width: 600px; margin: 0 auto; background: #fff; border: 1px solid #e2e8f0; border-radius: 12px; padding: 28px;'>
-                            <h2 style='color: #0284c7; margin-top: 0;'>CareHealth Family Medicine</h2>
+                            <h2 style='color: #0284c7; margin-top: 0;'>Specialty EHR</h2>
                             <h3 style='color: #166534;'>✔ Intake Forms Completed</h3>
                             <p>Hello <strong>{$patientName}</strong>,</p>
                             <p>Thank you for completing your Consent to Treat and Privacy Practices acknowledgment forms. Your signed e-records have been securely saved to your medical chart.</p>
                             <hr style='border: none; border-top: 1px solid #e2e8f0; margin: 20px 0;'>
-                            <p style='font-size: 0.8rem; color: #94a3b8; text-align: center;'>CareHealth Family Medicine &bull; Encrypted Records</p>
+                            <p style='font-size: 0.8rem; color: #94a3b8; text-align: center;'>Specialty EHR &bull; Encrypted Records</p>
                         </div>
                     </div>
                 ";
-                \App\Services\EmailService::send($patientEmail, $patientConfSubject, $patientConfBody, 'CareHealth Family Medicine');
+                \App\Services\EmailService::send($patientEmail, $patientConfSubject, $patientConfBody, 'Specialty EHR');
             }
         }
 
@@ -320,19 +320,19 @@ class IntakeController {
         echo json_encode([
             'status' => 'success',
             'data' => [
-                'id' => $form['id'],
-                'patient_id' => $form['patient_id'],
+                'id' => $form['id'] ?? null,
+                'patient_id' => $form['patient_id'] ?? null,
                 'patient_name' => "{$firstName} {$lastName}",
-                'status' => $form['status'],
-                'consent_agreed' => (bool)$form['consent_agreed'],
-                'consent_name' => $form['consent_name'],
-                'consent_signature' => $form['consent_signature'],
-                'consent_signed_date' => $form['consent_signed_date'],
-                'hipaa_agreed' => (bool)$form['hipaa_agreed'],
-                'hipaa_name' => $form['hipaa_name'],
-                'hipaa_signature' => $form['hipaa_signature'],
-                'hipaa_signed_date' => $form['hipaa_signed_date'],
-                'submitted_at' => $form['submitted_at']
+                'status' => $form['status'] ?? '',
+                'consent_agreed' => (bool)($form['consent_agreed'] ?? false),
+                'consent_name' => $form['consent_name'] ?? '',
+                'consent_signature' => $form['consent_signature'] ?? '',
+                'consent_signed_date' => $form['consent_signed_date'] ?? '',
+                'hipaa_agreed' => (bool)($form['hipaa_agreed'] ?? false),
+                'hipaa_name' => $form['hipaa_name'] ?? '',
+                'hipaa_signature' => $form['hipaa_signature'] ?? '',
+                'hipaa_signed_date' => $form['hipaa_signed_date'] ?? '',
+                'submitted_at' => $form['submitted_at'] ?? ''
             ]
         ]);
     }

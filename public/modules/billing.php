@@ -137,8 +137,9 @@
 </div>
 
 <!-- ======================== GENERATE INVOICE MODAL ======================== -->
-<div id="generate-invoice-modal" class="modal-overlay hidden mod-billing-style-20">
-    <div class="modal-dialog mod-billing-style-21">
+<div id="generate-invoice-modal" class="modal fade" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog mod-billing-style-21">
+    <div class="modal-content">
         <div class="modal-header">
             <h2 class="mod-billing-style-22" id="gen-invoice-title"><i class="fas fa-file-invoice-dollar mod-billing-style-13"></i> Generate Invoice</h2>
             <button id="close-gen-invoice-btn" class="btn-icon-close">&times;</button>
@@ -239,11 +240,13 @@
             </div>
         </div>
     </div>
+  </div>
 </div>
 
 <!-- ======================== VIEW INVOICE MODAL ======================== -->
-<div id="view-invoice-modal" class="modal-overlay hidden mod-billing-style-20">
-    <div class="modal-dialog mod-billing-style-43">
+<div id="view-invoice-modal" class="modal fade" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog mod-billing-style-43">
+    <div class="modal-content">
         <div class="modal-header">
             <h2 class="mod-billing-style-22"><i class="fas fa-file-invoice mod-billing-style-13"></i> Invoice Details</h2>
             <div class="mod-billing-style-14">
@@ -262,11 +265,13 @@
             <button class="btn btn-secondary btn-sm" id="close-view-invoice-btn2">Close</button>
         </div>
     </div>
+  </div>
 </div>
 
 <!-- ======================== ADD CPT MODAL ======================== -->
-<div id="add-cpt-modal" class="modal-overlay hidden mod-billing-style-20">
-    <div class="modal-dialog mod-billing-style-48">
+<div id="add-cpt-modal" class="modal fade" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog mod-billing-style-48">
+    <div class="modal-content">
         <div class="modal-header">
             <h2 class="mod-billing-style-49"><i class="fas fa-plus mod-billing-style-13"></i> Add / Edit CPT Code</h2>
             <button id="close-add-cpt-btn" class="btn-icon-close">&times;</button>
@@ -299,5 +304,6 @@
             </div>
         </div>
     </div>
+  </div>
 </div>
 

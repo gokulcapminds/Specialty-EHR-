@@ -6,16 +6,42 @@ use App\Models\Database;
 class AuditLogger {
     /**
      * Write audit log to database and enforce tamper-evident hash chain.
+     * Supports both full signature: ($userId, $username, $role, $patientId, $actionType, $module, $recordId)
+     * and shorthand signature: ($userId, $actionType, $messageOrModule, $recordId)
      */
     public static function log(
-        ?int $userId,
-        ?string $username,
-        ?string $role,
-        ?int $patientId,
-        string $actionType,
-        string $module,
+        ?int $userId = null,
+        ?string $username = null,
+        ?string $role = null,
+        $patientId = null,
+        ?string $actionType = null,
+        ?string $module = null,
         ?string $recordId = null
     ): void {
+        // Detect shorthand call: e.g. log($userId, 'ACTION_TYPE', 'Details/Module', $recordId)
+        if ($actionType === null && $module === null && is_string($username)) {
+            $actualAction = $username;
+            $actualModule = is_string($role) ? $role : 'ADMIN';
+            $actualRecordId = is_string($patientId) || is_numeric($patientId) ? (string)$patientId : null;
+            $actualUsername = $_SESSION['username'] ?? 'SYSTEM';
+            $actualRole = $_SESSION['user_role'] ?? 'SYSTEM';
+            $actualPatientId = null;
+
+            $username = $actualUsername;
+            $role = $actualRole;
+            $patientId = $actualPatientId;
+            $actionType = $actualAction;
+            $module = $actualModule;
+            $recordId = $actualRecordId;
+        } else {
+            $actionType = $actionType ?? 'ACTION';
+            $module = $module ?? 'SYSTEM';
+            if (!is_numeric($patientId)) {
+                $patientId = null;
+            } else {
+                $patientId = (int)$patientId;
+            }
+        }
         $ip = $_SERVER['REMOTE_ADDR'] ?? '127.0.0.1';
         $userAgent = $_SERVER['HTTP_USER_AGENT'] ?? 'Unknown';
 

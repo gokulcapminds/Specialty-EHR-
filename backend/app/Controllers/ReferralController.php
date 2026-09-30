@@ -287,11 +287,11 @@ class ReferralController {
                     <div style='background-color: #f0fdf4; padding: 16px; border-left: 4px solid #22c55e; color: #166534; font-weight: 600; margin: 16px 0; border-radius: 4px;'>
                         <i class='fas fa-calendar-check' style='margin-right: 8px;'></i> Please call our clinic office to schedule your appointment at your earliest convenience.
                     </div>
-                    <p style='font-size: 0.85rem; color: #94a3b8; margin-bottom: 0;'>Primary & Family Care EHR Workspace • HIPAA Compliant Patient Portal</p>
+                    <p style='font-size: 0.85rem; color: #94a3b8; margin-bottom: 0;'>Specialty EHR Workspace • HIPAA Compliant Patient Portal</p>
                 </div>
             ";
 
-            $emailSent = \App\Services\EmailService::send($patientEmail, "Referral Accepted - Schedule Your Appointment", $bodyHtml, "Primary & Family Care EHR");
+            $emailSent = \App\Services\EmailService::send($patientEmail, "Referral Accepted - Schedule Your Appointment", $bodyHtml, "Specialty EHR");
         }
 
         AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], $ref['patient_id'], "Accepted Referral ID {$id} (Patient Email Sent: " . ($emailSent ? 'Yes' : 'No') . ")", 'Referrals');
@@ -348,11 +348,11 @@ class ReferralController {
                         " . nl2br(htmlspecialchars($reason)) . "
                     </div>
                     <p style='color: #475569; font-size: 0.9rem;'>Please contact your primary care provider if you require an alternative specialist referral.</p>
-                    <p style='font-size: 0.85rem; color: #94a3b8; margin-bottom: 0;'>Primary & Family Care EHR Workspace • HIPAA Compliant Patient Portal</p>
+                    <p style='font-size: 0.85rem; color: #94a3b8; margin-bottom: 0;'>Specialty EHR Workspace • HIPAA Compliant Patient Portal</p>
                 </div>
             ";
 
-            $emailSent = \App\Services\EmailService::send($patientEmail, "Referral Status Update", $bodyHtml, "Primary & Family Care EHR");
+            $emailSent = \App\Services\EmailService::send($patientEmail, "Referral Status Update", $bodyHtml, "Specialty EHR");
         }
 
         AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], $ref['patient_id'], "Rejected Referral ID {$id} - Reason: {$reason} (Patient Email Sent: " . ($emailSent ? 'Yes' : 'No') . ")", 'Referrals');

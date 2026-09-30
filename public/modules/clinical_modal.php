@@ -1,6 +1,7 @@
 <!-- public/modules/clinical_modal.php -->
-<div id="clinical-encounter-modal" class="modal-backdrop hidden">
-    <div class="modal-dialog mod-clinical-style-8">
+<div id="clinical-encounter-modal" class="modal fade" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog modal-dialog-scrollable mod-clinical-style-8">
+    <div class="modal-content">
         <div class="modal-header mod-clinical-style-9">
             <div style="display:flex;align-items:center;gap:12px;flex:1;">
                 <h2 class="mod-clinical-style-10" id="clinical-modal-title">New Clinical Encounter</h2>
@@ -11,7 +12,7 @@
             <button type="button" class="modal-close" id="close-clinical-modal-btn">&times;</button>
         </div>
         <div class="modal-body mod-clinical-style-11">
-            
+
             <!-- Clinical Workspace Accordion Container inside Modal -->
             <div id="clinical-accordion" class="accordion-container">
                 
@@ -177,6 +178,19 @@
                                 </table>
                             </div>
                             <input type="hidden" id="clinical-family-history" value="">
+                            <!-- Generic SOAP fields synced from the inline Cardiology-tabs UI (clinical-tabs.js
+                                 _syncCustomTabsToDOM/syncToUI) before every save. These must exist for that sync
+                                 (and submitEncounter's Chief Complaint validation) to have anywhere to write to. -->
+                            <input type="hidden" id="chief-complaint" name="chief_complaint" value="">
+                            <input type="hidden" id="hpi" name="hpi" value="">
+                            <input type="hidden" id="ros" name="ros" value="">
+                            <input type="hidden" id="pe-general" name="pe_general" value="">
+                            <input type="hidden" id="pe-heent" name="pe_heent" value="">
+                            <input type="hidden" id="pe-cardio" name="pe_cardio" value="">
+                            <input type="hidden" id="pe-resp" name="pe_resp" value="">
+                            <input type="hidden" id="pe-abdomen" name="pe_abdomen" value="">
+                            <input type="hidden" id="pe-neuro" name="pe_neuro" value="">
+                            <input type="hidden" id="pe-skin" name="pe_skin" value="">
                         </form>
                     </div>
                 </div>
@@ -188,8 +202,34 @@
                     </button>
                     <div id="accordion-cardio" class="accordion-content" role="region" aria-labelledby="accordion-cardio-btn">
                         <form id="cardio-form" novalidate class="mod-clinical-style-12">
+                            <!-- Workflow Selector: drives which cards below are shown (see toggleCardioWorkflow() in app.js) -->
+                            <div style="background: var(--bg-tertiary); border: 1px solid var(--primary-color); border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label class="form-label" for="cardio-workflow-select" style="font-weight: 700; color: var(--primary-color);">
+                                        <i class="fas fa-route" style="margin-right: 6px;"></i> Cardiology Visit Workflow
+                                    </label>
+                                    <select id="cardio-workflow-select" name="cardio_workflow" class="form-control">
+                                        <option value="chest_pain">Chest Pain Evaluation</option>
+                                        <option value="dyspnea">Dyspnea / Heart Failure Evaluation</option>
+                                        <option value="palpitations">Palpitations / Arrhythmia</option>
+                                        <option value="hypertension">Hypertension / Cardiac Risk</option>
+                                        <option value="followup">Routine Cardiology Follow-up</option>
+                                    </select>
+                                </div>
+                            </div>
+
+                            <!-- Card F: Routine Follow-up Summary (Follow-up workflow only) -->
+                            <div data-workflow="followup" style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                                <h4 class="form-section-title" style="margin:0 0 10px 0; color:#1d4ed8;"><i class="fas fa-history" style="margin-right:6px;"></i> Routine Follow-up Summary</h4>
+                                <div class="mod-clinical-style-33">
+                                    <div class="form-group"><label class="form-label" for="cardio-followup-prev-diagnosis">Previous Diagnosis</label><textarea id="cardio-followup-prev-diagnosis" name="cardio_followup_prev_diagnosis" class="form-control" rows="2" placeholder="e.g. Stable CAD s/p PCI to LAD (2024), well-controlled HTN"></textarea></div>
+                                    <div class="form-group"><label class="form-label" for="cardio-followup-interval-history">Interval History</label><textarea id="cardio-followup-interval-history" name="cardio_followup_interval_history" class="form-control" rows="2" placeholder="Changes/events since last visit"></textarea></div>
+                                    <div class="form-group"><label class="form-label" for="cardio-followup-prev-results">Review of Previous Results</label><textarea id="cardio-followup-prev-results" name="cardio_followup_prev_results_reviewed" class="form-control" rows="2" placeholder="Prior labs/ECG/Echo reviewed with patient"></textarea></div>
+                                </div>
+                            </div>
+
                             <!-- Card 1: Hemodynamics, Orthostatics & ASCVD Risk -->
-                            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                            <div data-workflow="chest_pain dyspnea palpitations hypertension" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                                     <h4 class="form-section-title" style="margin:0; color:#0369a1;"><i class="fas fa-calculator" style="margin-right:6px;"></i> 1. Hemodynamics &amp; 10-Year ASCVD Risk Score</h4>
                                     <span class="badge badge-primary-xs" style="background:#e0f2fe; color:#0369a1; font-weight:700; padding:4px 10px; border-radius:12px;">AHA/ACC GDMT Engine</span>
@@ -233,7 +273,7 @@
                             </div>
 
                             <!-- Card 2: Symptoms, Angina (CCS) & Heart Failure (NYHA) Staging -->
-                            <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                            <div data-workflow="chest_pain dyspnea palpitations" style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
                                 <h4 class="form-section-title" style="color:#0f172a;"><i class="fas fa-stethoscope" style="margin-right:6px;"></i> 2. Cardiac Symptoms &amp; Functional Staging</h4>
                                 <div class="mod-clinical-style-33">
                                     <div class="form-group"><label class="form-label" for="cardio-complaint">Chief Complaint</label><input type="text" id="cardio-complaint" name="cardio_complaint" class="form-control" placeholder="e.g. Exertional chest pressure, dyspnea on exertion"></div>
@@ -248,7 +288,7 @@
                             </div>
 
                             <!-- Card 3: Cardiovascular Physical Examination -->
-                            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                            <div data-workflow="chest_pain dyspnea palpitations hypertension followup" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
                                 <h4 class="form-section-title" style="color:#0f172a;"><i class="fas fa-user-md" style="margin-right:6px;"></i> 3. Cardiovascular Physical Examination</h4>
                                 <div class="mod-clinical-style-33">
                                     <div class="form-group"><label class="form-label" for="cardio-jvp">Jugular Venous Pressure (JVP)</label><select id="cardio-jvp" name="cardio_jvp" class="form-control"><option value="Normal (&lt;3 cm above sternal angle)">Normal (&lt;3 cm above sternal angle)</option><option value="Elevated (3-5 cm)">Elevated (3-5 cm)</option><option value="Markedly Elevated (&gt;5 cm / JVD present)">Markedly Elevated (&gt;5 cm / JVD present)</option></select></div>
@@ -263,7 +303,7 @@
                             </div>
 
                             <!-- Card 4: 12-Lead ECG / EKG Interpretation -->
-                            <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                            <div data-workflow="chest_pain palpitations" style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                                     <h4 class="form-section-title" style="margin:0; color:#0f172a;"><i class="fas fa-wave-square" style="margin-right:6px;"></i> 4. 12-Lead Electrocardiogram (ECG / EKG)</h4>
                                     <span class="badge" style="background:#f1f5f9; color:#475569; font-weight:600; font-size:0.75rem; padding:3px 8px; border-radius:4px;">CPT-4: 93000</span>
@@ -275,11 +315,17 @@
                                     <div class="form-group"><label class="form-label" for="cardio-qrs-duration">QRS Duration (ms)</label><input type="number" id="cardio-qrs-duration" name="cardio_qrs_duration" class="form-control" placeholder="92 (Normal &lt;120)"></div>
                                     <div class="form-group"><label class="form-label" for="cardio-qtc">QTc Interval (ms)</label><input type="number" id="cardio-qtc" name="cardio_qtc" class="form-control" placeholder="428 (Normal &lt;450 M / &lt;460 F)"></div>
                                     <div class="form-group"><label class="form-label" for="cardio-st-changes">ST-T Wave Ischemia</label><select id="cardio-st-changes" name="cardio_st_changes" class="form-control"><option value="Normal ST-T segments">Normal ST-T segments</option><option value="ST Depression in Inferolateral leads (II, III, aVF, V5-V6)">ST Depression in Inferolateral leads (II, III, aVF, V5-V6)</option><option value="ST Elevation (Anteroseptal V1-V4)">ST Elevation (Anteroseptal V1-V4)</option><option value="T-Wave Inversions (V4-V6)">T-Wave Inversions (V4-V6)</option><option value="LVH by Sokolow-Lyon / Cornell Voltage Criteria">LVH by Sokolow-Lyon / Cornell Voltage Criteria</option><option value="Pathological Q-Waves (Prior Infarct)">Pathological Q-Waves (Prior Infarct)</option></select></div>
+                                    <div class="form-group">
+                                        <label class="form-label" for="cardio-ekg-file">ECG Report Upload (PDF/Image)</label>
+                                        <input type="hidden" id="cardio-ekg-document-id" name="cardio_ekg_document_id">
+                                        <input type="file" id="cardio-ekg-file" class="form-control cardio-file-attach-input" data-target-field="cardio-ekg-document-id" data-doc-label="ECG Report" accept=".pdf,.png,.jpg,.jpeg">
+                                        <span id="cardio-ekg-file-status" class="cardio-file-attach-status" style="display:block; font-size:0.78rem; color:var(--text-secondary); margin-top:4px;"></span>
+                                    </div>
                                 </div>
                             </div>
 
                             <!-- Card 5: Echocardiogram & Wall Motion Suite -->
-                            <div style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                            <div data-workflow="dyspnea" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
                                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
                                     <h4 class="form-section-title" style="margin:0; color:#0f172a;"><i class="fas fa-heart" style="margin-right:6px;"></i> 5. Transthoracic Echocardiogram (TTE) &amp; Hemodynamics</h4>
                                     <span class="badge" style="background:#f1f5f9; color:#475569; font-weight:600; font-size:0.75rem; padding:3px 8px; border-radius:4px;">CPT-4: 93306</span>
@@ -291,11 +337,17 @@
                                     <div class="form-group"><label class="form-label" for="cardio-echo-aortic">Aortic Valve Status</label><select id="cardio-echo-aortic" name="cardio_echo_aortic" class="form-control"><option value="Normal Trileaflet Aortic Valve">Normal Trileaflet Aortic Valve</option><option value="Aortic Sclerosis (Peak Vel &lt;2.5 m/s)">Aortic Sclerosis (Peak Vel &lt;2.5 m/s)</option><option value="Mild Aortic Stenosis (Mean Grad &lt;20 mmHg)">Mild Aortic Stenosis (Mean Grad &lt;20 mmHg)</option><option value="Moderate Aortic Stenosis (Mean Grad 20-40 mmHg)">Moderate Aortic Stenosis (Mean Grad 20-40 mmHg)</option><option value="Severe Aortic Stenosis (AVA &lt;1.0 cm2, Mean Grad ≥40 mmHg)">Severe Aortic Stenosis (AVA &lt;1.0 cm2, Mean Grad ≥40 mmHg)</option></select></div>
                                     <div class="form-group"><label class="form-label" for="cardio-echo-mitral">Mitral Valve Status</label><select id="cardio-echo-mitral" name="cardio_echo_mitral" class="form-control"><option value="Normal / Trace Regurgitation">Normal / Trace Regurgitation</option><option value="Mild Mitral Regurgitation">Mild Mitral Regurgitation</option><option value="Moderate Mitral Regurgitation">Moderate Mitral Regurgitation</option><option value="Severe Mitral Regurgitation (Flail Leaflet)">Severe Mitral Regurgitation (Flail Leaflet)</option><option value="Mitral Valve Prolapse (MVP)">Mitral Valve Prolapse (MVP)</option></select></div>
                                     <div class="form-group"><label class="form-label" for="cardio-echo-pasp">Est. Pulmonary Artery Pressure (PASP mmHg)</label><input type="number" id="cardio-echo-pasp" name="cardio_echo_pasp" class="form-control" placeholder="e.g. 28 (Normal &lt;35 mmHg)"></div>
+                                    <div class="form-group">
+                                        <label class="form-label" for="cardio-echo-file">Echo Report Upload (PDF/Image)</label>
+                                        <input type="hidden" id="cardio-echo-document-id" name="cardio_echo_document_id">
+                                        <input type="file" id="cardio-echo-file" class="form-control cardio-file-attach-input" data-target-field="cardio-echo-document-id" data-doc-label="Echo Report" accept=".pdf,.png,.jpg,.jpeg">
+                                        <span id="cardio-echo-file-status" class="cardio-file-attach-status" style="display:block; font-size:0.78rem; color:var(--text-secondary); margin-top:4px;"></span>
+                                    </div>
                                 </div>
                             </div>
 
                             <!-- Card 6: Device Interrogation & Interventional Cath / PCI -->
-                            <div style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                            <div data-workflow="palpitations" style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
                                 <h4 class="form-section-title" style="color:#0f172a;"><i class="fas fa-microchip" style="margin-right:6px;"></i> 6. Device Interrogation &amp; Cardiac Catheterization / PCI</h4>
                                 <div class="mod-clinical-style-33">
                                     <div class="form-group"><label class="form-label" for="cardio-device-type">Cardiac Implanted Device</label><select id="cardio-device-type" name="cardio_device_type" class="form-control"><option value="None">None</option><option value="Dual Chamber Pacemaker (PPM)">Dual Chamber Pacemaker (PPM)</option><option value="Implantable Cardioverter Defibrillator (ICD)">Implantable Cardioverter Defibrillator (ICD)</option><option value="Biventricular ICD (CRT-D)">Biventricular ICD (CRT-D)</option><option value="Implantable Loop Recorder (ILR)">Implantable Loop Recorder (ILR)</option></select></div>
@@ -307,8 +359,46 @@
                                 </div>
                             </div>
 
+                            <!-- Card: Holter / Ambulatory Rhythm Monitoring (Palpitations workflow only) -->
+                            <div data-workflow="palpitations" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                                <h4 class="form-section-title" style="margin:0 0 10px 0; color:#0f172a;"><i class="fas fa-heart-pulse" style="margin-right:6px;"></i> Holter / Ambulatory Rhythm Monitor Report</h4>
+                                <div class="mod-clinical-style-33">
+                                    <div class="form-group"><label class="form-label" for="cardio-holter-duration">Monitor Type / Duration</label><select id="cardio-holter-duration" name="cardio_holter_duration" class="form-control"><option value="">Select...</option><option value="24-Hour Holter">24-Hour Holter</option><option value="48-Hour Holter">48-Hour Holter</option><option value="7-Day Patch Monitor">7-Day Patch Monitor</option><option value="14-Day Patch Monitor">14-Day Patch Monitor</option><option value="30-Day Event Monitor">30-Day Event Monitor</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="cardio-holter-findings">Report Findings</label><textarea id="cardio-holter-findings" name="cardio_holter_findings" class="form-control" rows="2" placeholder="e.g. Sinus rhythm with rare PACs, 3 episodes of asymptomatic NSVT, no AFib captured"></textarea></div>
+                                    <div class="form-group">
+                                        <label class="form-label" for="cardio-holter-file">Holter Report Upload (PDF/Image)</label>
+                                        <input type="hidden" id="cardio-holter-document-id" name="cardio_holter_document_id">
+                                        <input type="file" id="cardio-holter-file" class="form-control cardio-file-attach-input" data-target-field="cardio-holter-document-id" data-doc-label="Holter Report" accept=".pdf,.png,.jpg,.jpeg">
+                                        <span id="cardio-holter-file-status" class="cardio-file-attach-status" style="display:block; font-size:0.78rem; color:var(--text-secondary); margin-top:4px;"></span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Card: Labs (Chest Pain / Dyspnea / Palpitations / Hypertension workflows) -->
+                            <div data-workflow="chest_pain dyspnea palpitations hypertension" style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                                <h4 class="form-section-title" style="margin:0 0 10px 0; color:#0f172a;"><i class="fas fa-vial" style="margin-right:6px;"></i> Cardiac &amp; Metabolic Labs</h4>
+                                <div class="mod-clinical-style-33">
+                                    <div class="form-group"><label class="form-label" for="cardio-labs-troponin">Troponin</label><input type="text" id="cardio-labs-troponin" name="cardio_labs_troponin" class="form-control" placeholder="e.g. &lt;0.01 ng/mL (Normal &lt;0.04)"></div>
+                                    <div class="form-group"><label class="form-label" for="cardio-labs-bnp">BNP / NT-proBNP</label><input type="text" id="cardio-labs-bnp" name="cardio_labs_bnp" class="form-control" placeholder="e.g. 450 pg/mL (BNP)"></div>
+                                    <div class="form-group"><label class="form-label" for="cardio-labs-lipid">Lipid Panel</label><input type="text" id="cardio-labs-lipid" name="cardio_labs_lipid_panel" class="form-control" placeholder="e.g. LDL 145, HDL 38, TG 210, Total Chol 220"></div>
+                                    <div class="form-group"><label class="form-label" for="cardio-labs-bmp">BMP / Electrolytes &amp; Renal Function</label><input type="text" id="cardio-labs-bmp" name="cardio_labs_bmp" class="form-control" placeholder="e.g. Na 138, K 4.2, Cr 1.1, eGFR 68"></div>
+                                    <div class="form-group"><label class="form-label" for="cardio-labs-hba1c">HbA1c</label><input type="text" id="cardio-labs-hba1c" name="cardio_labs_hba1c" class="form-control" placeholder="e.g. 6.8%"></div>
+                                    <div class="form-group"><label class="form-label" for="cardio-labs-ddimer">D-Dimer</label><input type="text" id="cardio-labs-ddimer" name="cardio_labs_ddimer" class="form-control" placeholder="e.g. 0.3 µg/mL FEU (Normal &lt;0.5)"></div>
+                                </div>
+                                <div class="form-group" style="margin-top:10px; margin-bottom:0;"><label class="form-label" for="cardio-labs-other">Other Labs / Notes</label><textarea id="cardio-labs-other" name="cardio_labs_other" class="form-control" rows="2" placeholder="Any additional lab results or pending orders"></textarea></div>
+                            </div>
+
+                            <!-- Card: Medication / Lifestyle Plan (Hypertension workflow only) -->
+                            <div data-workflow="hypertension" style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                                <h4 class="form-section-title" style="margin:0 0 10px 0; color:#92400e;"><i class="fas fa-pills" style="margin-right:6px;"></i> Medication &amp; Lifestyle Plan</h4>
+                                <div class="form-group" style="margin-bottom:0;">
+                                    <label class="form-label" for="cardio-htn-plan">Medication Titration / Lifestyle Recommendations</label>
+                                    <textarea id="cardio-htn-plan" name="cardio_htn_plan" class="form-control" rows="3" placeholder="e.g. Increase Lisinopril to 20mg daily. Low-sodium (&lt;2g/day) diet counseling given. Recheck BP in 2 weeks. Home BP log requested."></textarea>
+                                </div>
+                            </div>
+
                             <!-- Card 7: Quick ICD-10 & Guideline-Directed Medical Therapy (GDMT) -->
-                            <div style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                            <div data-workflow="chest_pain dyspnea palpitations hypertension followup" style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
                                 <div class="form-group" style="margin-bottom: 12px;">
                                     <label class="form-label" style="font-weight: 700; color: #166534; font-size: 0.88rem;">
                                         <i class="fas fa-heartbeat" style="margin-right: 6px;"></i> Common Cardiology ICD-10 Quick Selection
@@ -353,6 +443,22 @@
                     </button>
                     <div id="accordion-ortho" class="accordion-content hidden" role="region" aria-labelledby="accordion-ortho-btn">
                         <form id="ortho-form" novalidate class="mod-clinical-style-12">
+                            <!-- Pathway Selector: drives which pathway-specific blocks below are shown (see toggleOrthoPathway() in app.js) -->
+                            <div style="background: var(--bg-tertiary); border: 1px solid var(--primary-color); border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                                <div class="form-group" style="margin-bottom: 0;">
+                                    <label class="form-label" for="ortho-pathway-select" style="font-weight: 700; color: var(--primary-color);">
+                                        <i class="fas fa-route" style="margin-right: 6px;"></i> Orthopedic Clinical Pathway
+                                    </label>
+                                    <select id="ortho-pathway-select" name="ortho_pathway" class="form-control">
+                                        <option value="joint_pain">Joint Pain</option>
+                                        <option value="acute_injury">Acute Injury</option>
+                                        <option value="back_pain">Back Pain</option>
+                                        <option value="fracture_followup">Fracture Follow-up</option>
+                                        <option value="post_op">Post-op</option>
+                                    </select>
+                                </div>
+                            </div>
+
                             <h4 class="form-section-title">Chief Complaint &amp; Pain Assessment</h4>
                             <div class="mod-clinical-style-33">
                                 <div class="form-group"><label class="form-label" for="ortho-chief-complaint">Chief Complaint</label><input type="text" id="ortho-chief-complaint" name="ortho_chief_complaint" class="form-control" placeholder="e.g. Right knee pain"></div>
@@ -362,7 +468,158 @@
                                 <div class="form-group"><label class="form-label" for="ortho-onset">Onset</label><select id="ortho-onset" name="ortho_onset" class="form-control"><option value="">Select...</option><option>Acute (Traumatic)</option><option>Gradual (Overuse)</option><option>Chronic</option></select></div>
                                 <div class="form-group"><label class="form-label" for="ortho-duration">Duration of Symptoms</label><input type="text" id="ortho-duration" name="ortho_duration" class="form-control" placeholder="e.g. 3 months"></div>
                             </div>
-                            <h4 class="form-section-title">Range of Motion (ROM) Assessment</h4>
+
+                            <!-- ===== JOINT PAIN pathway ===== -->
+                            <div data-ortho-pathway="joint_pain" style="background: #f8fafc; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                                <h4 class="form-section-title" style="margin:0 0 10px 0;"><i class="fas fa-bone" style="margin-right:6px;"></i> Joint Pain Assessment</h4>
+                                <div class="mod-clinical-style-33">
+                                    <div class="form-group"><label class="form-label" for="ortho-jp-joint">Joint</label><select id="ortho-jp-joint" name="ortho_jp_joint" class="form-control"><option value="">Select...</option><option value="shoulder">Shoulder</option><option value="elbow">Elbow</option><option value="wrist">Wrist</option><option>Hand</option><option value="hip">Hip</option><option value="knee">Knee</option><option value="ankle">Ankle</option><option>Foot</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-jp-laterality">Laterality</label><select id="ortho-jp-laterality" name="ortho_jp_laterality" class="form-control"><option value="">Select...</option><option>Right</option><option>Left</option><option>Bilateral</option><option>Midline</option><option>Not Applicable</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-jp-pattern">Pain Pattern</label><select id="ortho-jp-pattern" name="ortho_jp_pattern" class="form-control"><option value="">Select...</option><option>Constant</option><option>Intermittent</option><option>Activity-related</option><option>Night Pain</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-jp-aggravating">Aggravating Factors</label><input type="text" id="ortho-jp-aggravating" name="ortho_jp_aggravating" class="form-control" placeholder="e.g. Stairs, prolonged standing"></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-jp-relieving">Relieving Factors</label><input type="text" id="ortho-jp-relieving" name="ortho_jp_relieving" class="form-control" placeholder="e.g. Rest, ice, NSAIDs"></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-jp-morning-stiffness">Morning Stiffness</label><select id="ortho-jp-morning-stiffness" name="ortho_jp_morning_stiffness" class="form-control"><option value="">Select...</option><option>None</option><option>&lt;30 min</option><option>&gt;30 min</option></select></div>
+                                </div>
+                                <div class="mod-clinical-style-33">
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" id="ortho-jp-locking" name="ortho_jp_locking" value="1"> Locking</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" id="ortho-jp-catching" name="ortho_jp_catching" value="1"> Catching</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" id="ortho-jp-clicking" name="ortho_jp_clicking" value="1"> Clicking</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" id="ortho-jp-instability-sym" name="ortho_jp_instability_sym" value="1"> Instability</label>
+                                </div>
+
+                                <!-- Joint-specific special tests (see toggleOrthoJoint() in app.js) -->
+                                <div data-ortho-joint="knee" style="margin-top:12px; padding-top:12px; border-top:1px dashed #cbd5e1;">
+                                    <h4 class="form-section-title" style="margin:0 0 8px 0; font-size:0.95rem;">Knee Special Tests</h4>
+                                    <div class="mod-clinical-style-33">
+                                        <div class="form-group"><label class="form-label" for="ortho-knee-effusion">Effusion</label><select id="ortho-knee-effusion" name="ortho_knee_effusion" class="form-control"><option value="">Select...</option><option>None</option><option>Mild</option><option>Moderate</option><option>Large</option></select></div>
+                                        <div class="form-group"><label class="form-label" for="ortho-knee-lachman">Lachman Test</label><select id="ortho-knee-lachman" name="ortho_knee_lachman" class="form-control"><option value="">Select...</option><option>Negative</option><option>Positive (1+)</option><option>Positive (2+)</option><option>Positive (3+)</option></select></div>
+                                        <div class="form-group"><label class="form-label" for="ortho-knee-mcmurray">McMurray Test</label><select id="ortho-knee-mcmurray" name="ortho_knee_mcmurray" class="form-control"><option value="">Select...</option><option>Negative</option><option>Positive Medial</option><option>Positive Lateral</option></select></div>
+                                    </div>
+                                </div>
+                                <div data-ortho-joint="shoulder" style="margin-top:12px; padding-top:12px; border-top:1px dashed #cbd5e1;">
+                                    <h4 class="form-section-title" style="margin:0 0 8px 0; font-size:0.95rem;">Shoulder Special Tests</h4>
+                                    <div class="mod-clinical-style-33">
+                                        <div class="form-group"><label class="form-label" for="ortho-shoulder-rotator-cuff">Rotator Cuff Test</label><select id="ortho-shoulder-rotator-cuff" name="ortho_shoulder_rotator_cuff" class="form-control"><option value="">Select...</option><option>Negative</option><option>Positive - Supraspinatus</option><option>Positive - Infraspinatus</option><option>Positive - Subscapularis</option></select></div>
+                                        <div class="form-group"><label class="form-label" for="ortho-shoulder-impingement">Impingement Test</label><select id="ortho-shoulder-impingement" name="ortho_shoulder_impingement" class="form-control"><option value="">Select...</option><option>Negative</option><option>Positive Neer</option><option>Positive Hawkins-Kennedy</option></select></div>
+                                    </div>
+                                </div>
+                                <div data-ortho-joint="hip" style="margin-top:12px; padding-top:12px; border-top:1px dashed #cbd5e1;">
+                                    <h4 class="form-section-title" style="margin:0 0 8px 0; font-size:0.95rem;">Hip Special Tests</h4>
+                                    <div class="mod-clinical-style-33">
+                                        <div class="form-group"><label class="form-label" for="ortho-hip-provocative">Provocative Test</label><select id="ortho-hip-provocative" name="ortho_hip_provocative" class="form-control"><option value="">Select...</option><option>Negative</option><option>Positive FADIR</option><option>Positive FABER</option></select></div>
+                                        <div class="form-group"><label class="form-label" for="ortho-hip-gait-note">Gait Note</label><input type="text" id="ortho-hip-gait-note" name="ortho_hip_gait_note" class="form-control" placeholder="e.g. Trendelenburg on right"></div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- ===== ACUTE INJURY pathway ===== -->
+                            <div data-ortho-pathway="acute_injury" style="background: #fffbeb; border: 1px solid #fde68a; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                                <h4 class="form-section-title" style="margin:0 0 10px 0;"><i class="fas fa-truck-medical" style="margin-right:6px;"></i> Acute Injury</h4>
+                                <div class="mod-clinical-style-33">
+                                    <div class="form-group"><label class="form-label" for="ortho-ai-date">Injury Date</label><input type="date" id="ortho-ai-date" name="ortho_ai_date" class="form-control"></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-ai-time">Injury Time</label><input type="time" id="ortho-ai-time" name="ortho_ai_time" class="form-control"></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-ai-mechanism">Mechanism</label><select id="ortho-ai-mechanism" name="ortho_ai_mechanism" class="form-control"><option value="">Select...</option><option>Fall</option><option>Sports</option><option>Motor Vehicle</option><option>Work-related</option><option>Direct Blow</option><option>Twisting</option><option>Overuse</option><option>Other</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-ai-activity">Activity at Injury</label><input type="text" id="ortho-ai-activity" name="ortho_ai_activity" class="form-control" placeholder="e.g. Playing basketball"></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-ai-location">Body Part</label><input type="text" id="ortho-ai-location" name="ortho_ai_location" class="form-control" placeholder="e.g. Left ankle"></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-ai-laterality">Laterality</label><select id="ortho-ai-laterality" name="ortho_ai_laterality" class="form-control"><option value="">Select...</option><option>Right</option><option>Left</option><option>Bilateral</option></select></div>
+                                </div>
+                                <div class="mod-clinical-style-33">
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" id="ortho-ai-deformity" name="ortho_ai_deformity" value="1"> Deformity</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" id="ortho-ai-unable-bear-weight" name="ortho_ai_unable_bear_weight" value="1"> Unable to Bear Weight</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" id="ortho-ai-numbness" name="ortho_ai_numbness" value="1"> Numbness</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" id="ortho-ai-tingling" name="ortho_ai_tingling" value="1"> Tingling</label>
+                                </div>
+                                <h4 class="form-section-title" style="margin:10px 0 8px 0; font-size:0.95rem;">Neurovascular Examination</h4>
+                                <div class="mod-clinical-style-33">
+                                    <div class="form-group"><label class="form-label" for="ortho-ai-nv-sensation">Sensation</label><select id="ortho-ai-nv-sensation" name="ortho_ai_nv_sensation" class="form-control"><option value="">Select...</option><option>Intact</option><option>Diminished</option><option>Absent</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-ai-nv-motor">Motor Function</label><select id="ortho-ai-nv-motor" name="ortho_ai_nv_motor" class="form-control"><option value="">Select...</option><option>Intact</option><option>Weak</option><option>Absent</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-ai-nv-pulse">Pulse</label><select id="ortho-ai-nv-pulse" name="ortho_ai_nv_pulse" class="form-control"><option value="">Select...</option><option>Palpable</option><option>Diminished</option><option>Absent</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-ai-nv-cap-refill">Capillary Refill</label><select id="ortho-ai-nv-cap-refill" name="ortho_ai_nv_cap_refill" class="form-control"><option value="">Select...</option><option>&lt;2 sec</option><option>&gt;2 sec</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-ai-nv-skin">Skin Temp / Color</label><input type="text" id="ortho-ai-nv-skin" name="ortho_ai_nv_skin" class="form-control" placeholder="e.g. Warm, pink"></div>
+                                </div>
+                                <div class="form-group"><label class="form-label" for="ortho-ai-imaging">Imaging Type</label><select id="ortho-ai-imaging" name="ortho_ai_imaging" class="form-control"><option value="">Select...</option><option>X-Ray</option><option>CT</option><option>MRI</option><option>Ultrasound</option><option>Other</option><option>None Ordered</option></select></div>
+                            </div>
+
+                            <!-- ===== BACK PAIN pathway ===== -->
+                            <div data-ortho-pathway="back_pain" style="background: #ffffff; border: 1px solid #e2e8f0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                                <h4 class="form-section-title" style="margin:0 0 10px 0;"><i class="fas fa-person" style="margin-right:6px;"></i> Back Pain Assessment</h4>
+                                <div class="mod-clinical-style-33">
+                                    <div class="form-group"><label class="form-label" for="ortho-bp-location">Spine Location</label><select id="ortho-bp-location" name="ortho_bp_location" class="form-control"><option value="">Select...</option><option>Cervical</option><option>Thoracic</option><option>Lumbar</option><option>Sacral</option><option>Multiple</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-bp-radiation">Radiation</label><select id="ortho-bp-radiation" name="ortho_bp_radiation" class="form-control"><option value="">Select...</option><option>None</option><option>Buttock</option><option>Hip</option><option>Thigh</option><option>Leg</option><option>Foot</option><option>Other</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-bp-character">Character</label><select id="ortho-bp-character" name="ortho_bp_character" class="form-control"><option value="">Select...</option><option>Mechanical</option><option>Constant</option><option>Intermittent</option><option>Rest Pain</option><option>Night Pain</option></select></div>
+                                </div>
+                                <div class="mod-clinical-style-33">
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" class="ortho-bp-neuro-cb" id="ortho-bp-numbness" name="ortho_bp_numbness" value="1"> Numbness</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" class="ortho-bp-neuro-cb" id="ortho-bp-tingling" name="ortho_bp_tingling" value="1"> Tingling</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" class="ortho-bp-neuro-cb" id="ortho-bp-weakness" name="ortho_bp_weakness" value="1"> Weakness</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" class="ortho-bp-neuro-cb" id="ortho-bp-gait-changes" name="ortho_bp_gait_changes" value="1"> Gait Changes</label>
+                                </div>
+
+                                <h4 class="form-section-title" style="margin:14px 0 8px 0; color:#b91c1c;"><i class="fas fa-triangle-exclamation" style="margin-right:6px;"></i> Red-Flag Screening</h4>
+                                <div class="mod-clinical-style-33">
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" class="ortho-redflag-cb" id="ortho-rf-trauma" name="ortho_rf_trauma" value="1"> Trauma</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" class="ortho-redflag-cb" id="ortho-rf-fever" name="ortho_rf_fever" value="1"> Fever / Infection Risk</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" class="ortho-redflag-cb" id="ortho-rf-cancer" name="ortho_rf_cancer" value="1"> Cancer History</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" class="ortho-redflag-cb" id="ortho-rf-weight-loss" name="ortho_rf_weight_loss" value="1"> Unexplained Weight Loss</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" class="ortho-redflag-cb" id="ortho-rf-immunosuppression" name="ortho_rf_immunosuppression" value="1"> Immunosuppression</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" class="ortho-redflag-cb" id="ortho-rf-osteoporosis" name="ortho_rf_osteoporosis" value="1"> Osteoporosis / Fracture Risk</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" class="ortho-redflag-cb" id="ortho-rf-neuro-deficit" name="ortho_rf_neuro_deficit" value="1"> Progressive Neurologic Deficit</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" class="ortho-redflag-cb" id="ortho-rf-bowel-bladder" name="ortho_rf_bowel_bladder" value="1"> Bowel / Bladder Symptoms</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" class="ortho-redflag-cb" id="ortho-rf-saddle" name="ortho_rf_saddle" value="1"> Saddle Sensory Changes</label>
+                                </div>
+                                <div id="ortho-redflag-banner" class="hidden" style="margin-top:10px; background:#fef2f2; border:1px solid #fca5a5; border-radius:6px; padding:10px 14px; color:#991b1b; font-weight:600; font-size:0.88rem;">
+                                    <i class="fas fa-circle-exclamation" style="margin-right:6px;"></i> Red flag(s) present — consider appropriate imaging per clinical judgment. This is an informational prompt only; no order is placed automatically.
+                                </div>
+                            </div>
+
+                            <!-- ===== FRACTURE FOLLOW-UP pathway ===== -->
+                            <div data-ortho-pathway="fracture_followup" style="background: #f0fdf4; border: 1px solid #bbf7d0; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                                <h4 class="form-section-title" style="margin:0 0 10px 0;"><i class="fas fa-bandage" style="margin-right:6px;"></i> Fracture Follow-up</h4>
+                                <div class="form-group">
+                                    <label class="form-label" for="ortho-fracture-ref">Linked Fracture Diagnosis</label>
+                                    <select id="ortho-fracture-ref" name="ortho_fracture_ref_id" class="form-control"><option value="">-- Loading patient diagnoses --</option></select>
+                                </div>
+                                <div class="mod-clinical-style-33">
+                                    <div class="form-group"><label class="form-label" for="ortho-ff-device">Immobilization Device</label><select id="ortho-ff-device" name="ortho_ff_device" class="form-control"><option value="">Select...</option><option>Cast</option><option>Splint</option><option>Brace</option><option>Boot</option><option>Sling</option><option>None</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-ff-applied-date">Device Applied Date</label><input type="date" id="ortho-ff-applied-date" name="ortho_ff_applied_date" class="form-control"></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-ff-device-condition">Device Condition</label><select id="ortho-ff-device-condition" name="ortho_ff_device_condition" class="form-control"><option value="">Select...</option><option>Intact</option><option>Loose</option><option>Damaged</option><option>Removed</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-ff-union">Union Status</label><select id="ortho-ff-union" name="ortho_ff_union" class="form-control"><option value="">Select...</option><option>Healing as Expected</option><option>Delayed Union</option><option>Nonunion</option><option>Malunion</option><option>United</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-ff-alignment">Alignment</label><select id="ortho-ff-alignment" name="ortho_ff_alignment" class="form-control"><option value="">Select...</option><option>Anatomic</option><option>Acceptable</option><option>Unacceptable</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-ff-weightbearing">Weight-bearing Status</label><select id="ortho-ff-weightbearing" name="ortho_ff_weightbearing" class="form-control"><option value="">Select...</option><option>Non-weight-bearing</option><option>Touch-down Weight-bearing</option><option>Partial Weight-bearing</option><option>Weight-bearing as Tolerated</option><option>Full Weight-bearing</option></select></div>
+                                </div>
+                                <div class="mod-clinical-style-33">
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" id="ortho-ff-pt" name="ortho_ff_pt" value="1"> Physical Therapy Ordered</label>
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" id="ortho-ff-home-exercise" name="ortho_ff_home_exercise" value="1"> Home Exercise Program</label>
+                                </div>
+                            </div>
+
+                            <!-- ===== POST-OP pathway ===== -->
+                            <div data-ortho-pathway="post_op" style="background: #eff6ff; border: 1px solid #bfdbfe; border-radius: 8px; padding: 14px; margin-bottom: 16px;">
+                                <h4 class="form-section-title" style="margin:0 0 10px 0;"><i class="fas fa-user-doctor" style="margin-right:6px;"></i> Post-op Assessment</h4>
+                                <div class="form-group">
+                                    <label class="form-label" for="ortho-procedure-ref">Linked Procedure</label>
+                                    <select id="ortho-procedure-ref" name="ortho_procedure_ref_id" class="form-control"><option value="">-- Loading patient procedures --</option></select>
+                                </div>
+                                <h4 class="form-section-title" style="margin:10px 0 8px 0; font-size:0.95rem;">Wound Assessment</h4>
+                                <div class="mod-clinical-style-33">
+                                    <div class="form-group"><label class="form-label" for="ortho-po-wound">Wound Status</label><select id="ortho-po-wound" name="ortho_po_wound" class="form-control"><option value="">Select...</option><option>Clean / Dry / Intact</option><option>Redness</option><option>Drainage</option><option>Dehiscence</option><option>Signs of Infection</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-po-closure">Sutures / Staples</label><select id="ortho-po-closure" name="ortho_po_closure" class="form-control"><option value="">Select...</option><option>In Place</option><option>Removed</option><option>N/A - Dissolvable</option></select></div>
+                                </div>
+                                <h4 class="form-section-title" style="margin:10px 0 8px 0; font-size:0.95rem;">Pain &amp; Function</h4>
+                                <div class="mod-clinical-style-33">
+                                    <div class="form-group"><label class="form-label" for="ortho-po-pain-score">Pain Score (0-10)</label><select id="ortho-po-pain-score" name="ortho_po_pain_score" class="form-control"><option value="">Select...</option><option>0</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option><option>6</option><option>7</option><option>8</option><option>9</option><option>10</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-po-med-effectiveness">Medication Effectiveness</label><select id="ortho-po-med-effectiveness" name="ortho_po_med_effectiveness" class="form-control"><option value="">Select...</option><option>Well Controlled</option><option>Partially Controlled</option><option>Poorly Controlled</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-po-weightbearing">Weight-bearing Status</label><select id="ortho-po-weightbearing" name="ortho_po_weightbearing" class="form-control"><option value="">Select...</option><option>Non-weight-bearing</option><option>Partial Weight-bearing</option><option>Weight-bearing as Tolerated</option><option>Full Weight-bearing</option></select></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-po-gait">Gait / Mobility</label><input type="text" id="ortho-po-gait" name="ortho_po_gait" class="form-control" placeholder="e.g. Ambulating with walker"></div>
+                                </div>
+                                <div class="mod-clinical-style-33">
+                                    <label style="display:flex; align-items:center; gap:6px; font-weight:600;"><input type="checkbox" id="ortho-po-pt-ordered" name="ortho_po_pt_ordered" value="1"> PT Ordered</label>
+                                    <div class="form-group"><label class="form-label" for="ortho-po-pt-frequency">PT Frequency</label><input type="text" id="ortho-po-pt-frequency" name="ortho_po_pt_frequency" class="form-control" placeholder="e.g. 3x/week"></div>
+                                    <div class="form-group"><label class="form-label" for="ortho-po-rom-goals">ROM / Strength Goals</label><input type="text" id="ortho-po-rom-goals" name="ortho_po_rom_goals" class="form-control" placeholder="e.g. 90° flexion by week 6"></div>
+                                </div>
+                            </div>
+
+                            <h4 class="form-section-title">Shared Orthopedic Exam</h4>
                             <div class="mod-clinical-style-33">
                                 <div class="form-group"><label class="form-label" for="ortho-rom-affected">Affected Joint / Region</label><input type="text" id="ortho-rom-affected" name="ortho_rom_affected" class="form-control" placeholder="e.g. Right knee"></div>
                                 <div class="form-group"><label class="form-label" for="ortho-rom-flexion">Flexion (°)</label><input type="number" id="ortho-rom-flexion" name="ortho_rom_flexion" class="form-control" placeholder="120"></div>
@@ -370,7 +627,6 @@
                                 <div class="form-group"><label class="form-label" for="ortho-rom-abduction">Abduction (°)</label><input type="number" id="ortho-rom-abduction" name="ortho_rom_abduction" class="form-control"></div>
                                 <div class="form-group"><label class="form-label" for="ortho-rom-notes">ROM Notes</label><input type="text" id="ortho-rom-notes" name="ortho_rom_notes" class="form-control" placeholder="e.g. Limited, painful at end range"></div>
                             </div>
-                            <h4 class="form-section-title">Joint &amp; Musculoskeletal Examination</h4>
                             <div class="mod-clinical-style-33">
                                 <div class="form-group"><label class="form-label" for="ortho-swelling">Swelling / Edema</label><select id="ortho-swelling" name="ortho_swelling" class="form-control"><option value="">Select...</option><option>None</option><option>Mild</option><option>Moderate</option><option>Severe</option></select></div>
                                 <div class="form-group"><label class="form-label" for="ortho-tenderness">Point Tenderness</label><input type="text" id="ortho-tenderness" name="ortho_tenderness" class="form-control" placeholder="Location of tenderness"></div>
@@ -379,9 +635,7 @@
                                 <div class="form-group"><label class="form-label" for="ortho-muscle-strength">Muscle Strength (0-5)</label><select id="ortho-muscle-strength" name="ortho_muscle_strength" class="form-control"><option value="">Select...</option><option>0 - No contraction</option><option>1 - Trace</option><option>2 - Active movement gravity eliminated</option><option>3 - Active movement against gravity</option><option>4 - Active movement against resistance</option><option>5 - Normal strength</option></select></div>
                                 <div class="form-group"><label class="form-label" for="ortho-gait">Gait Assessment</label><select id="ortho-gait" name="ortho_gait" class="form-control"><option value="">Select...</option><option>Normal</option><option>Antalgic</option><option>Trendelenburg</option><option>Waddling</option><option>Steppage</option></select></div>
                             </div>
-                            <h4 class="form-section-title">Spine Assessment</h4>
                             <div class="mod-clinical-style-33">
-                                <div class="form-group"><label class="form-label" for="ortho-spine-region">Spine Region</label><select id="ortho-spine-region" name="ortho_spine_region" class="form-control"><option value="">Select...</option><option>Cervical</option><option>Thoracic</option><option>Lumbar</option><option>Sacral</option><option>N/A</option></select></div>
                                 <div class="form-group"><label class="form-label" for="ortho-disc">Disc Pathology</label><select id="ortho-disc" name="ortho_disc" class="form-control"><option value="">Select...</option><option>None</option><option>Bulge</option><option>Herniation</option><option>Degenerative Disc Disease</option></select></div>
                                 <div class="form-group"><label class="form-label" for="ortho-radiculopathy">Radiculopathy</label><select id="ortho-radiculopathy" name="ortho_radiculopathy" class="form-control"><option value="">Select...</option><option>None</option><option>Cervical</option><option>Lumbar (Sciatica)</option></select></div>
                                 <div class="form-group"><label class="form-label" for="ortho-slr">SLR Test</label><select id="ortho-slr" name="ortho_slr" class="form-control"><option value="">Select...</option><option>Negative</option><option>Positive Left</option><option>Positive Right</option><option>Positive Bilateral</option></select></div>
@@ -703,6 +957,7 @@
             </div> <!-- End Accordion -->
         </div>
     </div>
+  </div>
 </div>
 
 <!-- ================================================================
@@ -710,8 +965,9 @@
      Appends a timestamped correction to a locked encounter without
      overwriting the original signed clinical content.
      ================================================================ -->
-<div id="addendum-modal" class="modal-backdrop hidden">
-    <div class="modal-dialog" style="max-width:560px;">
+<div id="addendum-modal" class="modal fade" tabindex="-1" aria-hidden="true">
+  <div class="modal-dialog" style="max-width:560px;">
+    <div class="modal-content">
         <div class="modal-header mod-clinical-style-9">
             <h3 style="margin:0;">📝 Add Signed Addendum</h3>
             <button type="button" class="modal-close" id="close-addendum-modal-btn">&times;</button>
@@ -731,6 +987,7 @@
             <button type="button" class="btn btn-warning" id="submit-addendum-btn">Submit Addendum</button>
         </div>
     </div>
+  </div>
 </div>
 
 <!-- Phase 2: Encounter Status & Lock CSS tokens -->

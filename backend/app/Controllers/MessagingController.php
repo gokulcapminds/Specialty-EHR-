@@ -377,11 +377,11 @@ class MessagingController {
                         <hr style='border: 0; border-top: 1px solid #e2e8f0; margin: 10px 0;'>
                         <div style='color: #334155; font-size: 0.9rem; line-height: 1.6; white-space: pre-wrap;'>" . nl2br(htmlspecialchars($body)) . "</div>
                     </div>
-                    <p style='font-size: 0.82rem; color: #94a3b8; margin-bottom: 0;'>Primary & Family Care EHR Workspace • HIPAA Compliant Communication</p>
+                    <p style='font-size: 0.82rem; color: #94a3b8; margin-bottom: 0;'>Specialty EHR Workspace • HIPAA Compliant Communication</p>
                 </div>
             ";
 
-            $emailSent = EmailService::send($patientEmail, "New Secure Message: " . $subject, $emailBodyHtml, "Primary & Family Care EHR");
+            $emailSent = EmailService::send($patientEmail, "New Secure Message: " . $subject, $emailBodyHtml, "Specialty EHR");
         }
 
         $encryptedBody = EncryptionService::encrypt($body);
@@ -394,7 +394,14 @@ class MessagingController {
 
         AuditLogger::log($senderId, $_SESSION['username'], $_SESSION['user_role'], $patientId, 'Sent Patient Message & Email (Sent: ' . ($emailSent ? 'Yes' : 'No') . ') to ' . $patientEmail . ': ' . $subject, 'Messaging');
 
-        echo json_encode(['status' => 'success', 'message' => 'Message & Email notification dispatched successfully to ' . $patientEmail, 'email_sent' => $emailSent]);
+        if ($emailSent) {
+            $resultMsg = 'Message saved and email sent to ' . $patientEmail . '.';
+        } elseif (!empty($patientEmail)) {
+            $resultMsg = 'Message saved, but the email could not be sent (' . (EmailService::getLastError() ?: 'mail server error') . ').';
+        } else {
+            $resultMsg = 'Message saved. No email address on file, so no email was sent.';
+        }
+        echo json_encode(['status' => 'success', 'message' => $resultMsg, 'email_sent' => $emailSent]);
     }
 
     /**

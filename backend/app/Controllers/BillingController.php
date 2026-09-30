@@ -68,7 +68,7 @@ class BillingController {
                 'patient_name'   => $this->decryptPatientName($r),
                 'encounter_date' => $r['note_date'],
                 'encounter_type' => $r['encounter_type'],
-                'cpt4_codes'     => !empty($cptCodesOnly) ? implode('; ', array_unique($cptCodesOnly)) : 'CPT-4 Procedure Code',
+                'cpt4_codes'     => !empty($cptCodesOnly) ? implode('; ', array_unique($cptCodesOnly)) : '',
                 'icd10_codes'    => $r['icd10_codes'],
                 'chief_complaint'=> $r['chief_complaint'],
                 'provider'       => 'Dr. ' . $r['prov_fname'] . ' ' . $r['prov_lname'],
@@ -393,10 +393,13 @@ class BillingController {
 
         $inv = Database::fetch(
             "SELECT i.*, p.first_name_encrypted, p.last_name_encrypted, p.dob_encrypted, p.phone_encrypted,
-                    u.first_name AS created_fname, u.last_name AS created_lname
+                    u.first_name AS created_fname, u.last_name AS created_lname,
+                    cn.note_date AS encounter_date, pu.first_name AS prov_fname, pu.last_name AS prov_lname
              FROM invoices i
              JOIN patients p ON i.patient_id = p.id
              JOIN users u ON i.created_by = u.id
+             LEFT JOIN clinical_notes cn ON cn.id = i.encounter_id
+             LEFT JOIN users pu ON pu.id = cn.provider_id
              WHERE i.id = ?",
             [$id]
         );
@@ -436,6 +439,8 @@ class BillingController {
                 'status'         => $inv['status'],
                 'notes'          => $inv['notes'],
                 'created_by'     => 'Dr. ' . $inv['created_fname'] . ' ' . $inv['created_lname'],
+                'encounter_date' => $inv['encounter_date'],
+                'provider_name'  => !empty($inv['prov_fname']) ? 'Dr. ' . $inv['prov_fname'] . ' ' . $inv['prov_lname'] : null,
                 'created_at'     => $inv['created_at'],
             ],
             'line_items' => $lineItems,
@@ -466,6 +471,12 @@ class BillingController {
 
         $newPaid = round((float)$inv['paid_amount'] + $amount, 2);
         $total   = (float)$inv['total_amount'];
+        if ($inv['status'] === 'Paid' || $newPaid > $total + 0.005) {
+            http_response_code(400);
+            $due = number_format(max(0, $total - (float)$inv['paid_amount']), 2);
+            echo json_encode(['status' => 'error', 'message' => $inv['status'] === 'Paid' ? 'This invoice is already fully paid.' : "Payment exceeds the balance due (\${$due})."]);
+            return;
+        }
         $status  = $newPaid >= $total ? 'Paid' : 'Partially Paid';
 
         Database::query(

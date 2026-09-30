@@ -23,22 +23,6 @@
                 </div>
             </div>
 
-            <div class="form-group">
-                <label class="form-label" for="login-specialty">Clinical Specialty / Department</label>
-                <div class="input-icon-wrapper">
-                    <i class="fas fa-stethoscope input-icon-left"></i>
-                    <select class="form-control input-with-icon-left" id="login-specialty" name="specialty" required style="height: 44px; font-size: 0.92rem;">
-                        <option value="Cardiology">Cardiology EHR</option>
-                        <option value="Orthopedics">Orthopedic EHR</option>
-                        <option value="Dermatology">Dermatology EHR</option>
-                        <option value="Neurology">Neurology EHR</option>
-                        <option value="Oncology">Oncology EHR</option>
-                        <option value="Ophthalmology">Ophthalmology EHR</option>
-                        <option value="Physical Therapy">Physical Therapy EHR</option>
-                    </select>
-                </div>
-            </div>
-
             <div class="form-group login-options-row">
                 <label class="checkbox-container">
                     <input type="checkbox" id="login-remember" name="remember_me" aria-label="Remember me">

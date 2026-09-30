@@ -12,15 +12,19 @@
     </div>
 
     <!-- Notification Bell Icon Button -->
-    <div id="global-notification-bell-wrap" style="position: relative; display: inline-flex; align-items: center;">
-        <button type="button" id="global-bell-btn" style="background: #ffffff; border: 1.5px solid #cbd5e1; color: #0f172a; padding: 7px 14px; font-weight: 700; border-radius: 8px; display: inline-flex; align-items: center; gap: 8px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); cursor: pointer; transition: all 0.15s ease;" title="Notifications Center" onmouseover="this.style.borderColor='#0284c7'; this.style.background='#f0f9ff'" onmouseout="this.style.borderColor='#cbd5e1'; this.style.background='#ffffff'">
-            <i class="fas fa-bell" style="color: #0284c7; font-size: 1.1rem;"></i>
-            <span style="font-size: 0.88rem; color: #1e293b; font-weight: 700;">Notifications</span>
-            <span id="global-bell-badge" style="display: none; position: absolute; top: -5px; right: -5px; background: #ef4444; color: white; border-radius: 50%; width: 20px; height: 20px; font-size: 0.7rem; font-weight: 800; align-items: center; justify-content: center; border: 2px solid #ffffff; box-shadow: 0 2px 4px rgba(239,68,68,0.4);">0</span>
+    <div id="global-notification-bell-wrap" style="position: relative; display: flex; align-items: center; gap: 8px;">
+        <button type="button" id="global-bell-btn" style="background: transparent; border: none; padding: 0; display: inline-flex; align-items: center; gap: 8px; cursor: pointer; transition: opacity 0.2s; outline: none;" title="Notifications Center" onmouseover="this.style.opacity='0.8'" onmouseout="this.style.opacity='1'">
+            <div style="position: relative; display: flex; align-items: center; justify-content: center;">
+                <svg width="22" height="22" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <path d="M12 22C13.1 22 14 21.1 14 20H10C10 21.1 10.9 22 12 22ZM18 16V11C18 7.93 16.36 5.36 13.5 4.68V4C13.5 3.17 12.83 2.5 12 2.5C11.17 2.5 10.5 3.17 10.5 4V4.68C7.63 5.36 6 7.92 6 11V16L4 18V19H20V18L18 16Z" fill="#3b82f6"/>
+                </svg>
+                <span id="global-bell-badge" style="display: none; position: absolute; top: -3px; right: -2px; background: #ff4757; color: white; font-size: 10px; font-weight: 700; border-radius: 50px; padding: 0 4px; height: 16px; min-width: 16px; align-items: center; justify-content: center; border: 2px solid #ffffff; box-sizing: border-box; line-height: 1;">0</span>
+            </div>
+            <span style="color: #64748b; font-size: 13.5px; font-weight: 600;">Notifications</span>
         </button>
-        
+
         <!-- Dropdown Menu -->
-        <div id="global-notification-dropdown" style="display: none; position: absolute; top: 46px; right: 0; width: 400px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 12px 32px rgba(15,23,42,0.2); z-index: 99999; overflow: hidden; font-family: inherit;">
+        <div id="global-notification-dropdown" style="display: none; position: absolute; top: 40px; right: 0; width: 400px; background: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; box-shadow: 0 12px 32px rgba(15,23,42,0.2); z-index: 99999; overflow: hidden; font-family: inherit;">
             <div style="background: linear-gradient(135deg, #0284c7, #0369a1); color: white; padding: 14px 18px; font-weight: 700; font-size: 0.95rem; display: flex; justify-content: space-between; align-items: center;">
                 <div style="display: flex; align-items: center; gap: 8px;">
                     <i class="fas fa-bell"></i>

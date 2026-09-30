@@ -32,6 +32,8 @@ if ($apiPos !== false) {
     <meta http-equiv="Pragma" content="no-cache">
     <meta http-equiv="Expires" content="0">
     <title>Specialty EHR - Clinical EHR & Workspace</title>
+    <!-- Bootstrap 5 (vendored locally) -->
+    <link rel="stylesheet" href="css/bootstrap.min.css">
     <link rel="stylesheet" href="css/theme.css?v=<?= time() ?>">
     <!-- Module Specific CSS Stylesheets -->
     <link rel="stylesheet" href="css/modules/dashboard.css?v=<?= time() ?>">
@@ -41,8 +43,11 @@ if ($apiPos !== false) {
     <link rel="stylesheet" href="css/modules/messaging.css?v=<?= time() ?>">
     <link rel="stylesheet" href="css/modules/billing.css?v=<?= time() ?>">
     <link rel="stylesheet" href="css/modules/clinical.css?v=<?= time() ?>">
-    <!-- SweetAlert2 Modal & Alert Library -->
-    <script src="js/sweetalert2.min.js"></script>
+    <link rel="stylesheet" href="css/modules/patients.css?v=<?= time() ?>">
+    <!-- Chart.js Library -->
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <!-- Bootstrap 5 bundled JS (includes Popper) -->
+    <script src="js/bootstrap.bundle.min.js"></script>
     <!-- Font Awesome Icons -->
     <link rel="stylesheet" href="css/all.min.css">
     <link rel="icon" type="image/svg+xml" href="favicon.svg">
@@ -65,10 +70,11 @@ if ($apiPos !== false) {
     <!-- <script type="module" src="js/security/inspector.js?v=<?= time() ?>"></script> -->
     <script src="js/specialty-registry.js?v=<?= time() ?>"></script>
     <script type="module" src="js/components/toast.js?v=<?= time() ?>"></script>
-    <script type="module" src="js/components/modal.js?v=<?= time() ?>"></script>
+    <script type="module" src="js/components/bootstrap-alert.js?v=<?= time() ?>"></script>
     <script type="module" src="js/components/accordion.js?v=<?= time() ?>"></script>
     <script type="module" src="js/api.js?v=<?= time() ?>"></script>
     <script type="module" src="js/router.js?v=<?= time() ?>"></script>
+    <script src="js/modules/clinical-tabs.js?v=<?= time() ?>"></script>
     <script type="module" src="js/app.js?v=<?= time() ?>"></script>
     <!-- Phase 2: Core Clinical Encounter lifecycle (Sign/Lock/Addendum/BMI/Status) -->
     <script type="module" src="js/encounter_lifecycle.js?v=<?= time() ?>"></script>

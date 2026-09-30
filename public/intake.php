@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Patient Intake Forms - CareHealth Family Medicine</title>
+    <title>Patient Intake Forms - Specialty EHR</title>
     <!-- Google Fonts Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -388,8 +388,8 @@
         <div class="brand-logo">
             <div class="logo-icon"><i class="fas fa-plus"></i></div>
             <div class="brand-text">
-                <span class="brand-title">CareHealth</span>
-                <span class="brand-subtitle">Family Medicine</span>
+                <span class="brand-title">Specialty EHR</span>
+                <span class="brand-subtitle">Clinical EHR Workspace</span>
             </div>
         </div>
         <div class="step-progress-wrapper">
@@ -420,7 +420,7 @@
         </div>
         <h2 style="font-size: 1.5rem; font-weight: 800; color: #0f172a; margin-bottom: 8px;">Intake Forms Submitted!</h2>
         <p style="font-size: 0.95rem; color: #475569; max-width: 480px; margin: 0 auto 20px auto; line-height: 1.6;">
-            Thank you for completing your Consent to Treat and Privacy Practices acknowledgment forms for CareHealth Family Medicine. Your signed records have been safely saved to your medical chart.
+            Thank you for completing your Consent to Treat and Privacy Practices acknowledgment forms for Specialty EHR. Your signed records have been safely saved to your medical chart.
         </p>
         <div style="font-size: 0.85rem; color: #64748b; background: #f1f5f9; padding: 10px 16px; border-radius: 8px; display: inline-block;">
             <i class="fas fa-lock"></i> Encryption Secured & Signed Electronically
@@ -438,12 +438,12 @@
 
             <div class="alert-banner alert-green">
                 <i class="fas fa-shield-alt" style="font-size: 1.2rem;"></i>
-                <div>By signing below, you acknowledge that you give consent for treatment and authorize CareHealth Family Medicine and its providers to provide care.</div>
+                <div>By signing below, you acknowledge that you give consent for treatment and authorize Specialty EHR and its providers to provide care.</div>
             </div>
 
             <div class="terms-block">
                 <h4>1. Consent for Evaluation and Treatment</h4>
-                <p style="margin:0 0 10px 0;">I voluntarily consent to evaluation and treatment by the providers and staff at CareHealth Family Medicine. I understand that no guarantee has been made to me concerning the results of the examination or treatment.</p>
+                <p style="margin:0 0 10px 0;">I voluntarily consent to evaluation and treatment by the providers and staff at Specialty EHR. I understand that no guarantee has been made to me concerning the results of the examination or treatment.</p>
 
                 <h4>2. Disclosure of Information</h4>
                 <p style="margin:0 0 10px 0;">I authorize the disclosure of any information, including medical records, necessary to process insurance claims and for the ongoing treatment and payment of services.</p>
@@ -502,7 +502,7 @@
 
             <div class="terms-block">
                 <p style="margin:0 0 14px 0;">
-                    I acknowledge that I have received, read, and understand the Notice of Privacy Practices (NPP) of CareHealth Family Medicine. The NPP describes how my protected health information (PHI) may be used and disclosed and how I can access this information.
+                    I acknowledge that I have received, read, and understand the Notice of Privacy Practices (NPP) of Specialty EHR. The NPP describes how my protected health information (PHI) may be used and disclosed and how I can access this information.
                 </p>
 
                 <div class="key-points-card">
@@ -511,7 +511,7 @@
                         <li><i class="fas fa-check-circle"></i> I understand that my health information may be used for treatment, payment, and health care operations.</li>
                         <li><i class="fas fa-check-circle"></i> I understand that I have the right to review the Notice of Privacy Practices prior to signing this acknowledgment.</li>
                         <li><i class="fas fa-check-circle"></i> I understand that I may request a copy of the Notice of Privacy Practices at any time.</li>
-                        <li><i class="fas fa-check-circle"></i> I understand that CareHealth Family Medicine reserves the right to change the terms of the Notice of Privacy Practices and that I may obtain a revised notice by contacting the office.</li>
+                        <li><i class="fas fa-check-circle"></i> I understand that Specialty EHR reserves the right to change the terms of the Notice of Privacy Practices and that I may obtain a revised notice by contacting the office.</li>
                     </ul>
                 </div>
             </div>

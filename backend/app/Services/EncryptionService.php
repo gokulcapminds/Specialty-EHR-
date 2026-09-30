@@ -28,6 +28,16 @@ class EncryptionService {
     }
 
     /**
+     * Deterministic HMAC of plaintext, for matching encrypted fields (e.g. duplicate-patient
+     * lookup) without being able to recover the plaintext from the index itself.
+     */
+    public static function blindIndex(string $data): string {
+        $config = self::getConfig();
+        $key = hash('sha256', $config['encryption']['key'], true);
+        return hash_hmac('sha256', $data, $key);
+    }
+
+    /**
      * Decrypts ciphertext data using AES-256-GCM.
      */
     public static function decrypt(string $base64Data): string {

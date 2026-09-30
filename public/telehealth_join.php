@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Patient Telehealth Consultation - CareHealth</title>
+    <title>Patient Telehealth Consultation - Specialty EHR</title>
     <!-- Google Fonts Inter -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -144,8 +144,8 @@
         <div class="brand-logo">
             <div class="logo-icon"><i class="fas fa-video"></i></div>
             <div>
-                <div class="brand-title">CareHealth</div>
-                <div class="brand-subtitle">Family Medicine Telehealth</div>
+                <div class="brand-title">Specialty EHR</div>
+                <div class="brand-subtitle">Telehealth Consultation</div>
             </div>
         </div>
         <div class="badge-encrypted">
@@ -228,7 +228,7 @@
                         <div class="status-card">
                             <i class="fas fa-check-circle" style="font-size:3rem; color:#0d9488; margin-bottom:16px;"></i>
                             <h2>Consultation Ended</h2>
-                            <p>Thank you for participating in your telehealth consultation with CareHealth Family Medicine. You may now close this browser tab.</p>
+                            <p>Thank you for participating in your telehealth consultation with Specialty EHR. You may now close this browser tab.</p>
                         </div>
                     `;
                     api.dispose();

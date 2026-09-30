@@ -24,6 +24,100 @@ class CalendarController {
         }
     }
 
+    private const ALLOWED_STATUSES = ['Scheduled', 'Confirmed', 'Arrived', 'In Room', 'Completed', 'Cancelled', 'No Show', 'Waiting List', 'Checked-In', 'In-Progress'];
+
+    /**
+     * Returns the provider_time_blocks row that overlaps [$start, $end] on the appointment's day
+     * (one-off block_date rows or weekly-recurring weekday rows), or null if the slot is free.
+     */
+    private function blockedTimeConflict($providerId, string $start, string $end): ?array {
+        $startTs = strtotime($start);
+        $endTs = strtotime($end);
+        if (!$startTs || !$endTs) return null;
+        $date = date('Y-m-d', $startTs);
+        $weekday = (int)date('w', $startTs);
+        $startClock = date('H:i:s', $startTs);
+        $endClock = date('Y-m-d', $endTs) === $date ? date('H:i:s', $endTs) : '23:59:59';
+        $row = Database::fetch(
+            "SELECT * FROM provider_time_blocks
+             WHERE provider_id = ?
+               AND (block_date = ? OR (block_date IS NULL AND weekday = ?))
+               AND start_time < ? AND end_time > ?
+             LIMIT 1",
+            [$providerId, $date, $weekday, $endClock, $startClock]
+        );
+        return $row ?: null;
+    }
+
+    private function blockedMessage(array $block, string $start): string {
+        $reason = trim((string)($block['reason'] ?? '')) !== '' ? $block['reason'] : 'Blocked time';
+        return 'Provider is unavailable on ' . date('Y-m-d', strtotime($start)) . ' from '
+            . substr($block['start_time'], 0, 5) . ' to ' . substr($block['end_time'], 0, 5) . ' (' . $reason . ').';
+    }
+
+    public function doctorAppointmentsThisMonth(): void {
+        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
+        header('Content-Type: application/json');
+
+        try {
+            // Group appointments by provider for the current month
+            $sql = "SELECT
+                        u.id as provider_id,
+                        CONCAT(u.first_name, ' ', u.last_name) as provider_name,
+                        COUNT(a.id) as appointment_count
+                    FROM appointments a
+                    JOIN users u ON a.provider_id = u.id
+                    WHERE MONTH(a.start_time) = MONTH(CURRENT_DATE())
+                      AND YEAR(a.start_time) = YEAR(CURRENT_DATE())
+                    GROUP BY u.id, u.first_name, u.last_name
+                    ORDER BY appointment_count DESC";
+
+            $results = Database::fetchAll($sql);
+
+            echo json_encode([
+                'status' => 'success',
+                'data' => $results
+            ]);
+        } catch (\Exception $e) {
+            echo json_encode([
+                'status' => 'error',
+                'message' => 'Failed to fetch appointments by doctor'
+            ]);
+        }
+    }
+
+    public function doctorAppointmentsMonthWise(): void {
+        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
+        header('Content-Type: application/json');
+
+        try {
+            // Group appointments by provider and month for the current year
+            $sql = "SELECT
+                        u.id as provider_id,
+                        CONCAT(u.first_name, ' ', u.last_name) as provider_name,
+                        YEAR(a.start_time) as appointment_year,
+                        MONTH(a.start_time) as appointment_month,
+                        COALESCE(a.visit_type, 'General') as appointment_type,
+                        COUNT(a.id) as appointment_count
+                    FROM appointments a
+                    JOIN users u ON a.provider_id = u.id
+                    GROUP BY u.id, u.first_name, u.last_name, YEAR(a.start_time), MONTH(a.start_time), a.visit_type
+                    ORDER BY appointment_year DESC, appointment_month ASC, provider_name ASC";
+
+            $results = Database::fetchAll($sql);
+
+            echo json_encode([
+                'status' => 'success',
+                'data' => $results
+            ]);
+        } catch (\Exception $e) {
+            echo json_encode([
+                'status' => 'error',
+                'message' => 'Failed to fetch month-wise appointments by doctor'
+            ]);
+        }
+    }
+
     public function index(): void {
         $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
         header('Content-Type: application/json');
@@ -59,7 +153,8 @@ class CalendarController {
                 'period_frequency' => $a['period_frequency'] ?? null,
                 'period_count' => $a['period_count'] ?? 1,
                 'message_to_patient' => $a['message_to_patient'] ?? null,
-                'waiting_list_data' => $a['waiting_list_data'] ?? null
+                'waiting_list_data' => $a['waiting_list_data'] ?? null,
+                'cancel_reason' => $a['cancel_reason'] ?? null
             ];
         }
 
@@ -252,6 +347,29 @@ class CalendarController {
             ];
         }
 
+        // Recurring preview: report each occurrence with conflict/blocked flags, insert nothing.
+        if (!empty($input['dry_run'])) {
+            $preview = [];
+            foreach ($occurrences as $occ) {
+                $flag = null;
+                $flagReason = null;
+                if ($category !== 'Waiting List') {
+                    $dupe = Database::fetch(
+                        "SELECT id FROM appointments
+                         WHERE (patient_id = ? OR provider_id = ?) AND status NOT IN ('Cancelled', 'No Show') AND category != 'Waiting List'
+                         AND ((start_time <= ? AND end_time > ?) OR (start_time < ? AND end_time >= ?) OR (start_time >= ? AND end_time <= ?))",
+                        [$patientId, $providerId, $occ['start'], $occ['start'], $occ['end'], $occ['end'], $occ['start'], $occ['end']]
+                    );
+                    $blk = $this->blockedTimeConflict($providerId, $occ['start'], $occ['end']);
+                    if ($dupe) { $flag = 'conflict'; $flagReason = 'Existing appointment overlaps'; }
+                    elseif ($blk) { $flag = 'blocked'; $flagReason = $this->blockedMessage($blk, $occ['start']); }
+                }
+                $preview[] = ['start' => $occ['start'], 'end' => $occ['end'], 'flag' => $flag, 'reason' => $flagReason];
+            }
+            echo json_encode(['status' => 'success', 'dry_run' => true, 'occurrences' => $preview]);
+            return;
+        }
+
         $createdCount = 0;
         $firstId = null;
 
@@ -259,11 +377,24 @@ class CalendarController {
             $oStart = $occ['start'];
             $oEnd = $occ['end'];
 
+            // Provider blocked time (lunch / time off): reject a single booking, skip that date in a recurring series
+            if ($category !== 'Waiting List') {
+                $blockedRow = $this->blockedTimeConflict($providerId, $oStart, $oEnd);
+                if ($blockedRow) {
+                    if (count($occurrences) === 1) {
+                        http_response_code(409);
+                        echo json_encode(['status' => 'error', 'message' => 'Appointment Conflict: ' . $this->blockedMessage($blockedRow, $oStart)]);
+                        return;
+                    }
+                    continue;
+                }
+            }
+
             // Check for double booking / overlapping appointment for the SAME patient OR SAME provider (Appointments only, skip for Waiting List)
             if ($category !== 'Waiting List') {
                 $conflictSql = "SELECT * FROM appointments 
                                 WHERE (patient_id = ? OR provider_id = ?) 
-                                AND status != 'Cancelled'
+                                AND status NOT IN ('Cancelled', 'No Show')
                                 AND category != 'Waiting List'
                                 AND (
                                     (start_time <= ? AND end_time > ?) OR
@@ -365,6 +496,13 @@ class CalendarController {
         $visitType = $input['visit_type'] ?? $existing['visit_type'];
         $appointmentMode = $input['appointment_mode'] ?? $existing['appointment_mode'];
         $messageToPatient = $input['message_to_patient'] ?? $existing['message_to_patient'];
+        // A waiting-list entry can be converted into a real booking by sending category = Appointment
+        $category = $input['category'] ?? $existing['category'];
+        if (array_key_exists('waiting_list_data', $input)) {
+            $waitingListData = is_array($input['waiting_list_data']) ? json_encode($input['waiting_list_data']) : $input['waiting_list_data'];
+        } else {
+            $waitingListData = ($category === 'Waiting List') ? $existing['waiting_list_data'] : null;
+        }
 
         if (!$patientId || !$providerId || empty($startTime) || empty($endTime)) {
             http_response_code(400);
@@ -372,17 +510,31 @@ class CalendarController {
             return;
         }
 
-        // Check for double booking / overlapping appointment for the SAME patient OR SAME provider (excluding current appointment id)
-        $conflictSql = "SELECT * FROM appointments 
+        // Provider blocked time (lunch / time off) - real appointments only
+        if ($category !== 'Waiting List') {
+            $blockedRow = $this->blockedTimeConflict($providerId, $startTime, $endTime);
+            if ($blockedRow) {
+                http_response_code(409);
+                echo json_encode(['status' => 'error', 'message' => 'Appointment Conflict: ' . $this->blockedMessage($blockedRow, $startTime)]);
+                return;
+            }
+        }
+
+        // Check for double booking / overlapping appointment for the SAME patient OR SAME provider (excluding current appointment id).
+        // Waiting-list rows carry placeholder times, so they never count as conflicts (same rule as store()).
+        $conflictSql = "SELECT * FROM appointments
                         WHERE id != ?
-                        AND (patient_id = ? OR provider_id = ?) 
-                        AND status != 'Cancelled'
+                        AND (patient_id = ? OR provider_id = ?)
+                        AND status NOT IN ('Cancelled', 'No Show')
+                        AND category != 'Waiting List'
                         AND (
                             (start_time <= ? AND end_time > ?) OR
                             (start_time < ? AND end_time >= ?) OR
                             (start_time >= ? AND end_time <= ?)
                         )";
-        $conflict = Database::fetch($conflictSql, [$id, $patientId, $providerId, $startTime, $startTime, $endTime, $endTime, $startTime, $endTime]);
+        $conflict = ($category === 'Waiting List')
+            ? false
+            : Database::fetch($conflictSql, [$id, $patientId, $providerId, $startTime, $startTime, $endTime, $endTime, $startTime, $endTime]);
 
         if ($conflict) {
             $confStart = date('H:i', strtotime($conflict['start_time']));
@@ -397,8 +549,8 @@ class CalendarController {
             return;
         }
 
-        $sql = "UPDATE appointments SET patient_id = ?, provider_id = ?, start_time = ?, end_time = ?, notes = ?, status = ?, appointment_mode = ?, visit_type = ? WHERE id = ?";
-        Database::query($sql, [$patientId, $providerId, $startTime, $endTime, $notes, $status, $appointmentMode, $visitType, $id]);
+        $sql = "UPDATE appointments SET patient_id = ?, provider_id = ?, start_time = ?, end_time = ?, notes = ?, status = ?, appointment_mode = ?, visit_type = ?, category = ?, waiting_list_data = ? WHERE id = ?";
+        Database::query($sql, [$patientId, $providerId, $startTime, $endTime, $notes, $status, $appointmentMode, $visitType, $category, $waitingListData, $id]);
 
         if (strtolower(trim($appointmentMode)) === 'telehealth' || strtolower(trim($visitType)) === 'telehealth') {
             $telehealthRes = \App\Controllers\TelehealthController::createAndSendForAppointment(intval($id), intval($patientId), intval($providerId), $startTime);
@@ -428,14 +580,100 @@ class CalendarController {
         $input = json_decode(file_get_contents('php://input'), true);
         $status = $input['status'] ?? 'Scheduled';
 
+        if (!in_array($status, self::ALLOWED_STATUSES, true)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Invalid appointment status.']);
+            return;
+        }
+
+        // A reason is only kept for Cancelled / No Show; any other status clears it
+        $cancelReason = null;
+        if (in_array($status, ['Cancelled', 'No Show'], true)) {
+            $cancelReason = trim((string)($input['cancel_reason'] ?? ''));
+            $cancelReason = $cancelReason !== '' ? mb_substr($cancelReason, 0, 255) : null;
+        }
+
         $a = Database::fetch("SELECT patient_id FROM appointments WHERE id = ?", [$id]);
         $patientId = $a ? $a['patient_id'] : null;
 
-        $sql = "UPDATE appointments SET status = ? WHERE id = ?";
-        Database::query($sql, [$status, $id]);
+        $sql = "UPDATE appointments SET status = ?, cancel_reason = ? WHERE id = ?";
+        Database::query($sql, [$status, $cancelReason, $id]);
 
         AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], $patientId, 'Update Appointment Status to ' . $status, 'Calendar', $id);
 
         echo json_encode(['status' => 'success', 'message' => 'Appointment status updated to ' . $status . '.']);
+    }
+
+    // ---- Provider blocked time (lunch / time off) ----
+
+    public function listBlocks(): void {
+        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
+        header('Content-Type: application/json');
+        $rows = Database::fetchAll(
+            "SELECT b.id, b.provider_id, b.block_date, b.weekday, b.start_time, b.end_time, b.reason,
+                    CONCAT(u.first_name, ' ', u.last_name) AS provider_name
+             FROM provider_time_blocks b JOIN users u ON u.id = b.provider_id
+             ORDER BY b.block_date IS NULL, b.block_date, b.weekday, b.start_time"
+        );
+        echo json_encode(['status' => 'success', 'data' => $rows]);
+    }
+
+    public function storeBlock(): void {
+        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist']);
+        header('Content-Type: application/json');
+        $input = json_decode(file_get_contents('php://input'), true) ?? [];
+
+        $providerId = intval($input['provider_id'] ?? 0);
+        $blockDate = !empty($input['block_date']) ? $input['block_date'] : null;
+        $weekday = (isset($input['weekday']) && $input['weekday'] !== '' && $input['weekday'] !== null) ? intval($input['weekday']) : null;
+        $start = $input['start_time'] ?? '';
+        $end = $input['end_time'] ?? '';
+        $reason = mb_substr(trim((string)($input['reason'] ?? '')), 0, 255);
+
+        $validTime = function ($t) { return (bool)preg_match('/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/', $t); };
+        if (!$providerId || (($blockDate === null) === ($weekday === null)) || !$validTime($start) || !$validTime($end)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Provider, either a date or a weekday, and a valid start/end time are required.']);
+            return;
+        }
+        if ($blockDate !== null && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $blockDate)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Invalid block date.']);
+            return;
+        }
+        if ($weekday !== null && ($weekday < 0 || $weekday > 6)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Invalid weekday.']);
+            return;
+        }
+        if (strlen($start) === 5) $start .= ':00';
+        if (strlen($end) === 5) $end .= ':00';
+        if ($end <= $start) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'End time must be after start time.']);
+            return;
+        }
+
+        Database::query(
+            "INSERT INTO provider_time_blocks (provider_id, block_date, weekday, start_time, end_time, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [$providerId, $blockDate, $weekday, $start, $end, $reason !== '' ? $reason : null, $_SESSION['user_id']]
+        );
+        $newId = intval(Database::lastInsertId());
+        AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], null, 'Create Provider Time Block', 'Calendar', $newId);
+        echo json_encode(['status' => 'success', 'message' => 'Time blocked successfully.', 'id' => $newId]);
+    }
+
+    public function deleteBlock(array $params): void {
+        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist']);
+        header('Content-Type: application/json');
+        $id = intval($params['id'] ?? 0);
+        if (!$id) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Block ID required.']);
+            return;
+        }
+        Database::query("DELETE FROM provider_time_blocks WHERE id = ?", [$id]);
+        AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], null, 'Delete Provider Time Block', 'Calendar', $id);
+        echo json_encode(['status' => 'success', 'message' => 'Blocked time removed.']);
     }
 }

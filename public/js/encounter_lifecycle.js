@@ -235,8 +235,7 @@
         if (e.target.closest('#add-addendum-btn')) {
             const modal = document.getElementById('addendum-modal');
             if (modal) {
-                modal.classList.remove('hidden');
-                modal.style.display = 'flex';
+                bootstrap.Modal.getOrCreateInstance(modal, { backdrop: 'static', keyboard: false }).show();
                 document.getElementById('addendum-text').value = '';
                 const msg = document.getElementById('addendum-status-msg');
                 if (msg) msg.style.display = 'none';
@@ -248,8 +247,7 @@
         if (e.target.closest('#close-addendum-modal-btn') || e.target.closest('#cancel-addendum-btn')) {
             const modal = document.getElementById('addendum-modal');
             if (modal) {
-                modal.classList.add('hidden');
-                modal.style.display = 'none';
+                bootstrap.Modal.getOrCreateInstance(modal, { backdrop: 'static', keyboard: false }).hide();
             }
             return;
         }
@@ -297,7 +295,7 @@
                 // Close modal after 2 seconds
                 setTimeout(() => {
                     const modal = document.getElementById('addendum-modal');
-                    if (modal) { modal.classList.add('hidden'); modal.style.display = 'none'; }
+                    if (modal) { bootstrap.Modal.getOrCreateInstance(modal, { backdrop: 'static', keyboard: false }).hide(); }
                 }, 2000);
             } else {
                 const msg = (res && res.message) ? res.message : 'Failed to submit addendum.';

@@ -197,12 +197,12 @@ class RecallController {
                         <h2 style='color: #166534; margin-top: 0;'>Recall Follow-Up Completed</h2>
                         <p style='color: #334155;'>Dear {$firstName},</p>
                         <p style='color: #475569;'>Your <strong>{$rType}</strong> recall follow-up has been officially marked as <strong>COMPLETED</strong>.</p>
-                        <p style='color: #475569; font-size: 0.9rem;'>Thank you for choosing Primary & Family Care!</p>
-                        <p style='font-size: 0.85rem; color: #94a3b8; margin-bottom: 0;'>Primary & Family Care EHR Workspace • HIPAA Compliant Patient Portal</p>
+                        <p style='color: #475569; font-size: 0.9rem;'>Thank you for choosing Specialty EHR!</p>
+                        <p style='font-size: 0.85rem; color: #94a3b8; margin-bottom: 0;'>Specialty EHR Workspace • HIPAA Compliant Patient Portal</p>
                     </div>
                 ";
 
-                $emailSent = EmailService::send($rec['email'], "Recall Completed Notice - {$rType}", $bodyHtml, "Primary & Family Care EHR");
+                $emailSent = EmailService::send($rec['email'], "Recall Completed Notice - {$rType}", $bodyHtml, "Specialty EHR");
             }
             AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], $rec['patient_id'], "Update Recall ID: {$id} Status: {$status} (Email Sent: " . ($emailSent ? 'Yes' : 'No') . ")", 'Recalls');
         }
@@ -255,11 +255,11 @@ class RecallController {
                         <strong>Action Required:</strong><br>
                         Please contact our clinic to schedule your appointment.
                     </div>
-                    <p style='font-size: 0.85rem; color: #94a3b8; margin-bottom: 0;'>Primary & Family Care EHR Workspace • HIPAA Compliant Patient Portal</p>
+                    <p style='font-size: 0.85rem; color: #94a3b8; margin-bottom: 0;'>Specialty EHR Workspace • HIPAA Compliant Patient Portal</p>
                 </div>
             ";
 
-            $emailSent = EmailService::send($rec['email'], "Recall Follow-up Notice - {$rType}", $bodyHtml, "Primary & Family Care EHR");
+            $emailSent = EmailService::send($rec['email'], "Recall Follow-up Notice - {$rType}", $bodyHtml, "Specialty EHR");
         }
 
         AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], $rec['patient_id'], "Log Recall Attempt: Channel={$channel}, Outcome={$outcome} (Email Sent: " . ($emailSent ? 'Yes' : 'No') . ")", 'Recalls');
