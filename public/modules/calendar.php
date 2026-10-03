@@ -39,8 +39,8 @@
                     </div>
 
                     <!-- Unified Primary + Schedule Button -->
-                    <button class="btn btn-primary mod-calendar-style-1" id="schedule-appt-btn" style="border-radius: 20px; padding: 6px 16px;">
-                        <i class="fas fa-plus"></i> Schedule
+                    <button class="btn btn-primary mod-calendar-style-1" id="schedule-appt-btn" style="border-radius: 20px; padding: 6px 16px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;">
+                        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style="flex:none;"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg><span>Schedule</span>
                     </button>
 
                     <!-- Icon actions: calendar view filter, provider availability -->

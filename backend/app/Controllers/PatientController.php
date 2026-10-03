@@ -2,6 +2,7 @@
 namespace App\Controllers;
 
 use App\Models\Database;
+use App\Security\Roles;
 use App\Services\EncryptionService;
 use App\Services\AuditLogger;
 
@@ -76,16 +77,16 @@ class PatientController {
     }
 
     public function providers(): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
+        $this->checkAccess(Roles::ALL_STAFF);
         header('Content-Type: application/json');
 
-        $sql = "SELECT id, first_name, last_name, role, specialty FROM users WHERE role IN ('Doctor', 'Therapist', 'Super Admin') ORDER BY first_name ASC";
+        $sql = "SELECT id, first_name, last_name, role, specialty FROM users WHERE role IN ('Doctor', 'Super Admin') ORDER BY first_name ASC";
         $providers = Database::fetchAll($sql);
         echo json_encode(['status' => 'success', 'data' => $providers]);
     }
 
     public function show(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
+        $this->checkAccess(Roles::ALL_STAFF);
         header('Content-Type: application/json');
 
         $id = $params['id'] ?? null;
@@ -147,11 +148,13 @@ class PatientController {
         $pt['photo'] = $pt['photo_url'] ?? '';
         $pt['emergency_contacts'] = $this->decodeEmergencyContacts($pt);
 
+        AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, $id, 'View Patient Record', 'Patient Directory', (string)$id);
+
         echo json_encode(['status' => 'success', 'data' => $pt]);
     }
 
     public function index(): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
+        $this->checkAccess(Roles::ALL_STAFF);
         header('Content-Type: application/json');
 
         $search = $_GET['search'] ?? '';
@@ -403,7 +406,7 @@ class PatientController {
      * GET /api/patients?id=N (same shape as the full list).
      */
     public function listView(): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
+        $this->checkAccess(Roles::ALL_STAFF);
         header('Content-Type: application/json');
 
         // Real appointments only: Cancelled, No Show and Waiting List placeholders never count
@@ -459,12 +462,14 @@ class PatientController {
             ];
         }
 
+        AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, null, 'View Patient List', 'Patient Directory', null);
+
         echo json_encode(['status' => 'success', 'data' => $out]);
     }
 
     // Active <-> Inactive toggle for the directory. Deliberately tiny: the full update() demands phone/email/etc.
     public function updateStatus(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
+        $this->checkAccess(Roles::ALL_STAFF);
         header('Content-Type: application/json');
 
         $id = intval($params['id'] ?? 0);
@@ -538,7 +543,7 @@ class PatientController {
     }
 
     public function store(): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist']);
+        $this->checkAccess(Roles::CARE_COORDINATION);
         header('Content-Type: application/json');
 
         $input = json_decode(file_get_contents('php://input'), true);
@@ -776,7 +781,7 @@ class PatientController {
     }
 
     public function update(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
+        $this->checkAccess(Roles::ALL_STAFF);
         header('Content-Type: application/json');
         
         $id = $params['id'] ?? null;
@@ -1052,7 +1057,7 @@ class PatientController {
     }
 
     public function updateInsurance(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
+        $this->checkAccess(Roles::ALL_STAFF);
         header('Content-Type: application/json');
 
         $id = $params['id'] ?? null;
@@ -1098,7 +1103,8 @@ class PatientController {
     }
 
     public function delete(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
+        // Permanently erases the chart and every linked record: system administrators only.
+        $this->checkAccess(Roles::ADMIN);
         header('Content-Type: application/json');
 
         $id = $params['id'] ?? null;

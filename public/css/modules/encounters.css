@@ -1,0 +1,30 @@
+/* Encounters module (work queue). Classes prefixed enc-. */
+.enc-sub { color: var(--text-secondary); margin: 2px 0 0; }
+.enc-chips { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 14px; }
+.enc-chip { border: 1px solid var(--border-color); background: #fff; border-radius: 999px; padding: 6px 14px; font-size: 0.85rem; font-weight: 600; color: var(--text-secondary); cursor: pointer; }
+.enc-chip span { background: #e2e8f0; color: #334155; border-radius: 99px; padding: 0 8px; margin-left: 6px; font-size: 0.75rem; }
+.enc-chip:hover { border-color: var(--primary-color); }
+.enc-chip.active { background: var(--primary-color); border-color: var(--primary-color); color: #fff; }
+.enc-chip.active span { background: rgba(255, 255, 255, 0.25); color: #fff; }
+.enc-card { padding: 16px 18px; }
+.enc-toolbar { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; margin-bottom: 12px; }
+.enc-filters, .enc-toolbar-actions { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.enc-filters .form-select, .enc-filters .form-control { height: 38px; width: auto; min-width: 160px; }
+.enc-filters .form-control { min-width: 260px; }
+.enc-walkin { border: 1px dashed var(--border-color); background: var(--bg-secondary); border-radius: 10px; padding: 14px; margin-bottom: 12px; }
+.enc-walkin-grid { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 12px; }
+.enc-walkin-actions { display: flex; justify-content: flex-end; align-items: center; gap: 8px; margin-top: 12px; }
+.enc-lbl { display: block; font-size: 0.8rem; font-weight: 600; color: #475569; margin-bottom: 4px; }
+.enc-err { color: var(--danger-color); font-size: 0.85rem; margin-right: auto; }
+.enc-loading { text-align: center; padding: 40px; color: var(--text-secondary); }
+.enc-cc { font-size: 0.78rem; color: var(--text-secondary); margin-top: 2px; }
+.enc-muted { font-size: 0.8rem; color: var(--text-secondary); margin-left: 8px; }
+.enc-actions { white-space: nowrap; }
+.enc-actions .btn { margin-right: 6px; }
+.enc-pill { display: inline-block; padding: 3px 12px; border-radius: 999px; font-size: 0.78rem; font-weight: 700; background: #e2e8f0; color: #334155; }
+.enc-pill.enc-stage-checked-in { background: #dbeafe; color: #1d4ed8; }
+.enc-pill.enc-stage-in-progress { background: #fef3c7; color: #b45309; }
+.enc-pill.enc-stage-ready-to-sign { background: #ede9fe; color: #6d28d9; }
+.enc-pill.enc-stage-signed { background: #dcfce7; color: #15803d; }
+.enc-pill.enc-stage-billed { background: #ccfbf1; color: #0f766e; }
+@media (max-width: 760px) { .enc-walkin-grid { grid-template-columns: 1fr; } .enc-filters .form-control { min-width: 0; width: 100%; } }

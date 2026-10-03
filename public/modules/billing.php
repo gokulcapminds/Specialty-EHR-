@@ -20,6 +20,9 @@
             <button class="billing-tab-btn mod-billing-style-6" data-tab="invoices">
                 <i class="fas fa-file-invoice"></i> Invoices Ledger
             </button>
+            <button class="billing-tab-btn mod-billing-style-6" data-tab="claims">
+                <i class="fas fa-file-medical-alt"></i> Insurance Claims <span id="claims-count-badge" class="badge-role badge-danger-xs mod-billing-style-5" style="display:none;"></span>
+            </button>
             <button class="billing-tab-btn mod-billing-style-6" data-tab="chargemaster">
                 <i class="fas fa-tags"></i> CPT Charge Master
             </button>
@@ -64,7 +67,9 @@
                             <option value="">All Statuses</option>
                             <option value="Draft">Draft</option>
                             <option value="Issued">Issued</option>
+                            <option value="Awaiting Insurance">Awaiting Insurance</option>
                             <option value="Partially Paid">Partially Paid</option>
+                            <option value="Patient Balance">Patient Balance</option>
                             <option value="Paid">Paid</option>
                             <option value="Overdue">Overdue</option>
                         </select>
@@ -92,6 +97,63 @@
                     </table>
                 </div>
                 <div id="invoices-pagination"></div>
+            </div>
+        </div>
+
+        <!-- Tab: Insurance Claims -->
+        <div id="billing-tab-claims" class="billing-tab-content mod-billing-style-12">
+            <!-- View 1: claims list -->
+            <div id="claims-view-list">
+            <div class="clm-kpis" id="claims-kpis"></div>
+            <div class="clm-aging" id="ar-aging"></div>
+            <div class="card">
+                <div class="card-header mod-billing-style-7">
+                    <h2 class="mod-billing-style-8"><i class="fas fa-file-medical-alt mod-billing-style-13"></i> Insurance Claims</h2>
+                    <div class="mod-billing-style-14">
+                        <input type="text" id="claims-search" class="form-control clm-search" placeholder="Search patient, claim # or invoice #" aria-label="Search claims">
+                        <select id="claims-payer-filter" class="form-control clm-payer-filter" aria-label="Filter by payer"><option value="">All Payers</option></select>
+                        <button class="btn btn-secondary btn-sm" id="manage-payers-btn"><i class="fas fa-building"></i> Payers &amp; settings</button>
+                        <button class="btn btn-secondary btn-sm" id="refresh-claims-btn"><i class="fas fa-sync-alt"></i> Refresh</button>
+                    </div>
+                </div>
+                <div class="clm-chips" id="claims-chips"></div>
+                <div class="table-container">
+                    <table id="claims-table">
+                        <thead>
+                            <tr>
+                                <th>Claim #</th>
+                                <th>Patient</th>
+                                <th>Payer</th>
+                                <th>DOS</th>
+                                <th>Billed</th>
+                                <th>Ins. Paid</th>
+                                <th>Patient Resp.</th>
+                                <th>Status</th>
+                                <th title="Days since the date of service">Age</th>
+                                <th>Actions</th>
+                            </tr>
+                        </thead>
+                        <tbody id="claims-list">
+                            <tr><td class="mod-billing-style-11" colspan="10"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+                <div id="claims-pagination"></div>
+            </div>
+        
+            </div>
+
+            <!-- View 2: claim workspace (filled by JS) -->
+            <div id="claims-view-claim" style="display:none;"></div>
+
+            <!-- View 3: payers & 837 settings -->
+            <div id="claims-view-payers" style="display:none;">
+                <div class="clw-top">
+                    <button type="button" class="clw-back" id="payers-back"><i class="fas fa-arrow-left" aria-hidden="true"></i> Back to claims</button>
+                </div>
+                <div class="clw-head"><div class="clw-title"><h2>Payers &amp; 837 settings</h2></div>
+                    <div class="clw-meta"><span>Payer IDs and the clearinghouse identifiers every claim file needs.</span></div></div>
+                <div id="payers-page-body"></div>
             </div>
         </div>
 
@@ -225,6 +287,16 @@
                 </div>
             </div>
 
+            <!-- Bill to -->
+            <div class="form-group mod-billing-style-33">
+                <label class="form-label" for="inv-billing-type">Bill to</label>
+                <select id="inv-billing-type" class="form-control">
+                    <option value="Self Pay">Patient (self pay)</option>
+                    <option value="Insurance">Insurance</option>
+                </select>
+                <div id="inv-coverage-hint" class="text-sm mod-billing-style-1"></div>
+            </div>
+
             <!-- Notes -->
             <div class="form-group mod-billing-style-33">
                 <label class="form-label">Billing Notes (optional)</label>
@@ -257,11 +329,7 @@
         <div class="modal-body mod-billing-style-44" id="invoice-print-area">
             <!-- Content loaded dynamically -->
         </div>
-        <!-- Record Payment -->
-        <div class="mod-billing-style-45" id="record-payment-section">
-            <span class="mod-billing-style-46">Record Payment:</span>
-            <input type="number" id="payment-amount-input" class="form-control mod-billing-style-47" placeholder="Amount ($)" min="0.01" step="0.01" aria-label="Amount ($)">
-            <button class="btn btn-success btn-sm" id="submit-payment-btn"><i class="fas fa-check-circle"></i> Apply Payment</button>
+        <div class="modal-footer mod-billing-style-45">
             <button class="btn btn-secondary btn-sm" id="close-view-invoice-btn2">Close</button>
         </div>
     </div>

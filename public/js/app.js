@@ -638,6 +638,15 @@ window.ensureBillingModalsInDom = function () {
             </div>
 
             <div class="form-group mod-billing-style-33">
+                <label class="form-label" for="inv-billing-type">Bill to</label>
+                <select id="inv-billing-type" class="form-control">
+                    <option value="Self Pay">Patient (self pay)</option>
+                    <option value="Insurance">Insurance</option>
+                </select>
+                <div id="inv-coverage-hint" class="text-sm mod-billing-style-1"></div>
+            </div>
+
+            <div class="form-group mod-billing-style-33">
                 <label class="form-label">Billing Notes (optional)</label>
                 <textarea id="inv-notes" class="form-control" rows="2" placeholder="e.g. Patient has secondary insurance, co-pay waived..."></textarea>
             </div>
@@ -671,10 +680,7 @@ window.ensureBillingModalsInDom = function () {
         </div>
         <div class="modal-body mod-billing-style-44" id="invoice-print-area">
         </div>
-        <div class="mod-billing-style-45" id="record-payment-section">
-            <span class="mod-billing-style-46">Record Payment:</span>
-            <input type="number" id="payment-amount-input" class="form-control mod-billing-style-47" placeholder="Amount ($)" min="0.01" step="0.01">
-            <button class="btn btn-success btn-sm" id="submit-payment-btn"><i class="fas fa-check-circle"></i> Apply Payment</button>
+        <div class="modal-footer mod-billing-style-45">
             <button class="btn btn-secondary btn-sm" id="close-view-invoice-btn2">Close</button>
         </div>
     </div>
@@ -813,6 +819,12 @@ window.openGlobalGenerateInvoiceModal = async function (data, onSaveSuccess = nu
                 return;
             }
 
+            const billSel = document.getElementById('inv-billing-type');
+            if (billSel && billSel.value === 'Insurance' && billSel.dataset.hasCoverage === '0') {
+                Toast.show('This patient has no insurance on file. Add it in the patient record (Insurance step), or choose Patient (self pay).', 'error');
+                return;
+            }
+
             saveBtn.disabled = true;
             saveBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating...';
 
@@ -823,6 +835,7 @@ window.openGlobalGenerateInvoiceModal = async function (data, onSaveSuccess = nu
                 due_date: document.getElementById('inv-due-date').value,
                 discount: parseFloat(document.getElementById('inv-discount').value || 0),
                 notes: document.getElementById('inv-notes').value,
+                billing_type: document.getElementById('inv-billing-type')?.value || 'Self Pay',
                 line_items: lineItems,
             };
 
@@ -847,6 +860,8 @@ window.openGlobalGenerateInvoiceModal = async function (data, onSaveSuccess = nu
             }
         };
     }
+
+    window.prefillBillingType(data.patient);
 
     // Load Charges
     if (data.enc) {
@@ -935,10 +950,11 @@ window.openRecordPaymentModal = function (invId, currentBalance, onPaymentSucces
     });
 };
 
-window.openNewEncounterModal = function (p, onSuccessCallback, editNote = null) {
+window.openNewEncounterModal = async function (p, onSuccessCallback, editNote = null) {
+    await loadVisitTypes();
     const todayStr = editNote ? (editNote.note_date ? editNote.note_date.substring(0, 10) : new Date().toISOString().slice(0, 10)) : new Date().toISOString().slice(0, 10);
 
-    let currentVisitType = 'Follow Up';
+    let currentVisitType = editNote?.visit_type || 'Follow-Up Visit';
     const activeSpec = sessionStorage.getItem('active_specialty') || 'Cardiology EHR';
     let currentSpecialty = editNote ? (editNote.encounter_type || activeSpec) : activeSpec;
     if (currentSpecialty.includes('Cardio')) currentSpecialty = 'Cardiology EHR';
@@ -953,7 +969,7 @@ window.openNewEncounterModal = function (p, onSuccessCallback, editNote = null) 
     let currentMode = 'In Person';
 
     if (editNote && editNote.chief_complaint) {
-        if (editNote.chief_complaint.includes('New Patient')) currentVisitType = 'New Patient';
+        if (!editNote.visit_type && editNote.chief_complaint.includes('New Patient')) currentVisitType = 'New Patient Consultation';
         if (editNote.chief_complaint.includes('Phone Call')) currentMode = 'Phone Call';
     }
 
@@ -974,9 +990,7 @@ window.openNewEncounterModal = function (p, onSuccessCallback, editNote = null) 
             <div style="display: grid; grid-template-columns: 140px 1fr; align-items: center; gap: 12px; margin-bottom: 14px;">
                 <label style="font-weight:600; font-size:0.9rem; color:#334155; text-align:right;">Visit Type <span style="color:#ef4444;">*</span></label>
                 <select id="modal-enc-visittype" class="form-control" style="height:36px; border-radius:4px; font-size:0.9rem;">
-                    <option value="">--Select--</option>
-                    <option value="New Patient" ${currentVisitType === 'New Patient' ? 'selected' : ''}>New Patient</option>
-                    <option value="Follow Up" ${currentVisitType === 'Follow Up' ? 'selected' : ''}>Follow Up</option>
+                    ${visitTypeOptionsHtml(currentVisitType)}
                 </select>
             </div>
 
@@ -1128,6 +1142,41 @@ window.openNewEncounterModal = function (p, onSuccessCallback, editNote = null) 
     });
 };
 
+// Cached role lookup (the server still enforces every permission; this only hides buttons the user can't use).
+window.getBillingUserRole = async function () {
+    if (window.__billingRole === undefined) {
+        try { const me = await ApiService.request('/api/me'); window.__billingRole = me?.user?.role || ''; } catch (e) { window.__billingRole = ''; }
+    }
+    return window.__billingRole;
+};
+
+window.claimStatusPill = function (status) {
+    const map = { 'Draft': 'draft', 'Ready': 'ready', 'Submitted': 'submitted', 'Accepted': 'accepted', 'Rejected': 'rejected', 'Denied': 'denied', 'Appealed': 'appealed', 'Paid': 'paid', 'Partially Paid': 'partial', 'Closed': 'closed' };
+    return `<span class="clm-st clm-st-${map[status] || 'draft'}">${String(status).replace(/[&<>"']/g, '')}</span>`;
+};
+
+// Defaults the Generate Invoice "Bill to" select from the patient's insurance on file.
+window.prefillBillingType = async function (patientId) {
+    const sel = document.getElementById('inv-billing-type');
+    const hint = document.getElementById('inv-coverage-hint');
+    if (!sel) return;
+    sel.value = 'Self Pay';
+    delete sel.dataset.hasCoverage;
+    if (hint) hint.textContent = '';
+    if (!patientId) return;
+    try {
+        const r = await ApiService.request(`/api/billing/patient/${patientId}/coverage`);
+        const cov = r && r.coverage ? r.coverage : {};
+        sel.dataset.hasCoverage = cov.primary ? '1' : '0';
+        if (cov.primary) {
+            sel.value = 'Insurance';
+            if (hint) hint.textContent = `Primary: ${cov.primary.payer_name} \u00b7 Member ${cov.primary.member_id || '\u2014'}${cov.primary.copay ? ' \u00b7 Copay $' + cov.primary.copay : ''}${cov.secondary ? ' | Secondary: ' + cov.secondary.payer_name : ''}`;
+        } else if (hint) {
+            hint.textContent = 'No insurance on file for this patient.';
+        }
+    } catch (e) { }
+};
+
 window.openGlobalViewInvoiceModal = async function (id, onPaymentSuccess = null, autoFocusPayment = false) {
     window.ensureBillingModalsInDom();
     const viewModal = document.getElementById('view-invoice-modal');
@@ -1139,14 +1188,8 @@ window.openGlobalViewInvoiceModal = async function (id, onPaymentSuccess = null,
     viewModalInstance.show();
 
     const statusBadge = (s) => {
-        switch (s) {
-            case 'Draft': return '<span class="badge-role badge-secondary">Draft</span>';
-            case 'Issued': return '<span class="badge-role badge-primary">Issued</span>';
-            case 'Partially Paid': return '<span class="badge-role badge-warning">Partially Paid</span>';
-            case 'Paid': return '<span class="badge-role badge-success">Paid</span>';
-            case 'Overdue': return '<span class="badge-role badge-danger">Overdue</span>';
-            default: return `<span class="badge-role">${s}</span>`;
-        }
+        const map = { 'Draft': 'draft', 'Issued': 'issued', 'Awaiting Insurance': 'awaiting', 'Partially Paid': 'partial', 'Patient Balance': 'patientbal', 'Paid': 'paid', 'Overdue': 'overdue' };
+        return `<span class="inv-status-${map[s] || 'draft'}">${s}</span>`;
     };
     const fmt = (n) => '$' + parseFloat(n || 0).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
 
@@ -1155,6 +1198,100 @@ window.openGlobalViewInvoiceModal = async function (id, onPaymentSuccess = null,
     const inv = res.invoice;
     const items = res.line_items || [];
     const clinicName = document.querySelector('.brand-title-text')?.textContent || 'Specialty EHR';
+    const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const role = await window.getBillingUserRole();
+    const canVoid = role === 'Super Admin' || role === 'Billing Staff';
+    const balanceNum = parseFloat(inv.balance) || 0;
+    const canPay = balanceNum > 0.005 && inv.status !== 'Draft';
+    const payments = res.payments || [];
+    const adjustments = (res.adjustments || []).filter((a) => !a.voided_at);
+    const lbl = 'font-size:0.78rem;font-weight:600;color:#475569;display:block;margin-bottom:4px;';
+    const payRows = payments.map((pm) => {
+        const voided = !!pm.voided_at;
+        const cell = 'padding:8px 10px;font-size:0.85rem;border-bottom:1px solid var(--border-color);';
+        return `<tr style="${voided ? 'opacity:0.55;' : ''}">
+            <td style="${cell}${voided ? 'text-decoration:line-through;' : ''}">${esc(pm.paid_at)}</td>
+            <td style="${cell}${voided ? 'text-decoration:line-through;' : ''}">${esc(pm.method)}${pm.source && pm.source !== 'Patient' ? ' &middot; ' + esc(pm.source) : ''}</td>
+            <td style="${cell}${voided ? 'text-decoration:line-through;' : ''}">${esc(pm.reference_no) || '—'}</td>
+            <td style="${cell}${voided ? 'text-decoration:line-through;' : ''}">${esc(pm.received_by) || '—'}</td>
+            <td style="${cell}text-align:right;font-weight:700;${voided ? 'text-decoration:line-through;' : ''}">${fmt(pm.amount)}</td>
+            <td class="no-print" style="${cell}text-align:right;">${voided
+                ? `<span style="color:var(--danger-color);font-size:0.78rem;font-weight:600;" title="${esc(pm.void_reason)}">Voided</span>`
+                : (canVoid ? `<button type="button" class="btn btn-secondary btn-sm inv-void-btn" data-id="${pm.id}" data-amount="${esc(pm.amount)}">Void</button>` : '')}</td>
+        </tr>`;
+    }).join('');
+    const claims = res.claims || [];
+    const cov = res.coverage || {};
+    const canEditBilling = role === 'Super Admin' || role === 'Billing Staff';
+    const claimModalAvailable = !!document.getElementById('claims-view-claim');   // the claim workspace exists only on the Billing page
+    const hasActivePrimary = claims.some((c) => c.sequence === 'Primary' && c.status !== 'Closed');
+    const canCreateClaim = canEditBilling && claimModalAvailable && inv.status !== 'Draft' && !!cov.primary && !hasActivePrimary && !(parseFloat(inv.discount) > 0);
+    const claimsSection = `
+            <div style="margin-bottom:20px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <div style="font-size:0.75rem;font-weight:700;color:var(--text-secondary);text-transform:uppercase;">Insurance</div>
+                    ${canCreateClaim ? '<button type="button" class="btn btn-primary btn-sm no-print" id="inv-create-claim"><i class="fas fa-file-medical-alt"></i> Create Claim</button>' : ''}
+                </div>
+                <div style="font-size:0.85rem;color:var(--text-secondary);margin-bottom:8px;">${cov.primary
+                    ? `Primary: <strong style="color:var(--text-primary);">${esc(cov.primary.payer_name)}</strong> &middot; Member ${esc(cov.primary.member_id || '\u2014')}${cov.secondary ? ` &nbsp;|&nbsp; Secondary: <strong style="color:var(--text-primary);">${esc(cov.secondary.payer_name)}</strong>` : ''}`
+                    : 'No insurance on file &mdash; this invoice is self pay.'}</div>
+                ${claims.length ? `<table style="width:100%;min-width:0;border-collapse:collapse;">
+                    <thead><tr style="background:var(--bg-secondary);">
+                        <th style="padding:8px 10px;text-align:left;font-size:0.75rem;">CLAIM</th>
+                        <th style="padding:8px 10px;text-align:left;font-size:0.75rem;">PAYER</th>
+                        <th style="padding:8px 10px;text-align:left;font-size:0.75rem;">STATUS</th>
+                        <th style="padding:8px 10px;text-align:right;font-size:0.75rem;">INS. PAID</th>
+                        <th style="padding:8px 10px;text-align:right;font-size:0.75rem;">PATIENT RESP.</th>
+                    </tr></thead>
+                    <tbody>${claims.map((c) => `<tr>
+                        <td style="padding:8px 10px;font-size:0.85rem;border-bottom:1px solid var(--border-color);">${claimModalAvailable ? `<button type="button" class="clm-link inv-open-claim" data-id="${c.id}">${esc(c.claim_number)}</button>` : esc(c.claim_number)} <span class="clm-seq">${esc(c.sequence)}</span></td>
+                        <td style="padding:8px 10px;font-size:0.85rem;border-bottom:1px solid var(--border-color);">${esc(c.payer_name)}</td>
+                        <td style="padding:8px 10px;border-bottom:1px solid var(--border-color);">${window.claimStatusPill(c.status)}</td>
+                        <td style="padding:8px 10px;font-size:0.85rem;text-align:right;border-bottom:1px solid var(--border-color);">${fmt(c.insurance_paid)}</td>
+                        <td style="padding:8px 10px;font-size:0.85rem;text-align:right;border-bottom:1px solid var(--border-color);">${fmt(c.patient_resp)}</td>
+                    </tr>`).join('')}</tbody></table>` : ''}
+            </div>`;
+    const paymentsSection = `
+            <div style="margin-bottom:20px;">
+                <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px;">
+                    <div style="font-size:0.75rem;font-weight:700;color:var(--text-secondary);text-transform:uppercase;">Payments</div>
+                    ${canPay ? '<button type="button" class="btn btn-success btn-sm no-print" id="inv-open-pay-form"><i class="fas fa-plus-circle"></i> Record Payment</button>' : ''}
+                </div>
+                <div id="inv-pay-form" class="no-print" style="display:none;border:1px solid var(--border-color);border-radius:8px;padding:14px;margin-bottom:12px;background:var(--bg-secondary);">
+                    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;">
+                        <div><label style="${lbl}" for="inv-pay-amount">Amount ($) <span style="color:#ef4444;">*</span></label><input type="number" id="inv-pay-amount" class="form-control" min="0.01" step="0.01" style="height:36px;"></div>
+                        <div><label style="${lbl}" for="inv-pay-method">Method <span style="color:#ef4444;">*</span></label><select id="inv-pay-method" class="form-select" style="height:36px;">${['Cash', 'Credit Card', 'Debit Card', 'Check', 'ACH', 'Other'].map((m) => `<option value="${m}">${m}</option>`).join('')}</select></div>
+                        <div><label style="${lbl}" for="inv-pay-ref" id="inv-pay-ref-label">Reference (optional)</label><input type="text" id="inv-pay-ref" class="form-control" maxlength="100" style="height:36px;"></div>
+                        <div><label style="${lbl}" for="inv-pay-date">Date <span style="color:#ef4444;">*</span></label><input type="date" id="inv-pay-date" class="form-control" style="height:36px;"></div>
+                    </div>
+                    <div style="margin-top:10px;"><label style="${lbl}" for="inv-pay-notes">Notes</label><input type="text" id="inv-pay-notes" class="form-control" maxlength="255" style="height:36px;"></div>
+                    <div id="inv-pay-error" style="display:none;color:#dc2626;font-size:0.82rem;margin-top:8px;"></div>
+                    <div style="display:flex;gap:8px;justify-content:flex-end;margin-top:12px;">
+                        <button type="button" class="btn btn-secondary btn-sm" id="inv-pay-cancel">Cancel</button>
+                        <button type="button" class="btn btn-success btn-sm" id="inv-pay-save"><i class="fas fa-check-circle"></i> Save Payment</button>
+                    </div>
+                </div>
+                ${payments.length ? `
+                <table style="width:100%;min-width:0;border-collapse:collapse;">
+                    <thead><tr style="background:var(--bg-secondary);">
+                        <th style="padding:8px 10px;text-align:left;font-size:0.75rem;">DATE</th>
+                        <th style="padding:8px 10px;text-align:left;font-size:0.75rem;">METHOD</th>
+                        <th style="padding:8px 10px;text-align:left;font-size:0.75rem;">REFERENCE</th>
+                        <th style="padding:8px 10px;text-align:left;font-size:0.75rem;">RECEIVED BY</th>
+                        <th style="padding:8px 10px;text-align:right;font-size:0.75rem;">AMOUNT</th>
+                        <th class="no-print" style="padding:8px 10px;"></th>
+                    </tr></thead>
+                    <tbody>${payRows}</tbody>
+                </table>` : '<div style="color:var(--text-secondary);font-size:0.85rem;">No payments recorded yet.</div>'}
+                <div id="inv-void-bar" class="no-print" style="display:none;border:1px solid #fecaca;background:#fef2f2;border-radius:8px;padding:12px;margin-top:10px;">
+                    <label style="${lbl}" for="inv-void-reason" id="inv-void-label">Reason for voiding this payment <span style="color:#ef4444;">*</span></label>
+                    <div style="display:flex;gap:8px;">
+                        <input type="text" id="inv-void-reason" class="form-control" maxlength="255" style="height:36px;">
+                        <button type="button" class="btn btn-secondary btn-sm" id="inv-void-cancel">Cancel</button>
+                        <button type="button" class="btn btn-danger btn-sm" id="inv-void-confirm">Void Payment</button>
+                    </div>
+                </div>
+            </div>`;
 
     printArea.innerHTML = `
         <div style="padding:8px;">
@@ -1224,6 +1361,11 @@ window.openGlobalViewInvoiceModal = async function (id, onPaymentSuccess = null,
                         <span style="font-weight:700;font-size:1rem;">TOTAL DUE</span>
                         <strong style="font-size:1.2rem;color:var(--primary-color);">${fmt(inv.total_amount)}</strong>
                     </div>
+                    ${parseFloat(inv.adjustment_total) > 0 ? `
+                    <div style="display:flex;justify-content:space-between;padding:8px 12px;">
+                        <span style="color:var(--text-secondary);font-size:0.9rem;">Adjustments (${adjustments.map((a) => esc(a.type)).join(', ')})</span>
+                        <strong>-${fmt(inv.adjustment_total)}</strong>
+                    </div>` : ''}
                     <div style="display:flex;justify-content:space-between;padding:8px 12px;">
                         <span style="color:var(--success-color);font-size:0.9rem;">Amount Paid</span>
                         <strong style="color:var(--success-color);">${fmt(inv.paid_amount)}</strong>
@@ -1234,6 +1376,10 @@ window.openGlobalViewInvoiceModal = async function (id, onPaymentSuccess = null,
                     </div>
                 </div>
             </div>
+
+            ${claimsSection}
+
+            ${paymentsSection}
 
             ${inv.notes ? `
             <div style="background:var(--bg-secondary);padding:12px 16px;border-radius:8px;margin-bottom:16px;">
@@ -1247,39 +1393,138 @@ window.openGlobalViewInvoiceModal = async function (id, onPaymentSuccess = null,
         </div>
     `;
 
-    const paySection = document.getElementById('record-payment-section');
-    const amtInput = document.getElementById('payment-amount-input');
-    if (paySection) {
-        paySection.style.display = (parseFloat(inv.balance) > 0 && autoFocusPayment) ? 'flex' : 'none';
-    }
-    if (amtInput) {
-        amtInput.value = parseFloat(inv.balance) > 0 ? parseFloat(inv.balance).toFixed(2) : '';
-        if (autoFocusPayment && parseFloat(inv.balance) > 0) {
-            setTimeout(() => amtInput.focus(), 150);
-        }
-    }
-
     const closeBtn = document.getElementById('close-view-invoice-btn');
     const closeBtn2 = document.getElementById('close-view-invoice-btn2');
     const printBtn = document.getElementById('print-invoice-btn');
-    const payBtn = document.getElementById('submit-payment-btn');
-
     if (closeBtn) closeBtn.onclick = () => viewModalInstance.hide();
     if (closeBtn2) closeBtn2.onclick = () => viewModalInstance.hide();
     if (printBtn) printBtn.onclick = () => window.print();
 
-    if (payBtn) {
-        payBtn.onclick = async () => {
-            const amount = parseFloat(amtInput?.value || 0);
-            if (!amount || amount <= 0) { Toast.show('Please enter a valid payment amount.', 'error'); return; }
-            if (amount > parseFloat(inv.balance) + 0.001) { Toast.show(`Payment cannot exceed the balance due (${fmt(inv.balance)}).`, 'error'); return; }
-            const response = await ApiService.request(`/api/billing/invoice/${id}/payment`, 'PUT', { amount });
-            if (response.status === 'success') {
-                Toast.show(response.message, 'success');
-                window.openGlobalViewInvoiceModal(id, onPaymentSuccess, false);
-                if (typeof onPaymentSuccess === 'function') await onPaymentSuccess();
-            } else {
-                Toast.show(response.message || 'Payment failed.', 'error');
+    // ── Record payment (inline form - a nested popup would fight the modal focus trap) ──
+    const payForm = document.getElementById('inv-pay-form');
+    const openPayBtn = document.getElementById('inv-open-pay-form');
+    const payErr = document.getElementById('inv-pay-error');
+    const localToday = () => { const d = new Date(); return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`; };
+    const showPayError = (msg) => { if (payErr) { payErr.textContent = msg; payErr.style.display = msg ? 'block' : 'none'; } };
+    const syncRefLabel = () => {
+        const m = document.getElementById('inv-pay-method')?.value;
+        const label = document.getElementById('inv-pay-ref-label');
+        if (!label) return;
+        label.innerHTML = m === 'Check' ? 'Check No. <span style="color:#ef4444;">*</span>'
+            : (m === 'Credit Card' || m === 'Debit Card') ? 'Card Ref (last 4 / approval) <span style="color:#ef4444;">*</span>'
+            : 'Reference (optional)';
+    };
+    const openPayForm = () => {
+        if (!payForm) return;
+        document.getElementById('inv-pay-amount').value = balanceNum.toFixed(2);
+        document.getElementById('inv-pay-date').value = localToday();
+        document.getElementById('inv-pay-date').max = localToday();
+        showPayError('');
+        syncRefLabel();
+        payForm.style.display = 'block';
+        if (openPayBtn) openPayBtn.style.display = 'none';
+        setTimeout(() => document.getElementById('inv-pay-amount')?.focus(), 50);
+    };
+    const closePayForm = () => {
+        if (payForm) payForm.style.display = 'none';
+        if (openPayBtn) openPayBtn.style.display = '';
+    };
+    if (openPayBtn) openPayBtn.onclick = openPayForm;
+    document.getElementById('inv-pay-method')?.addEventListener('change', syncRefLabel);
+    document.getElementById('inv-pay-cancel')?.addEventListener('click', closePayForm);
+    if (autoFocusPayment && canPay) openPayForm();
+
+    const saveBtn = document.getElementById('inv-pay-save');
+    if (saveBtn) {
+        saveBtn.onclick = async () => {
+            const amount = Math.round(parseFloat(document.getElementById('inv-pay-amount').value || 0) * 100) / 100;
+            const method = document.getElementById('inv-pay-method').value;
+            const reference = document.getElementById('inv-pay-ref').value.trim();
+            const paidAt = document.getElementById('inv-pay-date').value;
+            const notes = document.getElementById('inv-pay-notes').value.trim();
+            if (!amount || amount <= 0) return showPayError('Enter a valid payment amount.');
+            if (amount > balanceNum + 0.005) return showPayError(`Payment cannot exceed the balance due (${fmt(balanceNum)}).`);
+            if (!paidAt) return showPayError('Choose the payment date.');
+            if (method === 'Check' && !reference) return showPayError('Check number is required.');
+            if ((method === 'Credit Card' || method === 'Debit Card') && !reference) return showPayError('Card reference (last 4 digits or approval code) is required.');
+            showPayError('');
+            saveBtn.disabled = true; // prevents a double-click posting the payment twice
+            try {
+                const response = await ApiService.request(`/api/billing/invoice/${id}/payment`, 'PUT', { amount, method, reference_no: reference, paid_at: paidAt, notes });
+                if (response.status === 'success') {
+                    Toast.show(response.message, 'success');
+                    await window.openGlobalViewInvoiceModal(id, onPaymentSuccess, false);
+                    if (typeof onPaymentSuccess === 'function') await onPaymentSuccess();
+                } else {
+                    showPayError(response.message || 'Payment failed.');
+                    saveBtn.disabled = false;
+                }
+            } catch (e) {
+                showPayError('Payment failed. Please try again.');
+                saveBtn.disabled = false;
+            }
+        };
+    }
+
+    // ── Claims (only available on the Billing page, where the claim modal exists) ──
+    const openClaimFromInvoice = (claimId) => {
+        viewModalInstance.hide();
+        setTimeout(() => window.openClaimDetail && window.openClaimDetail(claimId), 350);   // let the invoice modal finish closing first
+    };
+    printArea.querySelectorAll('.inv-open-claim').forEach((b) => { b.onclick = () => openClaimFromInvoice(b.dataset.id); });
+    const createClaimBtn = document.getElementById('inv-create-claim');
+    if (createClaimBtn) {
+        createClaimBtn.onclick = async () => {
+            createClaimBtn.disabled = true;
+            try {
+                const r = await ApiService.request('/api/billing/claims', 'POST', { invoice_id: id });
+                if (r.status === 'success') {
+                    Toast.show(r.message, 'success');
+                    if (typeof onPaymentSuccess === 'function') await onPaymentSuccess();
+                    openClaimFromInvoice(r.claim_id);
+                } else {
+                    Toast.show(r.message || 'Could not create the claim.', 'error');
+                    createClaimBtn.disabled = false;
+                }
+            } catch (e) {
+                Toast.show('Could not create the claim.', 'error');
+                createClaimBtn.disabled = false;
+            }
+        };
+    }
+
+    // ── Void a payment (reason required; payments are never deleted) ──
+    let voidPaymentId = null;
+    const voidBar = document.getElementById('inv-void-bar');
+    printArea.querySelectorAll('.inv-void-btn').forEach((btn) => {
+        btn.onclick = () => {
+            voidPaymentId = btn.dataset.id;
+            document.getElementById('inv-void-label').innerHTML = `Reason for voiding the ${fmt(btn.dataset.amount)} payment <span style="color:#ef4444;">*</span>`;
+            document.getElementById('inv-void-reason').value = '';
+            voidBar.style.display = 'block';
+            document.getElementById('inv-void-reason').focus();
+        };
+    });
+    document.getElementById('inv-void-cancel')?.addEventListener('click', () => { voidBar.style.display = 'none'; voidPaymentId = null; });
+    const voidConfirm = document.getElementById('inv-void-confirm');
+    if (voidConfirm) {
+        voidConfirm.onclick = async () => {
+            const reason = document.getElementById('inv-void-reason').value.trim();
+            if (!reason) { Toast.show('A reason is required to void a payment.', 'error'); return; }
+            voidConfirm.disabled = true;
+            try {
+                const response = await ApiService.request(`/api/billing/payment/${voidPaymentId}/void`, 'POST', { reason });
+                if (response.status === 'success') {
+                    Toast.show(response.message, 'success');
+                    await window.openGlobalViewInvoiceModal(id, onPaymentSuccess, false);
+                    if (typeof onPaymentSuccess === 'function') await onPaymentSuccess();
+                } else {
+                    Toast.show(response.message || 'Could not void the payment.', 'error');
+                    voidConfirm.disabled = false;
+                }
+            } catch (e) {
+                Toast.show('Could not void the payment.', 'error');
+                voidConfirm.disabled = false;
             }
         };
     }
@@ -2474,6 +2719,12 @@ async function updateSidebarProfile() {
         if (adminNavItem) {
             adminNavItem.hidden = meRes.user.role !== 'Super Admin';
         }
+
+        // The audit log is Super Admin only (AuditController refuses everyone else), so don't offer the link either.
+        const reportsNav = document.getElementById('nav-reports');
+        if (reportsNav && reportsNav.closest('li')) {
+            reportsNav.closest('li').hidden = meRes.user.role !== 'Super Admin';
+        }
     }
 
     // Update Workspace Title if present
@@ -2494,6 +2745,18 @@ async function updateSidebarProfile() {
     } catch (e) { }
 }
 
+// Desktop icon-only mode. Remembered across pages (the sidebar is re-rendered on every route change).
+function setSidebarCollapsed(collapsed) {
+    const sidebar = document.getElementById('app-sidebar');
+    const toggleIcon = document.getElementById('sidebar-toggle-icon');
+    if (!sidebar) return;
+    sidebar.classList.toggle('collapsed', collapsed);
+    if (toggleIcon) {
+        toggleIcon.className = collapsed ? 'fas fa-angle-double-right' : 'fas fa-angle-double-left';
+    }
+    localStorage.setItem('sidebarCollapsed', collapsed ? 'true' : 'false');
+}
+
 function initSidebarToggle() {
     const toggleBtn = document.getElementById('sidebar-toggle-btn');
     const sidebar = document.getElementById('app-sidebar');
@@ -2502,27 +2765,165 @@ function initSidebarToggle() {
     if (!toggleBtn || !sidebar) return;
 
     const isCollapsed = localStorage.getItem('sidebarCollapsed') === 'true';
-    if (isCollapsed) {
-        sidebar.classList.add('collapsed');
-        if (toggleIcon) {
-            toggleIcon.className = 'fas fa-angle-double-right';
-        }
-    } else {
-        sidebar.classList.remove('collapsed');
-        if (toggleIcon) {
-            toggleIcon.className = 'fas fa-angle-double-left';
-        }
+    sidebar.classList.toggle('collapsed', isCollapsed);
+    if (toggleIcon) {
+        toggleIcon.className = isCollapsed ? 'fas fa-angle-double-right' : 'fas fa-angle-double-left';
     }
 
-    toggleBtn.onclick = () => {
-        sidebar.classList.toggle('collapsed');
-        const collapsedNow = sidebar.classList.contains('collapsed');
-        localStorage.setItem('sidebarCollapsed', collapsedNow ? 'true' : 'false');
+    toggleBtn.onclick = () => setSidebarCollapsed(!sidebar.classList.contains('collapsed'));
+}
 
-        if (toggleIcon) {
-            toggleIcon.className = collapsedNow ? 'fas fa-angle-double-right' : 'fas fa-angle-double-left';
+// ===== Sidebar groups (Schedule / Patient / Settings) =====
+// Top level on purpose: groups must toggle on EVERY page, not only inside one route's init*Handler.
+// The sidebar markup is re-rendered on each route change, so open groups come from PHP ($activeNav) plus this small memory.
+const SIDEBAR_OPEN_GROUPS_KEY = 'sidebarOpenGroups';
+
+function readOpenSidebarGroups() {
+    try {
+        const v = JSON.parse(localStorage.getItem(SIDEBAR_OPEN_GROUPS_KEY) || '[]');
+        return Array.isArray(v) ? v : [];
+    } catch (e) {
+        return [];
+    }
+}
+
+function setSidebarGroupOpen(groupLi, open) {
+    if (!groupLi) return;
+    groupLi.classList.toggle('submenu-open', open);
+    const toggle = groupLi.querySelector('[data-submenu-toggle]');
+    if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+// A dropdown nested inside a group (today: "Administration" inside Settings). Remembered as 'sub:<name>'.
+function setSidebarSubgroupOpen(subLi, open) {
+    if (!subLi) return;
+    subLi.classList.toggle('subgroup-open', open);
+    const toggle = subLi.querySelector('[data-subgroup-toggle]');
+    if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+}
+
+function saveOpenSidebarGroups(sidebar) {
+    try {
+        const open = [
+            ...Array.from(sidebar.querySelectorAll('.nav-item-has-submenu.submenu-open')).map(li => li.dataset.group),
+            ...Array.from(sidebar.querySelectorAll('.nav-subgroup.subgroup-open')).map(li => 'sub:' + li.dataset.subgroup)
+        ];
+        localStorage.setItem(SIDEBAR_OPEN_GROUPS_KEY, JSON.stringify(open));
+    } catch (err) { }
+}
+
+function initSidebarGroups() {
+    const sidebar = document.getElementById('app-sidebar');
+    if (!sidebar) return;
+
+    // Re-apply groups the user opened earlier (additive: the active page's group is already open from PHP).
+    const remembered = readOpenSidebarGroups();
+    sidebar.querySelectorAll('.nav-item-has-submenu').forEach(li => {
+        if (remembered.includes(li.dataset.group)) setSidebarGroupOpen(li, true);
+    });
+    sidebar.querySelectorAll('.nav-subgroup').forEach(li => {
+        if (remembered.includes('sub:' + li.dataset.subgroup)) setSidebarSubgroupOpen(li, true);
+    });
+
+    if (window.__sidebarGroupsBound) return;
+    window.__sidebarGroupsBound = true;
+
+    document.addEventListener('click', (e) => {
+        const sb = document.getElementById('app-sidebar');
+
+        // Nested dropdown (Administration): just open/close it.
+        const subToggle = e.target.closest('[data-subgroup-toggle]');
+        if (subToggle) {
+            e.preventDefault();
+            const subLi = subToggle.closest('.nav-subgroup');
+            if (!sb || !subLi) return;
+            setSidebarSubgroupOpen(subLi, !subLi.classList.contains('subgroup-open'));
+            saveOpenSidebarGroups(sb);
+            return;
         }
-    };
+
+        const toggle = e.target.closest('[data-submenu-toggle]');
+        if (!toggle) return;
+        e.preventDefault();
+
+        const groupLi = toggle.closest('.nav-item-has-submenu');
+        if (!sb || !groupLi) return;
+
+        if (sb.classList.contains('collapsed') && window.innerWidth >= 992) {
+            // Icon-only mode hides the children, so expand the sidebar and open this group.
+            setSidebarCollapsed(false);
+            setSidebarGroupOpen(groupLi, true);
+        } else {
+            setSidebarGroupOpen(groupLi, !groupLi.classList.contains('submenu-open'));
+        }
+
+        saveOpenSidebarGroups(sb);
+    });
+}
+
+// ===== Sidebar as a mobile/tablet drawer (< 992px; the CSS does the sliding, this only toggles body.sidebar-open) =====
+function closeSidebarDrawer() {
+    document.body.classList.remove('sidebar-open');
+    const btn = document.getElementById('sidebar-mobile-btn');
+    if (btn) btn.setAttribute('aria-expanded', 'false');
+}
+
+function openSidebarDrawer() {
+    document.body.classList.add('sidebar-open');
+    const btn = document.getElementById('sidebar-mobile-btn');
+    if (btn) btn.setAttribute('aria-expanded', 'true');
+}
+
+function initSidebarMobile() {
+    const sidebar = document.getElementById('app-sidebar');
+    let btn = document.getElementById('sidebar-mobile-btn');
+    let backdrop = document.getElementById('sidebar-backdrop');
+
+    // No sidebar on this route (e.g. login): remove the drawer controls, which live on <body>.
+    if (!sidebar) {
+        if (btn) btn.remove();
+        if (backdrop) backdrop.remove();
+        closeSidebarDrawer();
+        return;
+    }
+
+    closeSidebarDrawer(); // a new route always starts with the drawer closed
+
+    if (!btn) {
+        btn = document.createElement('button');
+        btn.type = 'button';
+        btn.id = 'sidebar-mobile-btn';
+        btn.setAttribute('aria-label', 'Open menu');
+        btn.setAttribute('aria-controls', 'app-sidebar');
+        btn.setAttribute('aria-expanded', 'false');
+        btn.innerHTML = '<i class="fas fa-bars"></i>';
+        btn.addEventListener('click', openSidebarDrawer);
+        document.body.appendChild(btn);
+    }
+    if (!backdrop) {
+        backdrop = document.createElement('div');
+        backdrop.id = 'sidebar-backdrop';
+        backdrop.className = 'sidebar-backdrop';
+        backdrop.addEventListener('click', closeSidebarDrawer);
+        document.body.appendChild(backdrop);
+    }
+
+    if (window.__sidebarMobileBound) return;
+    window.__sidebarMobileBound = true;
+
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape') closeSidebarDrawer();
+    });
+    window.addEventListener('hashchange', closeSidebarDrawer);
+    window.addEventListener('resize', () => {
+        if (window.innerWidth >= 992) closeSidebarDrawer();
+    });
+    // Picking a page closes the drawer (group parents only expand/collapse, so they stay open).
+    document.addEventListener('click', (e) => {
+        if (e.target.closest('#app-sidebar .nav-sublink, #app-sidebar .nav-link:not(.nav-link-parent)')) {
+            closeSidebarDrawer();
+        }
+    });
 }
 
 function initSidebarTooltipEvents() {
@@ -2543,7 +2944,8 @@ function initSidebarTooltipEvents() {
     };
 
     sidebar.onmouseover = (e) => {
-        if (!sidebar.classList.contains('collapsed')) {
+        // Tooltips are only for the desktop icon-only sidebar (on small screens it is a drawer).
+        if (!sidebar.classList.contains('collapsed') || window.innerWidth < 992) {
             hideTooltip();
             return;
         }
@@ -2582,9 +2984,12 @@ function initSidebarTooltipEvents() {
 }
 
 async function setupModuleHandlers(moduleName) {
+    if (!['login', 'forgot-password', 'reset-password', 'change-password'].includes(moduleName)) loadVisitTypes().then(applyVisitTypeSelects);
     // Dynamically update user profile in sidebar footer
     updateSidebarProfile();
     initSidebarToggle();
+    initSidebarGroups();
+    initSidebarMobile();
     initSidebarTooltipEvents();
 
     // Standard Global Header and logout setup if present
@@ -2624,11 +3029,20 @@ async function setupModuleHandlers(moduleName) {
         case 'change-password':
             initChangePasswordHandler();
             break;
+        case 'forgot-password':
+            initForgotPasswordHandler();
+            break;
+        case 'reset-password':
+            initResetPasswordHandler();
+            break;
         case 'dashboard':
             await initDashboardHandler();
             break;
         case 'calendar':
             await initCalendarHandler();
+            break;
+        case 'encounters':
+            await initEncountersHandler();
             break;
         case 'patients':
             await initPatientsHandler();
@@ -2665,6 +3079,9 @@ async function setupModuleHandlers(moduleName) {
             break;
         case 'settings':
             initSettingsHandler();
+            break;
+        case 'reports':
+            await initReportsHandler();
             break;
         case 'administration':
             await initAdministrationHandler();
@@ -3536,6 +3953,14 @@ async function openSnoozeModal(recallObj, onSaveSuccess = null) {
 }
 window.openSnoozeModal = openSnoozeModal;
 
+// Client-side mirror of the first part of App\Security\PasswordPolicy (the server is the real check and also rejects common passwords,
+// passwords containing the username/email and re-using the current one). Returns the problem text or '' when fine.
+function passwordRuleProblem(pw) {
+    if (!pw || pw.length < 10) return 'Password must be at least 10 characters.';
+    if (!/[A-Za-z]/.test(pw) || !/[0-9]/.test(pw)) return 'Password must contain at least one letter and one number.';
+    return '';
+}
+
 function initLoginHandler() {
     const form = document.getElementById('login-form');
     if (!form) return;
@@ -3547,14 +3972,6 @@ function initLoginHandler() {
             const isPassword = passwordInput.getAttribute('type') === 'password';
             passwordInput.setAttribute('type', isPassword ? 'text' : 'password');
             togglePasswordBtn.className = isPassword ? 'fas fa-eye-slash input-icon-right' : 'fas fa-eye input-icon-right';
-        };
-    }
-
-    const forgotPasswordBtn = document.getElementById('forgot-password-btn');
-    if (forgotPasswordBtn) {
-        forgotPasswordBtn.onclick = (e) => {
-            e.preventDefault();
-            Toast.show('Please contact your System Administrator to reset your password.', 'info');
         };
     }
 
@@ -3598,8 +4015,9 @@ function initChangePasswordHandler() {
             Toast.show('Please fill in all fields.', 'error');
             return;
         }
-        if (next.length < 8) {
-            Toast.show('New password must be at least 8 characters.', 'error');
+        const pwProblem = passwordRuleProblem(next);
+        if (pwProblem) {
+            Toast.show(pwProblem, 'error');
             return;
         }
         if (next !== confirm) {
@@ -3633,281 +4051,327 @@ function initChangePasswordHandler() {
     });
 }
 
+// Public page: ask for a reset link. The answer is always the same text so it can't be used to find out who has an account.
+function initForgotPasswordHandler() {
+    const form = document.getElementById('forgot-password-form');
+    if (!form) return;
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const identifier = (document.getElementById('fp-identifier')?.value || '').trim();
+        if (!identifier) { Toast.show('Enter your username or email address.', 'error'); return; }
+        const btn = document.getElementById('fp-submit-btn');
+        if (btn) btn.disabled = true;
+        const res = await ApiService.request('/api/auth/forgot-password', 'POST', { identifier });
+        if (res.status === 'success') {
+            const done = document.getElementById('fp-done');
+            if (done) { done.textContent = res.message; done.style.display = 'block'; }
+            form.style.display = 'none';
+        } else {
+            Toast.show(res.message || 'Could not send the reset link. Try again later.', 'error');
+            if (btn) btn.disabled = false;
+        }
+    });
+}
+
+// Public page: the emailed link is #reset-password?token=...
+function initResetPasswordHandler() {
+    const form = document.getElementById('reset-password-form');
+    if (!form) return;
+    const token = new URLSearchParams((window.location.hash.split('?')[1] || '')).get('token') || '';
+    if (!/^[a-f0-9]{64}$/.test(token)) {
+        Toast.show('This reset link is not valid. Request a new one from the sign-in page.', 'error');
+        window.location.hash = '#forgot-password';
+        return;
+    }
+    form.addEventListener('submit', async (e) => {
+        e.preventDefault();
+        const next = document.getElementById('rp-new-password')?.value || '';
+        const confirm = document.getElementById('rp-confirm-password')?.value || '';
+        const problem = passwordRuleProblem(next);
+        if (problem) { Toast.show(problem, 'error'); return; }
+        if (next !== confirm) { Toast.show('New password and confirmation do not match.', 'error'); return; }
+        const btn = document.getElementById('rp-submit-btn');
+        if (btn) btn.disabled = true;
+        const res = await ApiService.request('/api/auth/reset-password', 'POST', { token, new_password: next, confirm_password: confirm });
+        if (res.status === 'success') {
+            Toast.show(res.message || 'Password changed. You can sign in now.', 'success');
+            window.location.hash = '#login';
+        } else {
+            Toast.show(res.message || 'Could not change the password.', 'error');
+            if (btn) btn.disabled = false;
+        }
+    });
+}
+
+// ===== Patient chart "Dashboard" tab (top level: the chart lives inside initPatientsHandler, only the wiring is there) =====
+// One request to /api/patient/{id}/dashboard (role-scoped server-side); blocks a role can't see are simply empty/absent.
+function renderPatientChartDashboard(d) {
+    const e = calEscape;
+    const fmtDate = (s) => {
+        if (!s) return '';
+        const dt = new Date(String(s).replace(' ', 'T'));
+        return isNaN(dt) ? '' : dt.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
+    };
+    const fmtDateTime = (s) => {
+        const day = fmtDate(s);
+        const time = String(s || '').split(' ')[1];
+        return day + (time ? ' · ' + formatTimeStr(time) : '');
+    };
+    const vitalsLine = (v) => {
+        if (!v) return '';
+        const parts = [];
+        if (v.sys != null && v.dia != null) parts.push(`BP ${v.sys}/${v.dia}`);
+        if (v.hr != null) parts.push(`HR ${v.hr}`);
+        if (v.spo2 != null) parts.push(`SpO2 ${v.spo2}%`);
+        return parts.join(' · ');
+    };
+    const card = (title, bodyHtml, linkHtml = '', extraClass = '') =>
+        `<section class="pcd-card ${extraClass}"><header class="pcd-card-head"><h4>${title}</h4>${linkHtml}</header><div class="pcd-card-body">${bodyHtml}</div></section>`;
+    const goto = (sec, label) => `<a href="javascript:void(0)" class="pcd-link" data-goto="${sec}">${label}</a>`;
+    const empty = (txt) => `<div class="pcd-empty">${e(txt)}</div>`;
+    const clinical = !!(d.access && d.access.clinical);
+
+    // ---- left column ----
+    let left = '';
+    if (clinical) {
+        const dx = d.diagnoses.length
+            ? `<ul class="pcd-list">${d.diagnoses.map((x) => `<li>${x.icd10_code ? `<span class="pcd-code">${e(x.icd10_code)}</span> ` : ''}${e(x.description)}</li>`).join('')}</ul>`
+              + (d.diagnoses_total > d.diagnoses.length ? `<div class="pcd-more">+${d.diagnoses_total - d.diagnoses.length} more</div>` : '')
+            : empty('No active diagnoses.');
+        const meds = d.medications.length
+            ? `<ul class="pcd-list">${d.medications.map((m) => `<li>${e(m.medication_name)}${m.dosage ? ' ' + e(m.dosage) : ''}${m.frequency ? ' · ' + e(m.frequency) : ''}</li>`).join('')}</ul>`
+              + (d.medications_total > d.medications.length ? `<div class="pcd-more">+${d.medications_total - d.medications.length} more</div>` : '')
+            : empty('No active medications.');
+        const v = d.latest_vitals;
+        const vitalsHtml = v ? `
+            <div class="pcd-kv"><span>Blood pressure</span><strong>${v.sys != null && v.dia != null ? e(v.sys + '/' + v.dia) + ' mmHg' : '-'}</strong></div>
+            <div class="pcd-kv"><span>Heart rate</span><strong>${v.hr != null ? e(v.hr) + ' bpm' : '-'}</strong></div>
+            <div class="pcd-kv"><span>SpO2</span><strong>${v.spo2 != null ? e(v.spo2) + '%' : '-'}</strong></div>
+            <div class="pcd-kv"><span>Weight / BMI</span><strong>${v.weight != null ? e(v.weight) : '-'} / ${v.bmi != null ? e(v.bmi) : '-'}</strong></div>
+            <div class="pcd-sub">Recorded ${e(fmtDate(v.note_date))}</div>` : empty('No vitals recorded.');
+        const allergyHtml = d.allergies.length
+            ? `<ul class="pcd-list">${d.allergies.map((a) => `<li><strong>${e(a.allergen)}</strong>${a.reaction ? ' - ' + e(a.reaction) : ''}${a.severity ? ` <span class="pcd-sev">${e(a.severity)}</span>` : ''}</li>`).join('')}</ul>`
+            : `<div class="${d.allergies_recorded ? 'pcd-empty' : 'pcd-warn-text'}">${d.allergies_recorded ? 'No active allergies.' : 'Not recorded'}</div>`;
+
+        left += card('Clinical Snapshot', `
+            <div class="pcd-snap">
+                <div><div class="pcd-sec-title">Active Diagnoses</div>${dx}<div class="pcd-sec-title pcd-gap">Current Medications</div>${meds}</div>
+                <div><div class="pcd-sec-title">Latest Vitals</div>${vitalsHtml}<div class="pcd-sec-title pcd-gap">Allergies</div>${allergyHtml}</div>
+            </div>`);
+
+        const le = d.latest_encounter;
+        left += card('Latest Encounter Summary', le ? `
+            <div class="pcd-enc-top"><strong>${e(le.type)}</strong> · ${e(fmtDate(le.note_date))} <span class="pcd-status pcd-st-${e(le.status.toLowerCase().replace(/\s+/g, '-'))}">${e(le.status)}</span></div>
+            ${le.chief_complaint ? `<div class="pcd-kv pcd-kv-col"><span>Chief complaint</span><strong>${e(le.chief_complaint)}</strong></div>` : ''}
+            ${le.summary ? `<div class="pcd-kv pcd-kv-col"><span>Clinical summary</span><strong>${e(le.summary)}</strong></div>` : '<div class="pcd-empty pcd-left">No clinical summary written yet.</div>'}`
+            : empty('No encounters documented yet.'),
+            le ? `<a href="javascript:void(0)" class="pcd-link" data-note="${e(le.id)}">View Encounter</a>` : '');
+
+        const rows = d.recent_notes.length ? d.recent_notes.map((n) => `
+            <tr class="pcd-click" data-note="${e(n.id)}">
+                <td>${e(fmtDate(n.note_date))}</td><td class="pcd-link-text">${e(n.type)}</td><td>${e(n.provider_name || '-')}</td>
+                <td><span class="pcd-status pcd-st-${e(n.status.toLowerCase().replace(/\s+/g, '-'))}">${e(n.status)}</span></td>
+            </tr>`).join('') : '<tr><td colspan="4" class="pcd-empty">No clinical notes yet.</td></tr>';
+        left += card('Recent Clinical Notes',
+            `<table class="pcd-table"><thead><tr><th>Date</th><th>Note type</th><th>Clinician</th><th>Status</th></tr></thead><tbody>${rows}</tbody></table>`,
+            goto('encounters', 'View All'), 'pcd-flush');
+    } else {
+        left += card('Clinical Snapshot', empty('Clinical details are not available for your role.'));
+    }
+
+    // ---- right column ----
+    const att = d.attention || [];
+    const attHtml = att.length
+        ? `<ul class="pcd-attn">${att.map((a) => `<li class="pcd-attn-${e(a.severity)}"><a href="javascript:void(0)" data-goto="${e(a.goto)}">${e(a.label)}</a></li>`).join('')}</ul>`
+        : '<div class="pcd-ok"><i class="fas fa-check-circle"></i> Nothing needs attention.</div>';
+    let right = card('Needs Attention', attHtml, '', att.length ? 'pcd-card-alert' : '');
+
+    if (clinical) {
+        const rv = d.recent_vitals.length ? d.recent_vitals.map((v) => `
+            <div class="pcd-vrow"><div><strong>${e(vitalsLine(v) || 'Vitals')}</strong>${v.weight != null ? `<div class="pcd-sub">Wt ${e(v.weight)}${v.bmi != null ? ' · BMI ' + e(v.bmi) : ''}</div>` : ''}</div><span class="pcd-sub">${e(fmtDate(v.note_date))}</span></div>`).join('')
+            : empty('No vitals recorded.');
+        right += card('Recent Vitals', rv, goto('vitals', 'All'));
+    }
+
+    const appts = d.upcoming_appointments.length ? d.upcoming_appointments.map((a) => `
+        <div class="pcd-vrow"><div><strong>${e(fmtDateTime(a.start_time))}</strong><div class="pcd-sub">${e(a.provider_name || '')}${a.visit_type ? ' · ' + e(a.visit_type) : ''}${a.appointment_mode === 'Telehealth' ? ' · Telehealth' : ''}</div></div>
+        <span class="pcd-status pcd-st-${e(apptStatusClass(a.status))}">${e(a.status || 'Scheduled')}</span></div>`).join('')
+        : empty('No upcoming appointments.');
+    right += card('Upcoming Appointments', appts, goto('appointments', 'View Appointments'));
+
+    return `<div class="pcd-root"><div class="pcd-grid"><div class="pcd-col">${left}</div><div class="pcd-col">${right}</div></div></div>`;
+}
+
+// Fetch + render into the chart's section body. goToSection(sec) = the chart's own updateSection;
+// isStillActive() guards against a slow response overwriting a tab the user already switched to.
+async function loadPatientChartDashboard(container, patientId, goToSection, isStillActive = () => true) {
+    container.innerHTML = '<div class="pcd-loading"><i class="fas fa-spinner fa-spin"></i> Loading dashboard...</div>';
+    let res = null;
+    try { res = await ApiService.request(`/api/patient/${patientId}/dashboard`); } catch (err) { /* handled below */ }
+    if (!isStillActive()) return;
+    if (!res || res.status !== 'success') {
+        container.innerHTML = '<div class="pcd-loading">Unable to load the dashboard for this patient.</div>';
+        return;
+    }
+    container.innerHTML = renderPatientChartDashboard(res);
+    const root = container.querySelector('.pcd-root');
+    root.addEventListener('click', (ev) => {
+        const go = ev.target.closest('[data-goto]');
+        if (go) { goToSection(go.dataset.goto); return; }
+        const note = ev.target.closest('[data-note]');
+        if (note) window.openEncounterInChart(patientId, note.dataset.note);
+    });
+}
+
+// Main dashboard: one request to /api/dashboard/summary (role-scoped on the server); blocks a role can't use
+// are simply absent from the response and get hidden here. Every element lookup is null-guarded.
 async function initDashboardHandler() {
-    // Load stats in parallel
-    const [patientsRes, appointmentsRes, telehealthRes, unreadRes, recentActivityRes, barChartRes] = await Promise.all([
-        ApiService.request('/api/patients'),
-        ApiService.request('/api/appointments'),
-        ApiService.request('/api/telehealth/sessions'),
-        ApiService.request('/api/messages/unread-count'),
-        ApiService.request('/api/dashboard/recent-activity'),
-        ApiService.request('/api/dashboard/doctor-appointments-monthly')
+    const byId = (id) => document.getElementById(id);
+    const setText = (id, v) => { const el = byId(id); if (el) el.textContent = v; };
+    const show = (id, visible) => { const el = byId(id); if (el) el.style.display = visible ? '' : 'none'; };
+
+    const [summary, me] = await Promise.all([
+        ApiService.request('/api/dashboard/summary'),
+        ApiService.request('/api/me')
     ]);
 
-    const patientCount = patientsRes.data ? patientsRes.data.length : 0;
-    const allAppts = appointmentsRes.data || [];
-    const allTelehealth = telehealthRes.data || [];
-    const unreadCount = (unreadRes && unreadRes.status === 'success') ? unreadRes.count : 0;
-    const recentActivities = (recentActivityRes && recentActivityRes.status === 'success') ? recentActivityRes.data : [];
-    const docAppointmentsMonthly = (barChartRes && barChartRes.status === 'success') ? barChartRes.data : [];
+    // ---- Welcome header ----
+    const user = (me && me.status === 'success' && me.user) ? me.user : {};
+    const role = user.role || (summary && summary.role) || '';
+    const roleLabel = role === 'Super Admin' ? 'Super Administrator' : role;
+    setText('dash-welcome-name', `Welcome, ${user.first_name || user.username || ''}`.replace(/,\s*$/, ''));
+    setText('dash-role-badge', roleLabel);
+    const roleBadge = byId('dash-role-badge');
+    if (roleBadge) roleBadge.style.display = roleLabel ? '' : 'none';
 
-    // Helper to check if date is today
-    const isToday = (dateString) => {
-        if (!dateString) return false;
-        const d = new Date(dateString);
-        const today = new Date();
-        return d.getDate() === today.getDate() && d.getMonth() === today.getMonth() && d.getFullYear() === today.getFullYear();
+    if (!summary || summary.status !== 'success') {
+        const msg = '<tr><td colspan="6" class="dash-empty">Unable to load the dashboard. Please refresh.</td></tr>';
+        const body = byId('dash-schedule-body'); if (body) body.innerHTML = msg;
+        const list = byId('dash-attention-list'); if (list) list.innerHTML = '<li class="dash-empty">Unable to load.</li>';
+        return;
+    }
+
+    const [ty, tm, td] = summary.today.split('-').map(Number);
+    const todayLabel = new Date(ty, tm - 1, td).toLocaleDateString('en-US', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
+    const sub = byId('dash-welcome-sub');
+    if (sub) sub.innerHTML = `${calEscape(roleLabel)} Workspace &middot; Today: <strong>${calEscape(todayLabel)}</strong>`;
+
+    // Billing Staff can't register patients or book visits
+    const canBook = role !== 'Billing Staff';
+    show('dash-btn-register', canBook);
+    show('dash-btn-schedule', canBook);
+    const schedBtn = byId('dash-btn-schedule');
+    if (schedBtn) schedBtn.onclick = () => scheduleOnDate(summary.today, '', null, null, () => initDashboardHandler());
+
+    // ---- KPIs ----
+    const k = summary.kpis || {};
+    setText('dash-kpi-patients', k.total_patients ?? 0);
+    setText('dash-kpi-appts', k.appointments_today ?? 0);
+    setText('dash-kpi-arrived', k.arrived_today ?? 0);
+    const hasBilling = k.billing_attention !== undefined;
+    show('dash-kpi-billing-card', hasBilling);
+    show('dash-quick-billing', hasBilling);
+    if (hasBilling) setText('dash-kpi-billing', k.billing_attention);
+
+    // ---- Patient overview ----
+    const ov = summary.overview || {};
+    setText('dash-ov-active', ov.active ?? 0);
+    setText('dash-ov-new', ov.new_30d ?? 0);
+    setText('dash-ov-inactive', ov.inactive ?? 0);
+    show('dash-ov-followups-tile', ov.follow_ups_due !== null && ov.follow_ups_due !== undefined);
+    setText('dash-ov-followups', ov.follow_ups_due ?? 0);
+
+    // ---- Today's clinical schedule ----
+    const body = byId('dash-schedule-body');
+    if (body) {
+        const rows = summary.today_schedule || [];
+        if (role === 'Billing Staff') {
+            show('dash-schedule-card', false);
+        } else if (!rows.length) {
+            body.innerHTML = '<tr><td colspan="6" class="dash-empty">No appointments today</td></tr>';
+        } else {
+            body.innerHTML = rows.map((r) => {
+                const time = formatTimeStr((r.start_time.split(' ')[1] || '00:00:00'));
+                const action = r.note_id
+                    ? `<button type="button" class="dash-row-btn" data-patient="${calEscape(r.patient_id)}" data-note="${calEscape(r.note_id)}">View Enc.</button>`
+                    : `<a href="#encounters" class="dash-row-btn">Open</a>`;
+                return `<tr>
+                    <td class="dash-time">${calEscape(time)}</td>
+                    <td><div class="dash-pt-name">${calEscape(r.patient_name || 'Unknown patient')}</div><div class="dash-pt-mrn">${calEscape(r.mrn)}</div></td>
+                    <td>${calEscape(r.provider_name || '-')}</td>
+                    <td>${calEscape(r.visit_type)}</td>
+                    <td><span class="dash-pill ${apptStatusClass(r.status)}">${calEscape(r.status)}</span></td>
+                    <td class="dash-td-right">${action}</td>
+                </tr>`;
+            }).join('');
+            body.querySelectorAll('button[data-note]').forEach((btn) => {
+                btn.onclick = () => window.openEncounterInChart(btn.dataset.patient, btn.dataset.note);
+            });
+        }
+    }
+
+    // ---- Needs attention ----
+    const attentionList = byId('dash-attention-list');
+    const attention = summary.needs_attention || { items: 0, rows: [] };
+    setText('dash-attention-count', `${attention.items} item${attention.items === 1 ? '' : 's'}`);
+    if (attentionList) {
+        const hotKeys = ['overdue_recalls', 'overdue_invoices', 'rejected_claims'];
+        attentionList.innerHTML = attention.rows.map((r) => `
+            <li>
+                <i class="fas ${calEscape(r.icon)} dash-attention-icon"></i>
+                <span class="dash-attention-label">${calEscape(r.label)}</span>
+                <span class="dash-attention-count ${r.count > 0 && hotKeys.includes(r.key) ? 'hot' : ''}">${r.count}</span>
+                <a href="${calEscape(r.link)}" class="dash-review-btn">Review &rarr;</a>
+            </li>`).join('') || '<li class="dash-empty">Nothing needs attention.</li>';
+    }
+
+    // ---- Practice activity chart ----
+    const SERIES = {
+        completed_encounters: { label: 'Completed Encounters', color: '#0284c7' },
+        new_patients: { label: 'New Patients', color: '#10b981' },
+        no_shows_cancellations: { label: 'No-Shows / Cancellations', color: '#ef4444' },
+        pending_clinical_docs: { label: 'Pending Clinical Docs', color: '#f59e0b' },
+        billing_claims: { label: 'Billing/Claims', color: '#8b5cf6' }
     };
-
-    // Helper to format time (e.g. 08:30 AM)
-    const formatTime = (dateString) => {
-        if (!dateString) return '';
-        const d = new Date(dateString);
-        return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+    const canvas = byId('dash-activity-chart');
+    const emptyEl = byId('dash-activity-empty');
+    const rangeSel = byId('dash-activity-range');
+    const renderActivity = () => {
+        if (!canvas || typeof Chart === 'undefined') return;
+        const span = rangeSel ? parseInt(rangeSel.value, 10) : 30;
+        const days = (summary.activity.days || []).slice(-span);
+        const keys = summary.activity.series || [];
+        setText('dash-activity-title', `(Last ${span} Days)`);
+        const hasData = days.some((d) => keys.some((key) => d[key] > 0));
+        canvas.style.display = hasData ? 'block' : 'none';
+        if (emptyEl) emptyEl.style.display = hasData ? 'none' : 'block';
+        if (window.practiceActivityChart) { window.practiceActivityChart.destroy(); window.practiceActivityChart = null; }
+        if (!hasData) return;
+        const labels = days.map((d) => {
+            const [y, m, dd] = d.date.split('-').map(Number);
+            return new Date(y, m - 1, dd).toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+        });
+        window.practiceActivityChart = new Chart(canvas, {
+            type: 'bar',
+            data: {
+                labels,
+                datasets: keys.map((key) => ({
+                    label: SERIES[key].label, data: days.map((d) => d[key]),
+                    backgroundColor: SERIES[key].color, borderRadius: 2, barPercentage: 0.9, categoryPercentage: 0.8
+                }))
+            },
+            options: {
+                responsive: true, maintainAspectRatio: false,
+                plugins: { legend: { position: 'top', align: 'end', labels: { usePointStyle: true, boxWidth: 8, font: { size: 11 } } } },
+                scales: {
+                    x: { grid: { display: false }, ticks: { font: { size: 10 }, maxRotation: 90, minRotation: 90 } },
+                    y: { beginAtZero: true, ticks: { precision: 0, font: { size: 10 } }, grid: { color: '#f1f5f9' } }
+                }
+            }
+        });
     };
-
-    // Filter appointments for today
-    const todayAppts = allAppts.filter((a) => isToday(a.start_time));
-    todayAppts.sort((a, b) => new Date(a.start_time) - new Date(b.start_time));
-
-    let inPersonCount = 0;
-    let telehealthCount = 0;
-
-    // Filter telehealth sessions for today
-    const todayTelehealth = allTelehealth.filter((t) => isToday(t.created_at));
-    let thActive = 0;
-    let thCompleted = 0;
-    todayTelehealth.forEach((t) => {
-        if (t.status === 'Active') thActive++;
-        else if (t.status === 'Completed') thCompleted++;
-    });
-
-    // Populate Top Stats
-    const elTotalPatients = document.getElementById('stat-total-patients');
-    if (elTotalPatients) elTotalPatients.textContent = patientCount;
-
-    const elUnread = document.getElementById('stat-unread-messages');
-    if (elUnread) elUnread.textContent = unreadCount;
-
-    // Render Today's Appointments Table
-    const apptsTbody = document.getElementById('dashboard-appointments-list');
-    if (apptsTbody) {
-        apptsTbody.innerHTML = '';
-        if (todayAppts.length === 0) {
-            apptsTbody.innerHTML = '<tr><td colspan="4" class="text-center text-gray">No appointments today</td></tr>';
-        } else {
-            todayAppts.forEach((a) => {
-                const isTelehealth = a.appointment_mode === 'Telehealth' || a.visit_type === 'Telehealth';
-                if (isTelehealth) telehealthCount++;
-                else inPersonCount++;
-
-                let badgeClass = 'badge-primary-light';
-                const statusLower = (a.status || '').toLowerCase();
-                if (statusLower === 'completed') badgeClass = 'badge-success-light';
-                else if (statusLower === 'no show' || statusLower === 'cancelled') badgeClass = 'badge-danger-light';
-                else if (statusLower === 'in-progress') badgeClass = 'badge-warning-light';
-                else if (statusLower === 'checked-in') badgeClass = 'badge-info-light';
-
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td><strong>${formatTime(a.start_time)}</strong></td>
-                    <td><strong>${a.patient_name || 'Unknown Patient'}</strong></td>
-                    <td style="white-space: nowrap;">
-                        <span style="display: inline-flex; align-items: center; gap: 4px;">
-                            <i class="fas ${isTelehealth ? 'fa-video text-blue-dark' : 'fa-user text-gray'}"></i>
-                            ${isTelehealth ? 'Telehealth' : 'In-person'}
-                        </span>
-                    </td>
-                    <td><span class="badge ${badgeClass}">${a.status || 'Scheduled'}</span></td>
-                    `;
-                apptsTbody.appendChild(tr);
-            });
-        }
-    }
-
-    // Populate Appointments Breakdown
-    const elApptsToday = document.getElementById('stat-appointments-today');
-    if (elApptsToday) elApptsToday.textContent = todayAppts.length;
-
-    const elApptsBreakdown = document.getElementById('stat-appointments-breakdown');
-    if (elApptsBreakdown) elApptsBreakdown.innerHTML = `${inPersonCount} In-person &bull; ${telehealthCount} Telehealth`;
-
-    // Populate Telehealth Breakdown
-    const elThToday = document.getElementById('stat-telehealth-today');
-    if (elThToday) elThToday.textContent = todayTelehealth.length;
-
-    const elThBreakdown = document.getElementById('stat-telehealth-breakdown');
-    if (elThBreakdown) elThBreakdown.innerHTML = `${thActive} Active &bull; ${thCompleted} Completed`;
-
-    // Render Recent Patient Activity Table
-    const activityTbody = document.getElementById('dashboard-recent-activity-list');
-    if (activityTbody) {
-        activityTbody.innerHTML = '';
-        if (recentActivities.length === 0) {
-            activityTbody.innerHTML = '<tr><td colspan="4" class="text-center text-gray">No recent activity found</td></tr>';
-        } else {
-            recentActivities.forEach((act) => {
-                let badgeClass = 'badge-primary-light';
-                let actionText = act.action_type ? act.action_type.toUpperCase() : 'UNKNOWN';
-
-                if (actionText.includes('CREATE') || actionText.includes('ADD')) badgeClass = 'badge-success-light';
-                else if (actionText.includes('UPDATE') || actionText.includes('EDIT')) badgeClass = 'badge-info-light';
-                else if (actionText.includes('DELETE') || actionText.includes('REMOVE')) badgeClass = 'badge-danger-light';
-                else if (actionText.includes('VIEW')) badgeClass = 'badge-primary-light';
-
-                const patientName = act.first_name ? `${act.first_name} ${act.last_name || ''}`.trim() : 'System Action';
-
-                let formattedTime = '';
-                if (act.timestamp) {
-                    const actDate = new Date(act.timestamp);
-                    const today = new Date();
-                    const isTodayAct = actDate.getDate() === today.getDate() && actDate.getMonth() === today.getMonth() && actDate.getFullYear() === today.getFullYear();
-                    const timeStr = actDate.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
-                    formattedTime = isTodayAct ? `Today ${timeStr}` : `${actDate.toLocaleDateString()} ${timeStr}`;
-                }
-
-                const tr = document.createElement('tr');
-                tr.innerHTML = `
-                    <td class="text-gray">${formattedTime}</td>
-                    <td>${patientName}</td>
-                    <td><span class="badge ${badgeClass}">${actionText}</span></td>
-                    <td class="text-gray">${act.username || 'System'}</td>
-                    `;
-                activityTbody.appendChild(tr);
-            });
-        }
-    }
-
-    // Render Bar Chart (Month Wise)
-    const barCanvas = document.getElementById('appointmentsBarChart');
-    const barEmpty = document.getElementById('appointmentsBarChartEmpty');
-    const filterDoc = document.getElementById('filterBarDoctor');
-    const filterYear = document.getElementById('filterBarYear');
-    const filterType = document.getElementById('filterBarType');
-
-    if (barCanvas && barEmpty) {
-        if (docAppointmentsMonthly.length === 0) {
-            barCanvas.style.display = 'none';
-            barEmpty.style.display = 'block';
-        } else {
-            barCanvas.style.display = 'block';
-            barEmpty.style.display = 'none';
-
-            // Extract unique values for filters
-            const uniqueDocs = new Map();
-            const uniqueYears = new Set();
-            const uniqueTypes = new Set();
-
-            docAppointmentsMonthly.forEach((row) => {
-                uniqueDocs.set(row.provider_id, row.provider_name);
-                if (row.appointment_year) uniqueYears.add(row.appointment_year);
-                if (row.appointment_type) uniqueTypes.add(row.appointment_type);
-            });
-
-            if (filterDoc) {
-                filterDoc.innerHTML = '<option value="all">All Doctors</option>';
-                Array.from(uniqueDocs.entries()).sort((a, b) => a[1].localeCompare(b[1])).forEach(([id, name]) => {
-                    filterDoc.innerHTML += `<option value="${id}">${name}</option>`;
-                });
-            }
-
-            if (filterYear) {
-                filterYear.innerHTML = '<option value="all">All Years</option>';
-                for (let y = 2024; y <= 2050; y++) {
-                    filterYear.innerHTML += `<option value="${y}">${y}</option>`;
-                }
-                const currentYear = new Date().getFullYear();
-                filterYear.value = (currentYear >= 2024 && currentYear <= 2050) ? currentYear.toString() : '2026';
-            }
-
-            if (filterType) {
-                filterType.innerHTML = '<option value="all">All Types</option>';
-                Array.from(uniqueTypes).sort().forEach((type) => {
-                    filterType.innerHTML += `<option value="${type}">${type}</option>`;
-                });
-            }
-
-            const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
-            const barColors = ['#0ea5e9', '#10b981', '#8b5cf6', '#f59e0b', '#f43f5e', '#14b8a6', '#ec4899'];
-
-            const renderBarChart = () => {
-                const selDoc = filterDoc ? filterDoc.value : 'all';
-                const selYear = filterYear ? filterYear.value : 'all';
-                const selType = filterType ? filterType.value : 'all';
-
-                let filteredData = docAppointmentsMonthly;
-                if (selDoc !== 'all') filteredData = filteredData.filter((r) => r.provider_id == selDoc);
-                if (selYear !== 'all') filteredData = filteredData.filter((r) => r.appointment_year == selYear);
-                if (selType !== 'all') filteredData = filteredData.filter((r) => r.appointment_type === selType);
-
-                if (filteredData.length === 0) {
-                    barCanvas.style.display = 'none';
-                    barEmpty.style.display = 'block';
-                    return;
-                } else {
-                    barCanvas.style.display = 'block';
-                    barEmpty.style.display = 'none';
-                }
-
-                const doctorsMap = new Map();
-                filteredData.forEach((row) => {
-                    const docName = row.provider_name;
-                    const mIndex = parseInt(row.appointment_month) - 1;
-                    if (!doctorsMap.has(docName)) doctorsMap.set(docName, new Array(12).fill(0));
-                    doctorsMap.get(docName)[mIndex] += parseInt(row.appointment_count);
-                });
-
-                const datasets = [];
-                let cIndex = 0;
-                doctorsMap.forEach((monthlyData, docName) => {
-                    datasets.push({
-                        label: docName,
-                        data: monthlyData,
-                        backgroundColor: barColors[cIndex % barColors.length],
-                        borderRadius: 4,
-                        barPercentage: 0.8,
-                        categoryPercentage: 0.9,
-                    });
-                    cIndex++;
-                });
-
-                if (window.appointmentsBarChartInstance) {
-                    window.appointmentsBarChartInstance.destroy();
-                }
-
-                window.appointmentsBarChartInstance = new Chart(barCanvas, {
-                    type: 'bar',
-                    data: { labels: monthNames, datasets: datasets },
-                    options: {
-                        responsive: true,
-                        maintainAspectRatio: false,
-                        plugins: {
-                            legend: {
-                                position: 'bottom',
-                                labels: { font: { family: "'Inter', sans-serif", size: 13 }, usePointStyle: true, padding: 20 },
-                            },
-                            tooltip: {
-                                backgroundColor: 'rgba(15, 23, 42, 0.9)',
-                                titleFont: { size: 14, family: "'Inter', sans-serif" },
-                                bodyFont: { size: 14, family: "'Inter', sans-serif" },
-                                padding: 12,
-                                cornerRadius: 8,
-                            },
-                        },
-                        scales: {
-                            x: { grid: { display: false } },
-                            y: { beginAtZero: true, ticks: { precision: 0 }, grid: { color: '#f1f5f9' } },
-                        },
-                    },
-                });
-            };
-
-            renderBarChart();
-            if (filterDoc) filterDoc.addEventListener('change', renderBarChart);
-            if (filterYear) filterYear.addEventListener('change', renderBarChart);
-            if (filterType) filterType.addEventListener('change', renderBarChart);
-        }
-    }
+    if (rangeSel) rangeSel.onchange = renderActivity;
+    renderActivity();
 }
 
 function renderPaginationControls({ containerId, currentPage, totalItems, pageSize, onPageChange, onPageSizeChange }) {
@@ -3986,6 +4450,222 @@ function renderPaginationControls({ containerId, currentPage, totalItems, pageSi
             onPageSizeChange(parseInt(e.target.value));
         };
     }
+}
+
+// ===== Patient chart tabs per role (null = every tab) =====
+// Mirrors App\Security\Roles on the server: the Receptionist has no clinical access and Billing Staff only
+// see demographics, appointments and billing (billing codes come from the billing screens, never raw notes).
+function chartTabsForRole(role) {
+    if (role === 'Receptionist') return ['dashboard', 'demographics', 'appointments', 'messages', 'referrals', 'recalls'];
+    if (role === 'Billing Staff') return ['dashboard', 'demographics', 'appointments', 'messages', 'billing'];
+    return null;
+}
+
+// ===== Does this person need a Primary Specialty? (mirrors App\Security\Roles::SPECIALTY_REQUIRED + UserController::resolveAssignableRole) =====
+// Doctors and Nurses practise a specialty; front desk, billing and administrators may leave it blank. The server re-checks.
+// Provider job roles all map to Doctor; these staff job roles map to Nurse (everything else - front desk, billing, manager - does not).
+const NURSE_LEVEL_JOB_ROLES = ['Medical Assistant', 'Registered Nurse (RN)', 'Licensed Practical Nurse (LPN)', 'Lab Technician', 'Phlebotomist'];
+// The system role the server will give this person (mirrors UserController::resolveAssignableRole). Display only; the server decides.
+function staffSystemRole(userType, jobRole) {
+    if (userType === 'Administrator') return 'Super Admin';
+    if (userType === 'Provider / Clinician') return 'Doctor';
+    if (NURSE_LEVEL_JOB_ROLES.includes(jobRole)) return 'Nurse';
+    if (jobRole === 'Billing Staff') return 'Billing Staff';
+    if (jobRole === 'Practice Manager') return 'Super Admin';
+    return 'Receptionist';
+}
+function staffSpecialtyRequired(userType, jobRole) {
+    if (userType === 'Provider / Clinician') return true;
+    if (userType === 'Staff Member') return NURSE_LEVEL_JOB_ROLES.includes(jobRole);
+    return false;   // Administrator -> Super Admin
+}
+
+// ===== Show / hide password: <button type="button" data-toggle-password="<input id>"><i class="fas fa-eye"></i></button> =====
+// One delegated listener for every such button (user wizard today); the icon flips between eye and eye-slash.
+function setPasswordVisibility(input, visible) {
+    if (!input) return;
+    input.type = visible ? 'text' : 'password';
+    document.querySelectorAll('[data-toggle-password="' + input.id + '"]').forEach((btn) => {
+        btn.setAttribute('aria-label', visible ? 'Hide password' : 'Show password');
+        btn.title = visible ? 'Hide password' : 'Show password';
+        const icon = btn.querySelector('i');
+        if (icon) icon.className = visible ? 'fas fa-eye-slash' : 'fas fa-eye';
+    });
+}
+
+document.addEventListener('click', (e) => {
+    const btn = e.target.closest('[data-toggle-password]');
+    if (!btn) return;
+    const input = document.getElementById(btn.dataset.togglePassword);
+    if (input) setPasswordVisibility(input, input.type === 'password');
+});
+
+// ===== Info tips: a small round "i" (.info-tip-btn) whose help text is a Bootstrap popover =====
+// Descriptions live in the popover instead of taking up space under every title. Call after rendering a page/fragment.
+function initInfoTips(root = document) {
+    if (!window.bootstrap || !bootstrap.Popover) return;
+    root.querySelectorAll('[data-bs-toggle="popover"]').forEach((el) => bootstrap.Popover.getOrCreateInstance(el));
+}
+
+// A popover caches its text when created, so to change it later set the attribute and re-create the popover.
+function setInfoTipText(el, text) {
+    if (!el) return;
+    el.setAttribute('data-bs-content', text);
+    if (window.bootstrap && bootstrap.Popover) {
+        const existing = bootstrap.Popover.getInstance(el);
+        if (existing) existing.dispose();
+        bootstrap.Popover.getOrCreateInstance(el);
+    }
+}
+
+// ===== Audit & Reports (Super Admin only; the server enforces it, this only decides what to show) =====
+// Top level (not inside another route's handler). Every value that came from the log is escaped: usernames of failed
+// logins are typed by anyone, so they must never be treated as HTML.
+async function initReportsHandler() {
+    const byId = (id) => document.getElementById(id);
+    const main = byId('rep-main');
+    if (!main) return;
+
+    const me = await ApiService.request('/api/me');
+    if (!(me.status === 'success' && me.user && me.user.role === 'Super Admin')) {
+        main.hidden = true;
+        const restricted = byId('rep-restricted');
+        if (restricted) restricted.hidden = false;
+        return;
+    }
+
+    initInfoTips(main);
+
+    const state = { page: 1, perPage: 25 };
+    let firstLoad = true;       // the first successful load records one "View Audit Log" entry (paging/filtering does not)
+    let facetsFilled = false;
+    const tbody = byId('audit-trail-list');
+    const COLS = 8;
+
+    // The browser's local day -> UTC boundaries (the log stores UTC).
+    const toUtc = (dateStr, endOfDay) => {
+        if (!dateStr) return '';
+        const [y, m, d] = dateStr.split('-').map(Number);
+        const dt = endOfDay ? new Date(y, m - 1, d, 23, 59, 59) : new Date(y, m - 1, d, 0, 0, 0);
+        return dt.toISOString().slice(0, 19).replace('T', ' ');
+    };
+
+    const filterParams = () => {
+        const p = new URLSearchParams();
+        const add = (k, v) => { if (v) p.set(k, v); };
+        add('from', toUtc(byId('rep-from').value, false));
+        add('to', toUtc(byId('rep-to').value, true));
+        add('username', byId('rep-user').value.trim());
+        add('role', byId('rep-role').value);
+        add('module', byId('rep-module').value);
+        add('action', byId('rep-action').value.trim());
+        add('patient_id', byId('rep-patient').value.trim());
+        return p;
+    };
+    const hasFilters = () => Array.from(filterParams().keys()).length > 0;
+
+    const setMessageRow = (html) => { tbody.innerHTML = `<tr><td colspan="${COLS}" class="rep-empty">${html}</td></tr>`; };
+    const fmtTime = (iso) => {
+        const d = new Date(iso);
+        return isNaN(d) ? calEscape(iso) : d.toLocaleString(undefined, { year: 'numeric', month: 'short', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    };
+    const patientCell = (r) => {
+        if (r.patient_id === null || r.patient_id === undefined) return '<span class="rep-muted">&mdash;</span>';
+        if (r.patient_name === null) return `<span class="rep-muted">#${calEscape(r.patient_id)} (record no longer exists)</span>`;
+        return `${calEscape(r.patient_name)} <span class="rep-muted">#${calEscape(r.patient_id)}</span>`;
+    };
+
+    const fillFacets = (facets) => {
+        if (facetsFilled || !facets) return;
+        facetsFilled = true;
+        const fill = (id, list) => {
+            const sel = byId(id);
+            list.forEach((v) => { const o = document.createElement('option'); o.value = v; o.textContent = v; sel.appendChild(o); });
+        };
+        fill('rep-role', facets.roles || []);
+        fill('rep-module', facets.modules || []);
+    };
+
+    const load = async () => {
+        const p = filterParams();
+        p.set('page', state.page);
+        p.set('per_page', state.perPage);
+        if (firstLoad) p.set('open', '1');
+        setMessageRow('Loading audit log...');
+
+        const res = await ApiService.request('/api/reports/audit?' + p.toString());
+        if (res.status !== 'success') {
+            setMessageRow(`<span class="rep-error">${calEscape(res.message || 'Could not load the audit log.')}</span>`);
+            byId('rep-pagination').innerHTML = '';
+            return;
+        }
+        firstLoad = false;
+        fillFacets(res.facets);
+        state.page = res.page;
+
+        if (!res.data.length) {
+            setMessageRow(hasFilters() ? 'No audit entries match these filters.' : 'The audit log is empty.');
+        } else {
+            tbody.innerHTML = res.data.map((r) => `
+                <tr>
+                    <td class="rep-time">${fmtTime(r.timestamp)}</td>
+                    <td>${calEscape(r.username || 'System')}</td>
+                    <td>${r.user_role ? `<span class="rep-tag">${calEscape(r.user_role)}</span>` : '<span class="rep-muted">&mdash;</span>'}</td>
+                    <td>${patientCell(r)}</td>
+                    <td>${calEscape(r.action_type)}</td>
+                    <td>${calEscape(r.target_module)}</td>
+                    <td class="rep-mono">${calEscape(r.ip_address)}</td>
+                    <td class="rep-mono" title="${calEscape(r.log_hash)}">${calEscape((r.log_hash || '').substring(0, 12))}&hellip;</td>
+                </tr>`).join('');
+        }
+
+        renderPaginationControls({
+            containerId: 'rep-pagination',
+            currentPage: res.page,
+            totalItems: res.total,
+            pageSize: res.per_page,
+            onPageChange: (pg) => { state.page = pg; load(); },
+            onPageSizeChange: (size) => { state.perPage = size; state.page = 1; load(); }
+        });
+    };
+
+    // ---- integrity check ----
+    const setPill = (kind, text) => {
+        const el = byId('rep-integrity');
+        el.className = `rep-pill rep-pill-${kind}`;
+        el.textContent = text;
+    };
+    const verifyBtn = byId('rep-verify-btn');
+    const verify = async () => {
+        verifyBtn.disabled = true;
+        setPill('idle', 'Verifying...');
+        const res = await ApiService.request('/api/reports/audit/verify');
+        verifyBtn.disabled = false;
+        if (res.status !== 'success') {
+            setPill('bad', res.message || 'Could not verify the log.');
+            return;
+        }
+        const d = res.data;
+        if (d.status === 'ok') {
+            const failures = d.write_failures > 0 ? ` - but ${d.write_failures} audit write(s) failed (see storage/audit_failures.log)` : '';
+            setPill(d.write_failures > 0 ? 'warn' : 'ok', `Intact - ${Number(d.checked).toLocaleString()} entries verified${failures}`);
+        } else {
+            const where = d.first_problem && d.first_problem.id ? ` at entry #${d.first_problem.id}` : '';
+            setPill('bad', `Tampering detected${where}: ${d.first_problem ? d.first_problem.reason : 'unknown problem'}`);
+        }
+    };
+    verifyBtn.onclick = verify;
+
+    // ---- filters, export ----
+    byId('rep-filters').onsubmit = (e) => { e.preventDefault(); state.page = 1; load(); };
+    byId('rep-clear-btn').onclick = () => { byId('rep-filters').reset(); state.page = 1; load(); };
+    byId('rep-export-btn').onclick = () => {
+        // A normal navigation: the session cookie goes along and the server answers with a file download.
+        window.location.href = ApiService.getBaseUrl() + 'api/reports/audit/export?' + filterParams().toString();
+    };
+
+    await load();
+    verify();
 }
 
 let patientsCurrentPage = 1;
@@ -4107,6 +4787,248 @@ document.addEventListener('click', (e) => {
         }
     }
 });
+
+// Opens one encounter in the patient chart. The tabbed encounter form (chief complaint, vitals,
+// assessment, sign) only renders while the chart dashboard is visible (clinical-tabs.js override),
+// so every route that wants to show an encounter goes through the chart via this helper.
+window.openEncounterInChart = async function (patientId, noteId) {
+    // Getting to the form means Patients route -> chart -> Encounters list -> form. Cover that whole transition
+    // with one loading screen so the user never sees the intermediate screens flash by.
+    document.getElementById('enc-open-overlay')?.remove();
+    const overlay = document.createElement('div');
+    overlay.id = 'enc-open-overlay';
+    overlay.setAttribute('style', 'position:fixed;inset:0;z-index:1040;background:#f8fafc;display:flex;align-items:center;justify-content:center;flex-direction:column;gap:12px;color:#475569;font-size:0.95rem;font-weight:600;');
+    overlay.innerHTML = '<i class="fas fa-spinner fa-spin" style="font-size:1.6rem;color:#0284c7;"></i><span>Opening encounter...</span>';
+    document.body.appendChild(overlay);
+    const failSafe = setTimeout(() => overlay.remove(), 20000);
+    try {
+        // start loading the data while the Patients module loads
+        const dataPromise = Promise.all([
+            ApiService.request(`/api/patient/${patientId}`),
+            ApiService.request(`/api/clinical/note-single/${noteId}`)
+        ]);
+        window.location.hash = '#patients';
+        await new Promise((resolve) => {
+            let n = 0;
+            const tick = () => {
+                if (document.getElementById('patient-directory-list-view') && typeof window.openPatientChart === 'function') resolve();
+                else if (n++ < 60) setTimeout(tick, 100);
+                else resolve();
+            };
+            tick();
+        });
+        const [pRes, nRes] = await dataPromise;
+        if (pRes.status !== 'success' || !pRes.data || nRes.status !== 'success' || !nRes.data) {
+            Toast.show(nRes.message || pRes.message || 'Could not open the encounter.', 'error');
+            return;
+        }
+        await window.openPatientChart(pRes.data, 'encounters');
+        // Click the chart's own Edit button: it is the path that finishes rendering the encounters list
+        // before the tabbed form takes over (calling populateEncounterModal directly races that render).
+        let opened = false;
+        for (let i = 0; i < 50 && !opened; i++) {
+            const btn = document.querySelector(`.view-edit-enc-btn[data-id="${noteId}"]`);
+            if (btn) { btn.click(); opened = true; }
+            else await new Promise((r) => setTimeout(r, 100));
+        }
+        if (!opened) window.populateEncounterModal(nRes.data, true);
+        // let the tabbed form paint before the cover comes off
+        await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    } finally {
+        clearTimeout(failSafe);
+        overlay.remove();
+    }
+};
+
+// Appointment just became "Arrived": make sure the visit has its encounter (idempotent) and open the SOAP form.
+// Roles that can check patients in but not start clinical documentation (front desk) just get a toast.
+window.openEncounterForArrival = async function (appointmentId, patientId) {
+    if (window._arrivalOpening) return;
+    window._arrivalOpening = true;
+    try {
+        const r = await ApiService.request('/api/encounters/start', 'POST', { appointment_id: appointmentId });
+        if (r.status === 'success' && r.note_id) {
+            await window.openEncounterInChart(patientId, r.note_id);
+        } else {
+            Toast.show(r.message || 'Checked in. The provider can start the encounter from Encounters.', 'info');
+        }
+    } finally {
+        window._arrivalOpening = false;
+    }
+};
+
+// ── Encounters module (work queue). Top-level on purpose: see CLAUDE.md scoping rule. ─────────────
+const ENC_STAGES = ['Scheduled', 'Checked in', 'In progress', 'Ready to sign', 'Signed', 'Billed'];
+const ENC_STAGE_CLASS = (s) => 'enc-stage-' + String(s).toLowerCase().replace(/\s+/g, '-');
+
+async function initEncountersHandler() {
+    const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const $ = (id) => document.getElementById(id);
+    const listEl = $('enc-list');
+    if (!listEl) return;
+
+    const meRes = await ApiService.request('/api/me');
+    const role = meRes?.user?.role || '';
+    const canStart = ['Super Admin', 'Doctor', 'Nurse'].includes(role);
+    const canSign = ['Super Admin', 'Doctor'].includes(role);
+    const canCheckIn = ['Super Admin', 'Doctor', 'Nurse', 'Receptionist'].includes(role);
+    const state = { stage: '', all: [], rows: [], counts: {}, timer: null };
+
+    const fmtWhen = (w) => {
+        if (!w) return '—';
+        const d = new Date(String(w).replace(' ', 'T'));
+        if (isNaN(d)) return esc(w);
+        const t = d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+        const isToday = d.toDateString() === new Date().toDateString();
+        return isToday ? t : d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' + t;
+    };
+
+    const actionsFor = (r) => {
+        const btn = (act, label, cls = 'btn-secondary') => `<button type="button" class="btn ${cls} btn-sm enc-act" data-act="${act}" data-key="${esc(r.key)}">${label}</button>`;
+        switch (r.stage) {
+            case 'Scheduled': return canCheckIn ? btn('checkin', 'Check in', 'btn-primary') : '';
+            case 'Checked in': return canStart ? btn('start', 'Start encounter', 'btn-primary') : '<span class="enc-muted">Waiting for clinician</span>';
+            case 'In progress': return canStart ? btn('open', 'Continue', 'btn-primary') + btn('ready', 'Mark ready for sign') : '';
+            case 'Ready to sign': return canSign ? btn('open', 'Review &amp; sign', 'btn-primary') : (canStart ? btn('open', 'View') : '<span class="enc-muted">Awaiting doctor</span>');
+            case 'Signed': return (canStart ? btn('open', 'View / addendum') : '') + '<span class="enc-muted">Sent to Billing</span>';
+            case 'Billed': return r.invoice_id ? `<a class="btn btn-secondary btn-sm" href="#billing">Invoice #${r.invoice_id}</a>` : '';
+            default: return '';
+        }
+    };
+
+    const renderChips = () => {
+        const total = ENC_STAGES.reduce((n, s) => n + (state.counts[s] || 0), 0);
+        $('enc-chips').innerHTML = `<button type="button" class="enc-chip ${state.stage === '' ? 'active' : ''}" data-stage="">All <span>${total}</span></button>` +
+            ENC_STAGES.map((s) => `<button type="button" class="enc-chip ${state.stage === s ? 'active' : ''}" data-stage="${s}">${s} <span>${state.counts[s] || 0}</span></button>`).join('');
+    };
+
+    // chief_complaint is sometimes stored as a JSON blob ({"text": ...}) by the cardiology form
+    const ccText = (v) => {
+        if (!v) return '';
+        try { const j = JSON.parse(v); if (j && typeof j === 'object') return String(j.text || ''); } catch (e) { }
+        return String(v).startsWith('{') ? String(v).replace(/^\{"text":"/, '').replace(/".*$/, '') : String(v);
+    };
+
+    const renderRows = () => {
+        if (!state.rows.length) {
+            listEl.innerHTML = `<tr><td colspan="6" class="enc-loading">No encounters ${state.stage ? 'in "' + esc(state.stage) + '"' : 'for this filter'}.</td></tr>`;
+            return;
+        }
+        listEl.innerHTML = state.rows.map((r) => `
+            <tr>
+                <td>${fmtWhen(r.when)}</td>
+                <td><strong>${esc(r.patient_name || 'Unknown')}</strong>${ccText(r.chief_complaint) ? `<div class="enc-cc">${esc(ccText(r.chief_complaint))}</div>` : ''}</td>
+                <td>${r.encounter_ref ? esc(r.encounter_ref) : '<span class="enc-muted">Not started</span>'}<div class="enc-cc">${esc(r.visit_type || '')}${r.appointment_id ? '' : ' · walk-in / no appointment'}</div></td>
+                <td>${esc(r.provider_name || '—')}</td>
+                <td><span class="enc-pill ${ENC_STAGE_CLASS(r.stage)}">${esc(r.stage)}</span>${r.signed_by && ['Signed', 'Billed'].includes(r.stage) ? `<div class="enc-cc">by ${esc(r.signed_by)}</div>` : ''}</td>
+                <td class="enc-actions">${actionsFor(r)}</td>
+            </tr>`).join('');
+    };
+
+    const load = async () => {
+        const p = new URLSearchParams({ range: $('enc-range').value });
+        if ($('enc-provider').value) p.set('provider_id', $('enc-provider').value);
+        if ($('enc-search').value.trim()) p.set('q', $('enc-search').value.trim());
+        // Chip counts span every stage, so the stage filter is applied client-side.
+        const res = await ApiService.request('/api/encounters/queue?' + p.toString());
+        if (res.status !== 'success') {
+            listEl.innerHTML = `<tr><td colspan="6" class="enc-loading">${esc(res.message || 'Could not load encounters.')}</td></tr>`;
+            return;
+        }
+        state.all = res.data || [];
+        state.counts = res.counts || {};
+        state.rows = state.stage ? state.all.filter((r) => r.stage === state.stage) : state.all;
+        renderChips();
+        renderRows();
+    };
+    window.refreshPatientEncounters = () => { if ($('enc-list')) load(); };
+
+    let providers = [];
+    try {
+        const pr = await ApiService.request('/api/providers');
+        providers = pr.status === 'success' ? (pr.data || []) : [];
+    } catch (e) { }
+    const provOpts = providers.map((p) => `<option value="${p.id}">${esc(p.first_name)} ${esc(p.last_name)}</option>`).join('');
+    $('enc-provider').innerHTML = '<option value="">All providers</option>' + provOpts;
+    $('enc-wi-provider').innerHTML = provOpts;
+    if (role === 'Doctor' && meRes.user?.id) {
+        $('enc-provider').value = String(meRes.user.id);
+        $('enc-wi-provider').value = String(meRes.user.id);
+    }
+
+    const openNote = (noteId, patientId) => window.openEncounterInChart(patientId, noteId);
+    const startFor = async (payload) => {
+        const r = await ApiService.request('/api/encounters/start', 'POST', payload);
+        if (r.status !== 'success') { Toast.show(r.message || 'Could not start the encounter.', 'error'); return false; }
+        Toast.show(r.message || 'Encounter started.', 'success');
+        await openNote(r.note_id, payload.patient_id || r.patient_id);
+        return true;
+    };
+
+    listEl.onclick = async (e) => {
+        const b = e.target.closest('.enc-act');
+        if (!b) return;
+        const r = state.all.find((x) => x.key === b.dataset.key);
+        if (!r) return;
+        b.disabled = true;
+        try {
+            if (b.dataset.act === 'checkin') {
+                const res = await ApiService.request(`/api/appointment/${r.appointment_id}/status`, 'PUT', { status: 'Arrived' });
+                if (res.status === 'success') {
+                    Toast.show('Patient checked in.', 'success');
+                    await load();
+                    // Checked in -> open the visit's SOAP form straight away (front desk just gets a toast)
+                    await window.openEncounterForArrival(r.appointment_id, r.patient_id);
+                } else Toast.show(res.message || 'Check-in failed.', 'error');
+            } else if (b.dataset.act === 'start') {
+                await startFor({ appointment_id: r.appointment_id, patient_id: r.patient_id });
+            } else if (b.dataset.act === 'open') {
+                await openNote(r.note_id, r.patient_id);
+            } else if (b.dataset.act === 'ready') {
+                const res = await ApiService.request(`/api/clinical/notes/${r.note_id}/status`, 'PUT', { status: 'ready_for_sign' });
+                if (res.status === 'success') { Toast.show('Marked ready for the doctor to sign.', 'success'); await load(); }
+                else Toast.show(res.message || 'Could not mark ready.', 'error');
+            }
+        } finally { b.disabled = false; }
+    };
+
+    $('enc-chips').onclick = (e) => {
+        const c = e.target.closest('.enc-chip');
+        if (!c) return;
+        state.stage = c.dataset.stage;
+        state.rows = state.stage ? state.all.filter((r) => r.stage === state.stage) : state.all;
+        renderChips();
+        renderRows();
+    };
+    $('enc-range').onchange = load;
+    $('enc-provider').onchange = load;
+    $('enc-search').oninput = () => { clearTimeout(state.timer); state.timer = setTimeout(load, 300); };
+    $('enc-refresh').onclick = load;
+
+    // Walk-in panel (inline, no popup)
+    const wiPanel = $('enc-walkin');
+    if (!canStart) $('enc-walkin-btn').hidden = true;
+    const patientMap = {};
+    $('enc-walkin-btn').onclick = async () => {
+        wiPanel.style.display = wiPanel.style.display === 'none' ? 'block' : 'none';
+        if (wiPanel.style.display === 'block' && !Object.keys(patientMap).length) {
+            const pr = await ApiService.request('/api/patients/list');
+            (pr.data || []).forEach((p) => { patientMap[`${p.first_name || ''} ${p.last_name || ''} (#${p.id})`.trim()] = p.id; });
+            $('enc-patient-list').innerHTML = Object.keys(patientMap).map((k) => `<option value="${esc(k)}"></option>`).join('');
+        }
+    };
+    $('enc-wi-cancel').onclick = () => { wiPanel.style.display = 'none'; };
+    $('enc-wi-start').onclick = async () => {
+        const err = $('enc-wi-error');
+        const pid = patientMap[$('enc-wi-patient').value.trim()];
+        if (!pid) { err.textContent = 'Pick a patient from the list.'; err.style.display = 'inline'; return; }
+        err.style.display = 'none';
+        const ok = await startFor({ patient_id: pid, provider_id: $('enc-wi-provider').value || undefined, visit_type: $('enc-wi-visit').value });
+        if (ok) { wiPanel.style.display = 'none'; $('enc-wi-patient').value = ''; }
+    };
+
+    await load();
+}
 
 async function initPatientsHandler() {
     const tableBody = document.getElementById('patients-list');
@@ -6299,6 +7221,12 @@ async function initPatientsHandler() {
             openCreatePatientPopup();
         };
     }
+    // Dashboard's "+ Register Patient" links to #patients?action=register: open the popup, then drop the param
+    // (replaceState doesn't fire hashchange, so the module isn't re-rendered)
+    if (/[?&]action=register\b/.test(window.location.hash)) {
+        history.replaceState(null, '', window.location.pathname + window.location.search + '#patients');
+        openCreatePatientPopup();
+    }
 
     // ── Load & Render Patients Directory Table ──
     let allPatients = [];
@@ -6587,7 +7515,7 @@ async function initPatientsHandler() {
                     const homePhone = p.phone || p.home_phone || '';
                     const dob = p.dob || '';
                     const lastAppt = p.last_appt || '';
-                    const noneWithPlus = `<span style="color: #64748b; font-size: 0.85rem;">None</span> <button class="btn-xs-quick-appt" data-id="${p.id}" data-name="${fullNameFormatted}" style="background: #007bb6; color: white; border: none; border-radius: 4px; padding: 2px 6px; font-size: 11px; margin-left: 6px; cursor: pointer; line-height: 1;" title="Schedule Appointment"><i class="fas fa-plus"></i></button>`;
+                    const noneWithPlus = `<span style="color: #64748b; font-size: 0.85rem;">None</span> <button class="btn-xs-quick-appt" data-id="${p.id}" data-name="${fullNameFormatted}" style="background: transparent; border: none; padding: 0; margin-left: 6px; cursor: pointer; line-height: 0; display: inline-flex; align-items: center; justify-content: center; vertical-align: middle;" title="Schedule Appointment" aria-label="Schedule Appointment"><svg width="24" height="24" viewBox="0 0 512 512" aria-hidden="true"><path fill="#007bb6" fill-rule="evenodd" d="M160 0h192c110 0 160 50 160 160v192c0 110-50 160-160 160H160C50 512 0 462 0 352V160C0 50 50 0 160 0zm96 110c-13 0-24 11-24 24v98H134c-13 0-24 11-24 24s11 24 24 24h98v98c0 13 11 24 24 24s24-11 24-24V280h98c13 0 24-11 24-24s-11-24-24-24h-98v-98c0-13-11-24-24-24z"/></svg></button>`;
                     const clinicians = p.clinicians || p.assigned_provider_name || '';
 
                     // Row states: appointment today (highlight + chip), inactive (dimmed + badge)
@@ -6653,7 +7581,7 @@ async function initPatientsHandler() {
                     const id = link.getAttribute("data-id");
                     const targetPatient = allPatients.find(p => String(p.id) === String(id));
                     if (targetPatient) {
-                        await openPatientChart(targetPatient, "demographics");
+                        await openPatientChart(targetPatient, "dashboard");
                     }
                 };
             });
@@ -6762,8 +7690,9 @@ async function initPatientsHandler() {
 
             // Wire Quick Appt [+] button -> the full scheduling popup with this patient preselected
             tableBody.querySelectorAll(".btn-xs-quick-appt").forEach((btn) => {
-                btn.onclick = (e) => {
+                btn.onclick = async (e) => {
                     e.stopPropagation();
+                    await loadClinicSchedule();
                     const targetPatient = allPatients.find(p => String(p.id) === String(btn.getAttribute("data-id")));
                     if (!targetPatient) return;
                     // scheduleOnDate refuses closed days, so start from the first open clinic day
@@ -6800,7 +7729,7 @@ async function initPatientsHandler() {
     };
 
             // Wire up View Patient Record triggers (opens Chart Dashboard)
-        const openPatientChart = async (p, defaultTab = "demographics") => {
+        const openPatientChart = async (p, defaultTab = "dashboard") => {
             if (!p) return;
             p = await hydratePatient(p);
             const id = p.id;
@@ -7114,7 +8043,7 @@ async function initPatientsHandler() {
                                                                     style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
                                                                     <h3
                                                                         style="font-size: 1rem; color: #0f172a; margin-top: 0; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
-                                                                        <i class="fas fa-user"></i> 1. Personal
+                                                                        1. Personal
                                                                         Information
                                                                     </h3>
                                                                     <div
@@ -7142,7 +8071,7 @@ async function initPatientsHandler() {
                                                                     style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
                                                                     <h3
                                                                         style="font-size: 1rem; color: #0f172a; margin-top: 0; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
-                                                                        <i class="fas fa-address-book"></i> 2. Contact
+                                                                        2. Contact
                                                                         Information
                                                                     </h3>
                                                                     <div
@@ -7165,7 +8094,7 @@ async function initPatientsHandler() {
                                                                     style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
                                                                     <h3
                                                                         style="font-size: 1rem; color: #0f172a; margin-top: 0; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
-                                                                        <i class="fas fa-shield-alt"></i> 3. Insurance
+                                                                        3. Insurance
                                                                         Summary
                                                                     </h3>
                                                                     <div
@@ -7195,7 +8124,7 @@ async function initPatientsHandler() {
                                                                     style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
                                                                     <h3
                                                                         style="font-size: 1rem; color: #0f172a; margin-top: 0; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
-                                                                        <i class="fas fa-user-md"></i> 4. Care Team
+                                                                        4. Care Team
                                                                     </h3>
                                                                     <div
                                                                         style="font-size: 0.9rem; color: #475569; line-height: 1.6;">
@@ -7217,7 +8146,7 @@ async function initPatientsHandler() {
                                                                     style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
                                                                     <h3
                                                                         style="font-size: 1rem; color: #0f172a; margin-top: 0; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
-                                                                        <i class="fas fa-heartbeat"></i> 5. Emergency
+                                                                        5. Emergency
                                                                         Contact
                                                                     </h3>
                                                                     <div
@@ -7239,7 +8168,7 @@ async function initPatientsHandler() {
                                                                     style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; box-shadow: 0 1px 2px rgba(0,0,0,0.05);">
                                                                     <h3
                                                                         style="font-size: 1rem; color: #0f172a; margin-top: 0; margin-bottom: 16px; display: flex; align-items: center; gap: 8px;">
-                                                                        <i class="fas fa-calendar-alt"></i> 6. Next
+                                                                        6. Next
                                                                         Appointment
                                                                     </h3>
                                                                     <div
@@ -7260,7 +8189,7 @@ async function initPatientsHandler() {
                                                                     style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #f1f5f9;">
                                                                     <h3
                                                                         style="margin: 0; font-size: 1.1rem; font-weight: 700; color: #0284c7; display: flex; align-items: center; gap: 8px;">
-                                                                        <i class="fas fa-shield-alt"></i> Primary
+                                                                        Primary
                                                                         Insurance Coverage Details
                                                                     </h3>
                                                                     <button type="button"
@@ -7374,7 +8303,7 @@ async function initPatientsHandler() {
                                                                     style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; padding-bottom: 12px; border-bottom: 1px solid #f1f5f9;">
                                                                     <h3
                                                                         style="margin: 0; font-size: 1.1rem; font-weight: 700; color: #0284c7; display: flex; align-items: center; gap: 8px;">
-                                                                        <i class="${icon}"></i> ${title}
+                                                                        ${title}
                                                                     </h3>
                                                                     <button type="button"
                                                                         class="btn btn-primary btn-sm add-section-item-btn"
@@ -7534,10 +8463,7 @@ async function initPatientsHandler() {
                                                                             <div
                                                                                 style="display: flex; gap: 20px; font-size: 0.85rem; color: #334155; align-items: center; flex-wrap: wrap;">
                                                                                 <span
-                                                                                    style="display: flex; align-items: center; gap: 6px;"><i
-                                                                                        class="fas fa-birthday-cake"
-                                                                                        style="color: #0284c7;"></i>
-                                                                                    <strong>DOB:</strong> ${p.dob ||
+                                                                                    style="display: flex; align-items: center; gap: 6px;"><strong>DOB:</strong> ${p.dob ||
                 "-"
                 } (Age ${p.age !==
                     null
@@ -7545,23 +8471,14 @@ async function initPatientsHandler() {
                     : "-"
                 })</span>
                                                                                 <span
-                                                                                    style="display: flex; align-items: center; gap: 6px;"><i
-                                                                                        class="fas fa-venus-mars"
-                                                                                        style="color: #0284c7;"></i>
-                                                                                    <strong>Sex:</strong> ${p.gender ||
+                                                                                    style="display: flex; align-items: center; gap: 6px;"><strong>Sex:</strong> ${p.gender ||
                 "-"
                 }</span>
                                                                                 <span
-                                                                                    style="display: flex; align-items: center; gap: 6px;"><i
-                                                                                        class="fas fa-language"
-                                                                                        style="color: #0284c7;"></i>
-                                                                                    <strong>Preferred Language:</strong>
+                                                                                    style="display: flex; align-items: center; gap: 6px;"><strong>Preferred Language:</strong>
                                                                                     ${p.language || "English"}</span>
                                                                                 <span
-                                                                                    style="display: flex; align-items: center; gap: 6px;"><i
-                                                                                        class="fas fa-phone"
-                                                                                        style="color: #0284c7;"></i>
-                                                                                    <strong>Phone:</strong>
+                                                                                    style="display: flex; align-items: center; gap: 6px;"><strong>Phone:</strong>
                                                                                     ${p.cell_phone ||
                 p.phone ||
                 "-"
@@ -7633,8 +8550,12 @@ async function initPatientsHandler() {
                                                                     style="background: white; border-bottom: 1px solid #e2e8f0; padding: 0 24px; flex-shrink: 0;">
                                                                     <ul class="my-custom-tabs" id="chart-sidebar-menu">
                                                                         <li class="my-tab-item active"
+                                                                            data-sec="dashboard">
+                                                                            <span>Dashboard</span>
+                                                                        </li>
+                                                                        <li class="my-tab-item"
                                                                             data-sec="demographics">
-                                                                            <span>Overview</span>
+                                                                            <span>Patient Demographics</span>
                                                                         </li>
                                                                         <li class="my-tab-item" data-sec="encounters">
                                                                             <span>Encounters</span>
@@ -7691,7 +8612,7 @@ async function initPatientsHandler() {
                                                                     <!-- Dynamic Section Content Body -->
                                                                     <div id="chart-section-body"
                                                                         style="padding: 24px; flex: 1; background: #f8fafc; overflow-y: auto;">
-                                                                        ${renderDemographicsTabContent()}
+                                                                        <div class="pcd-loading"><i class="fas fa-spinner fa-spin"></i> Loading dashboard...</div>
                                                                     </div>
                                                                 </main>
                                                             </div>
@@ -7734,6 +8655,13 @@ async function initPatientsHandler() {
             const sidebarItems = fullContentEl.querySelectorAll(
                 "#chart-sidebar-menu li",
             );
+            // Show only the chart tabs this role may use (the server refuses the rest anyway - see App\Security\Roles).
+            const allowedChartTabs = chartTabsForRole(meRes?.user?.role);
+            if (allowedChartTabs) {
+                sidebarItems.forEach((item) => {
+                    if (!allowedChartTabs.includes(item.dataset.sec)) item.style.display = "none";
+                });
+            }
             const subtabItems = fullContentEl.querySelectorAll(
                 "#chart-subtabs-menu li",
             );
@@ -7944,6 +8872,13 @@ async function initPatientsHandler() {
                     else item.classList.remove("active");
                 });
 
+                if (secKey === "dashboard") {
+                    await loadPatientChartDashboard(sectionBody, p.id, updateSection, () => {
+                        const act = fullContentEl.querySelector("#chart-sidebar-menu .my-tab-item.active");
+                        return !!act && act.getAttribute("data-sec") === "dashboard";
+                    });
+                    return;
+                }
                 if (secKey === "demographics") {
                     sectionBody.innerHTML = renderDemographicsTabContent();
                 } else if (secKey === "encounters") {
@@ -8348,18 +9283,16 @@ async function initPatientsHandler() {
                                                                                 style="display: flex; gap: 8px; align-items: center;">
                                                                                 <button type="button"
                                                                                     class="btn btn-outline btn-sm edit-vital-entry-btn"
-                                                                                    data-idx="${originalIdx}"
-                                                                                    style="padding: 6px 14px; color: #0f172a; border: 1px solid #cbd5e1; font-weight: 700; font-size: 0.84rem; border-radius: 8px; background: #ffffff; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;"><i
+                                                                                    data-idx="${originalIdx}" title="Edit vitals" aria-label="Edit vitals"
+                                                                                    style="padding: 7px 10px; color: #0f172a; border: 1px solid #cbd5e1; font-weight: 700; font-size: 0.84rem; border-radius: 8px; background: #ffffff; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;"><i
                                                                                         class="far fa-edit"
-                                                                                        style="color: #0284c7; font-size: 0.92rem;"></i>
-                                                                                    Edit</button>
+                                                                                        style="color: #0284c7; font-size: 0.92rem;"></i></button>
                                                                                 <button type="button"
                                                                                     class="btn btn-outline btn-sm delete-vital-entry-btn"
-                                                                                    data-idx="${originalIdx}"
-                                                                                    style="padding: 6px 14px; color: #991b1b; border: 1px solid #fca5a5; font-weight: 700; font-size: 0.84rem; border-radius: 8px; background: #fef2f2; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;"><i
+                                                                                    data-idx="${originalIdx}" title="Delete vitals" aria-label="Delete vitals"
+                                                                                    style="padding: 7px 10px; color: #991b1b; border: 1px solid #fca5a5; font-weight: 700; font-size: 0.84rem; border-radius: 8px; background: #fef2f2; display: inline-flex; align-items: center; gap: 6px; cursor: pointer;"><i
                                                                                         class="far fa-trash-alt"
-                                                                                        style="color: #dc2626; font-size: 0.92rem;"></i>
-                                                                                    Delete</button>
+                                                                                        style="color: #dc2626; font-size: 0.92rem;"></i></button>
                                                                             </div>
                                                                         </td>
                                                                     </tr>
@@ -14205,8 +15138,8 @@ async function initPatientsHandler() {
                 };
             }
 
-            // Initial section update for defaultTab (e.g. 'encounters' or 'demographics')
-            updateSection(defaultTab || "demographics");
+            // Initial section update for defaultTab (the Dashboard by default; 'encounters' when opening an encounter)
+            updateSection(defaultTab || "dashboard");
         };
 
         window.openPatientChart = openPatientChart;
@@ -14276,23 +15209,52 @@ function calBlocksForDate(dateStr) {
         (b.block_date ? b.block_date === dateStr : Number(b.weekday) === dow));
 }
 
+// Rows with category 'In Office' are the provider's working hours; every other category is time off.
+const calIsWorkingHours = (b) => b.category === 'In Office';
+
 function calBlockAt(dateStr, time24, providerId = null) {
     return calBlocksForDate(dateStr).find(b =>
+        !calIsWorkingHours(b) &&
         (providerId === null || String(b.provider_id) === String(providerId)) &&
         b.start_time.slice(0, 5) <= time24 && time24 < b.end_time.slice(0, 5)) || null;
 }
 
+// Working-hour windows for one provider on a date (date-specific rows override weekly ones).
+// Returns null when the provider never set In Office hours (= unrestricted, clinic hours apply).
+function calProviderHours(providerId, dateStr) {
+    const mine = providerBlocks.filter(b => calIsWorkingHours(b) && String(b.provider_id) === String(providerId));
+    if (!mine.length) return null;
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dow = new Date(y, m - 1, d).getDay();
+    const specific = mine.filter(b => b.block_date === dateStr);
+    return specific.length ? specific : mine.filter(b => !b.block_date && Number(b.weekday) === dow);
+}
+
+// True when the slot is outside the working hours of the given provider (or, with no provider, of every
+// selected clinician - only when all of them have set hours, otherwise someone could still take the slot).
+function calOutsideHours(dateStr, time24, providerId = null) {
+    const ids = providerId !== null ? [String(providerId)]
+        : (calendarSelectedClinicians !== null ? calendarSelectedClinicians.map(String) : []);
+    if (!ids.length) return false;
+    return ids.every(id => {
+        const windows = calProviderHours(id, dateStr);
+        return windows !== null && !windows.some(w => w.start_time.slice(0, 5) <= time24 && time24 < w.end_time.slice(0, 5));
+    });
+}
+
 function calBlockLabel(b) {
-    return `${b.start_time.slice(0, 5)}-${b.end_time.slice(0, 5)} ${b.reason || 'Unavailable'} (${b.provider_name})`;
+    const what = calIsWorkingHours(b) ? 'In Office' : (b.reason || b.category || 'Unavailable');
+    return `${b.start_time.slice(0, 5)}-${b.end_time.slice(0, 5)} ${what} (${b.provider_name})`;
 }
 
 function calWeekBlocksHtml(dateStr) {
-    return calBlocksForDate(dateStr).map(b =>
-        `<div class="cal-blocked-tag" title="${calEscape(calBlockLabel(b))}"><i class="fas fa-user-clock"></i> ${calEscape(calBlockLabel(b))}</div>`).join('');
+    return calBlocksForDate(dateStr).map(b => calIsWorkingHours(b)
+        ? `<div class="cal-hours-tag" title="${calEscape(calBlockLabel(b))}"><i class="fas fa-user-check"></i> ${calEscape(calBlockLabel(b))}</div>`
+        : `<div class="cal-blocked-tag" title="${calEscape(calBlockLabel(b))}"><i class="fas fa-user-clock"></i> ${calEscape(calBlockLabel(b))}</div>`).join('');
 }
 
 function calMonthBlocksHtml(dateStr) {
-    const oneOff = calBlocksForDate(dateStr).filter(b => b.block_date);
+    const oneOff = calBlocksForDate(dateStr).filter(b => b.block_date && !calIsWorkingHours(b));
     if (!oneOff.length) return '';
     return `<div class="cal-blocked-tag" title="${calEscape(oneOff.map(calBlockLabel).join('; '))}"><i class="fas fa-user-clock"></i> Unavailable</div>`;
 }
@@ -14338,7 +15300,9 @@ function calRenderMultiProviderDay(dateStr, dayLabelText, providers, startHour, 
                 } else {
                     const blk = calBlockAt(dateStr, time24, p.id);
                     cell = blk
-                        ? `<div class="cal-blocked-slot"><i class="fas fa-user-clock"></i> ${calEscape(blk.reason || 'Unavailable')}</div>`
+                        ? `<div class="cal-blocked-slot"><i class="fas fa-user-clock"></i> ${calEscape(blk.reason || blk.category || 'Unavailable')}</div>`
+                        : calOutsideHours(dateStr, time24, p.id)
+                        ? `<div class="cal-blocked-slot"><i class="fas fa-user-clock"></i> Outside working hours</div>`
                         : `<div class="empty-hour-slot" data-time="${time24}" data-date="${dateStr}" data-provider="${calEscape(p.id)}">+ Available Slot</div>`;
                 }
                 html += `<div class="cal-multi-cell">${cell}</div>`;
@@ -14443,7 +15407,7 @@ async function calRescheduleAppointment(appt, dateStr, timeStr, providerId = nul
 async function calGetProviderChoices() {
     const r = await ApiService.request('/api/users');
     if (r.status === 'success' && Array.isArray(r.data)) {
-        return r.data.filter(u => ['Doctor', 'Therapist', 'Nurse', 'Super Admin'].includes(u.role))
+        return r.data.filter(u => ['Doctor', 'Nurse', 'Super Admin'].includes(u.role))
             .map(u => ({ id: u.id, name: `${u.first_name} ${u.last_name}`.trim() }));
     }
     const me = await ApiService.request('/api/me');
@@ -14451,53 +15415,79 @@ async function calGetProviderChoices() {
 }
 
 async function showBlockTimePopup() {
-    const providers = await calGetProviderChoices();
+    const [providers, facRes] = await Promise.all([calGetProviderChoices(), ApiService.request('/api/facilities')]);
     if (!providers.length) {
         Toast.show('No providers available.', 'error');
         return;
     }
+    const facilities = (facRes && facRes.status === 'success' && Array.isArray(facRes.data)) ? facRes.data : [];
     const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+    const categories = ['In Office', 'Out Of Office', 'Vacation', 'Lunch', 'Reserved'];
     const defaultDate = formatDateStr(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), currentCalendarDate.getDate());
 
-    const renderBlockList = () => providerBlocks.length
-        ? providerBlocks.map(b => `
+    // Only the selected provider's rows are listed, split into working hours and time off
+    const renderBlockList = (providerId) => {
+        const mine = providerBlocks.filter(b => String(b.provider_id) === String(providerId));
+        const row = (b) => `
             <div class="cal-preview-row">
-                <span>${calEscape(b.block_date ? b.block_date : 'Every ' + weekdays[Number(b.weekday)])} ${calEscape(calBlockLabel(b))}</span>
+                <span>${calEscape(b.block_date ? b.block_date : 'Every ' + weekdays[Number(b.weekday)])} ${calEscape(b.start_time.slice(0, 5))}-${calEscape(b.end_time.slice(0, 5))}${calIsWorkingHours(b) ? '' : ' ' + calEscape(b.category) + (b.reason && b.reason !== b.category ? ' - ' + calEscape(b.reason) : '')}</span>
                 <button type="button" class="btn btn-secondary btn-sm cal-block-del" data-id="${calEscape(b.id)}">Remove</button>
-            </div>`).join('')
-        : '<div class="text-secondary-md">No unavailable time set.</div>';
+            </div>`;
+        const hours = mine.filter(calIsWorkingHours), off = mine.filter(b => !calIsWorkingHours(b));
+        return `
+            <div class="text-secondary-md" style="margin-top:6px;"><strong>Available (In Office) hours</strong></div>
+            ${hours.length ? hours.map(row).join('') : '<div class="text-secondary-md">None set - this provider can be booked during clinic hours.</div>'}
+            <div class="text-secondary-md" style="margin-top:10px;"><strong>Time off</strong></div>
+            ${off.length ? off.map(row).join('') : '<div class="text-secondary-md">None.</div>'}`;
+    };
 
     BsAlert.fire({
         title: 'Provider Availability',
         html: `
             <div style="text-align:left; display:flex; flex-direction:column; gap:10px;">
-                <div class="text-secondary-md">Mark when a provider is not available for appointments (lunch, time off, procedures). Those slots are greyed out and can't be booked.</div>
+                <div class="text-secondary-md">Set when the provider is available (In Office). Once In Office hours are set, only those hours can be booked. Use the other categories for lunch, vacation or time off.</div>
                 <div><label class="label-secondary-block" for="cal-block-provider">Provider</label>
                     <select id="cal-block-provider" class="form-select form-select-sm">${providers.map(p => `<option value="${calEscape(p.id)}">${calEscape(p.name)}</option>`).join('')}</select></div>
-                <div><label class="label-secondary-block" for="cal-block-repeat">Repeat</label>
-                    <select id="cal-block-repeat" class="form-select form-select-sm"><option value="once">One date</option><option value="weekly">Every week</option></select></div>
-                <div id="cal-block-date-wrap"><label class="label-secondary-block" for="cal-block-date">Date</label>
-                    <input type="date" id="cal-block-date" class="form-control form-control-sm" value="${defaultDate}"></div>
-                <div id="cal-block-weekday-wrap" class="hidden"><label class="label-secondary-block" for="cal-block-weekday">Weekday</label>
-                    <select id="cal-block-weekday" class="form-select form-select-sm">${weekdays.map((d, i) => `<option value="${i}">${d}</option>`).join('')}</select></div>
                 <div style="display:flex; gap:10px;">
-                    <div style="flex:1;"><label class="label-secondary-block" for="cal-block-start">Start</label><input type="time" id="cal-block-start" class="form-control form-control-sm" value="12:00"></div>
-                    <div style="flex:1;"><label class="label-secondary-block" for="cal-block-end">End</label><input type="time" id="cal-block-end" class="form-control form-control-sm" value="13:00"></div>
+                    <div style="flex:1;"><label class="label-secondary-block" for="cal-block-category">Category</label>
+                        <select id="cal-block-category" class="form-select form-select-sm">${categories.map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>
+                    <div style="flex:1;"><label class="label-secondary-block" for="cal-block-facility">Facility</label>
+                        <select id="cal-block-facility" class="form-select form-select-sm"><option value="">-- Any --</option>${facilities.map(f => `<option value="${calEscape(f.id)}">${calEscape(f.facility_name)}</option>`).join('')}</select></div>
                 </div>
-                <div><label class="label-secondary-block" for="cal-block-reason">Reason</label>
-                    <input type="text" id="cal-block-reason" class="form-control form-control-sm" placeholder="Lunch, time off, procedures..."></div>
-                <div class="text-secondary-md" style="margin-top:6px;">Unavailable time already set</div>
-                <div id="cal-block-list">${renderBlockList()}</div>
+                <div><label class="label-secondary-block" for="cal-block-repeat">Repeat</label>
+                    <select id="cal-block-repeat" class="form-select form-select-sm"><option value="weekly">Every week (days of week)</option><option value="once">One date</option></select></div>
+                <div id="cal-block-date-wrap" class="hidden"><label class="label-secondary-block" for="cal-block-date">Date</label>
+                    <input type="date" id="cal-block-date" class="form-control form-control-sm" value="${defaultDate}"></div>
+                <div id="cal-block-weekday-wrap"><label class="label-secondary-block">Days of week</label>
+                    <div style="display:flex; flex-wrap:wrap; gap:6px 14px;">${weekdays.map((d, i) => `<label style="display:flex; align-items:center; gap:4px; font-size:0.85rem;"><input type="checkbox" class="cal-block-wd" value="${i}" ${i >= 1 && i <= 5 ? 'checked' : ''}> ${d.slice(0, 3)}</label>`).join('')}</div></div>
+                <div style="display:flex; gap:10px;">
+                    <div style="flex:1;"><label class="label-secondary-block" for="cal-block-start">Start</label><input type="time" id="cal-block-start" class="form-control form-control-sm" value="09:00"></div>
+                    <div style="flex:1;"><label class="label-secondary-block" for="cal-block-end">End</label><input type="time" id="cal-block-end" class="form-control form-control-sm" value="17:00"></div>
+                </div>
+                <div id="cal-block-reason-wrap" class="hidden"><label class="label-secondary-block" for="cal-block-reason">Comments</label>
+                    <input type="text" id="cal-block-reason" class="form-control form-control-sm" placeholder="Optional"></div>
+                <div id="cal-block-list">${renderBlockList(providers[0].id)}</div>
             </div>`,
         showCancelButton: true,
-        confirmButtonText: 'Add Unavailable Time',
+        confirmButtonText: 'Save Availability',
         cancelButtonText: 'Close',
         didOpen: (mEl) => {
             const repeat = mEl.querySelector('#cal-block-repeat');
+            const category = mEl.querySelector('#cal-block-category');
+            const provider = mEl.querySelector('#cal-block-provider');
+            const refreshList = () => { mEl.querySelector('#cal-block-list').innerHTML = renderBlockList(provider.value); };
             repeat.onchange = () => {
                 mEl.querySelector('#cal-block-date-wrap').classList.toggle('hidden', repeat.value === 'weekly');
                 mEl.querySelector('#cal-block-weekday-wrap').classList.toggle('hidden', repeat.value !== 'weekly');
             };
+            // Lunch/time-off defaults differ from working hours
+            category.onchange = () => {
+                const inOffice = category.value === 'In Office';
+                mEl.querySelector('#cal-block-reason-wrap').classList.toggle('hidden', inOffice);
+                if (inOffice) { mEl.querySelector('#cal-block-start').value = '09:00'; mEl.querySelector('#cal-block-end').value = '17:00'; }
+                else if (category.value === 'Lunch') { mEl.querySelector('#cal-block-start').value = '12:00'; mEl.querySelector('#cal-block-end').value = '13:00'; }
+            };
+            provider.onchange = refreshList;
             mEl.querySelector('#cal-block-list').addEventListener('click', async (e) => {
                 const btn = e.target.closest('.cal-block-del');
                 if (!btn) return;
@@ -14505,7 +15495,7 @@ async function showBlockTimePopup() {
                 const r = await ApiService.request(`/api/provider-blocks/${btn.dataset.id}`, 'DELETE');
                 if (r.status === 'success') {
                     await calLoadProviderBlocks();
-                    mEl.querySelector('#cal-block-list').innerHTML = renderBlockList();
+                    refreshList();
                     refreshCalendarViews();
                 } else {
                     btn.disabled = false;
@@ -14517,26 +15507,28 @@ async function showBlockTimePopup() {
             const weekly = document.getElementById('cal-block-repeat').value === 'weekly';
             const payload = {
                 provider_id: document.getElementById('cal-block-provider').value,
+                category: document.getElementById('cal-block-category').value,
+                facility_id: document.getElementById('cal-block-facility').value,
                 start_time: document.getElementById('cal-block-start').value,
                 end_time: document.getElementById('cal-block-end').value,
                 reason: document.getElementById('cal-block-reason').value.trim()
             };
-            if (weekly) payload.weekday = document.getElementById('cal-block-weekday').value;
+            if (weekly) payload.weekdays = Array.from(document.querySelectorAll('.cal-block-wd:checked')).map(c => c.value);
             else payload.block_date = document.getElementById('cal-block-date').value;
-            if (!payload.start_time || !payload.end_time || (!weekly && !payload.block_date)) {
-                BsAlert.showValidationMessage('Please fill in the date and the start/end times.');
+            if (!payload.start_time || !payload.end_time || (!weekly && !payload.block_date) || (weekly && !payload.weekdays.length)) {
+                BsAlert.showValidationMessage(weekly ? 'Please pick at least one day and the start/end times.' : 'Please fill in the date and the start/end times.');
                 return false;
             }
             const r = await ApiService.request('/api/provider-blocks', 'POST', payload);
             if (r.status !== 'success') {
-                BsAlert.showValidationMessage(r.message || 'Could not save this time.');
+                BsAlert.showValidationMessage(r.message || 'Could not save this availability.');
                 return false;
             }
             return r;
         }
     }).then(async (result) => {
         if (result.isConfirmed && result.value) {
-            Toast.show('Unavailable time added.', 'success');
+            Toast.show('Availability saved.', 'success');
         }
         await calLoadProviderBlocks();
         refreshCalendarViews();
@@ -14600,7 +15592,7 @@ async function initCalendarHandler() {
     if (!list) return;
 
     // Load appointments and provider unavailable-time in parallel (each request is slow on this server)
-    const [res] = await Promise.all([ApiService.request('/api/appointments'), calLoadProviderBlocks()]);
+    const [res] = await Promise.all([ApiService.request('/api/appointments'), calLoadProviderBlocks(), loadClinicSchedule(true)]);
     appointmentsData = res.status === 'success' ? res.data : [];
     wireCalendarTools();
 
@@ -14727,7 +15719,7 @@ async function populateCalendarViewModal() {
     if (usrRes.status !== 'success') return;
 
     calendarViewClinicians = usrRes.data
-        .filter(u => ['Doctor', 'Therapist', 'Nurse', 'Super Admin'].includes(u.role))
+        .filter(u => ['Doctor', 'Nurse', 'Super Admin'].includes(u.role))
         .map((c, index) => ({ ...c, _color: CALENDAR_VIEW_COLORS[index % CALENDAR_VIEW_COLORS.length] }));
 
     const escAttr = (v) => String(v).replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;');
@@ -14901,8 +15893,8 @@ function renderCalendarGrid() {
         const dayLabels = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
         const today = new Date();
 
-        const weeklyClosed = JSON.parse(localStorage.getItem('clinic_weekly_closed') || '[0, 6]');
-        const customHolidays = JSON.parse(localStorage.getItem('clinic_holidays') || '[]');
+        const weeklyClosed = clinicSchedule.weeklyClosed;
+        const customHolidays = clinicSchedule.holidays;
 
         for (let i = 0; i < 7; i++) {
             const tempDate = new Date(startOfWeek);
@@ -14996,8 +15988,8 @@ function renderCalendarGrid() {
             return;
         }
 
-        const openTime = localStorage.getItem('clinic_open_time') || '08:00';
-        const closeTime = localStorage.getItem('clinic_close_time') || '18:00';
+        const openTime = clinicSchedule.open || '08:00';
+        const closeTime = clinicSchedule.close || '18:00';
         const startHour = parseInt(openTime.split(':')[0], 10);
         const endHour = parseInt(closeTime.split(':')[0], 10);
 
@@ -15039,7 +16031,9 @@ function renderCalendarGrid() {
                 } else {
                     const blockedRow = calBlockAt(dateStr, time24);
                     apptsHtml = blockedRow ? `
-                        <div class="cal-blocked-slot"><i class="fas fa-user-clock"></i> Unavailable - ${calEscape(blockedRow.reason || 'Unavailable')} (${calEscape(blockedRow.provider_name)})</div>
+                        <div class="cal-blocked-slot"><i class="fas fa-user-clock"></i> Unavailable - ${calEscape(blockedRow.reason || blockedRow.category || 'Unavailable')} (${calEscape(blockedRow.provider_name)})</div>
+                    ` : calOutsideHours(dateStr, time24) ? `
+                        <div class="cal-blocked-slot"><i class="fas fa-user-clock"></i> Outside working hours</div>
                     ` : `
                         <div class="empty-hour-slot" data-time="${time24}" data-date="${dateStr}">
                             + Available Slot
@@ -15079,6 +16073,15 @@ function renderCalendarGrid() {
         };
     });
 
+    // "+N more" in a month cell switches to the List View
+    gridContainer.querySelectorAll('.cal-more-link').forEach(link => {
+        link.onclick = (e) => {
+            e.stopPropagation();
+            const toggleList = document.getElementById('toggle-view-list');
+            if (toggleList) toggleList.click();
+        };
+    });
+
     // Attach click events to cells to schedule on that date directly
     gridContainer.querySelectorAll('.calendar-day-cell').forEach(cell => {
         cell.onclick = (e) => {
@@ -15109,13 +16112,67 @@ function formatDateStr(year, month, day) {
     return `${yyyy}-${mm}-${dd}`;
 }
 
+// ===== Cardiology visit types: ONE list, served by GET /api/visit-types (App\Support\VisitTypes). Never hard-code visit-type <option>s. =====
+const visitTypes = { list: [] };
+async function loadVisitTypes() {
+    if (visitTypes.list.length) return visitTypes.list;
+    try {
+        const res = await ApiService.request('/api/visit-types');
+        if (res && res.status === 'success' && Array.isArray(res.data)) visitTypes.list = res.data;
+    } catch (e) { /* the dropdowns then show only the current value */ }
+    return visitTypes.list;
+}
+function visitTypeMinutes(name) {
+    const t = visitTypes.list.find((x) => x.name === name);
+    return t ? t.minutes : null;
+}
+// <option>s for the list. A saved value that is not in the list any more (old record) is kept as an extra option so editing the
+// record doesn't silently blank it.
+function visitTypeOptionsHtml(selected = '', placeholder = '--Select--') {
+    const names = visitTypes.list.map((t) => t.name);
+    const sel = selected || '';
+    let html = placeholder ? `<option value="">${calEscape(placeholder)}</option>` : '';
+    html += visitTypes.list.map((t) => `<option value="${calEscape(t.name)}" ${t.name === sel ? 'selected' : ''}>${calEscape(t.name)}</option>`).join('');
+    if (sel && !names.includes(sel)) html += `<option value="${calEscape(sel)}" selected>${calEscape(sel)}</option>`;
+    return html;
+}
+// Fills the two selects that live in static page HTML (the encounter form and the Encounters walk-in panel).
+function applyVisitTypeSelects() {
+    [['encounter-visit-type', '-- Select --', ''], ['enc-wi-visit', '', 'Follow-Up Visit']].forEach(([id, placeholder, dflt]) => {
+        const el = document.getElementById(id);
+        if (!el || !visitTypes.list.length) return;
+        el.innerHTML = visitTypeOptionsHtml(el.value || dflt, placeholder);
+    });
+}
+
+// Clinic schedule (weekly closed days, specific holidays, opening hours) comes from Settings (GET /api/settings), never from
+// browser storage - nothing writes browser storage, which used to leave the calendar on a built-in "Sat/Sun closed" default
+// whatever the clinic had configured. Cached for a minute; Settings saving does not need to notify us.
+const clinicSchedule = { weeklyClosed: [], holidays: [], open: '08:00', close: '18:00', loadedAt: 0 };
+async function loadClinicSchedule(force = false) {
+    if (!force && Date.now() - clinicSchedule.loadedAt < 60000) return clinicSchedule;
+    try {
+        const res = await ApiService.request('/api/settings');
+        if (res && res.status === 'success' && res.data) {
+            const d = res.data;
+            const asArray = (v) => { if (Array.isArray(v)) return v; try { const p = JSON.parse(v || '[]'); return Array.isArray(p) ? p : []; } catch (e) { return []; } };
+            clinicSchedule.weeklyClosed = asArray(d.closed_days).map(Number);
+            clinicSchedule.holidays = asArray(d.holidays);
+            clinicSchedule.open = d.open_time || '08:00';
+            clinicSchedule.close = d.close_time || '18:00';
+            clinicSchedule.loadedAt = Date.now();
+        }
+    } catch (e) { /* keep the last known schedule */ }
+    return clinicSchedule;
+}
+
 function getClinicClosureReason(dateStr) {
     const parts = dateStr.split('-');
     const localDate = new Date(parts[0], parts[1] - 1, parts[2]);
     const dayOfWeekLocal = localDate.getDay();
 
-    const weeklyClosed = JSON.parse(localStorage.getItem('clinic_weekly_closed') || '[0, 6]');
-    const holidays = JSON.parse(localStorage.getItem('clinic_holidays') || '[]');
+    const weeklyClosed = clinicSchedule.weeklyClosed;
+    const holidays = clinicSchedule.holidays;
 
     const holidayObj = holidays.find(h => (h && typeof h === 'object' ? h.date === dateStr : h === dateStr));
     if (holidayObj) {
@@ -15135,15 +16192,18 @@ function renderDayCellHtml(day, isOtherMonth, dateStr, isToday = false) {
     const cellClass = `calendar-day-cell ${isOtherMonth ? 'other-month' : ''} ${isToday ? 'today' : ''} ${isClosed ? 'clinic-closed-day' : ''}`;
 
     let apptsHtml = '';
-    dayAppts.forEach(a => {
+    // Month cells are small: show the first two as one-line bars and a "+N more" bar that switches to the List View
+    const MONTH_CELL_MAX_APPTS = 2;
+    dayAppts.slice(0, MONTH_CELL_MAX_APPTS).forEach(a => {
         const statusClass = apptStatusClass(a.status);
         const timePart = a.start_time.split(' ')[1] || '';
-        const timeStr = timePart ? formatTimeStr(timePart) : '';
-        const patientLastName = a.patient_name ? a.patient_name.split(' ').pop() : 'Patient';
-        apptsHtml += `<div class="appt-badge ${statusClass} month-appt-block" data-id="${a.id}">
-            ${timeStr} - ${patientLastName}
-        </div>`;
+        const timeStr = timePart ? formatTimeStr(timePart).replace(' ', '').toLowerCase() : '';
+        const name = a.patient_name || 'Patient';
+        apptsHtml += `<div class="appt-badge ${statusClass} month-appt-block" data-id="${a.id}" title="${calEscape(timeStr + ' - ' + name)}">${calEscape(timeStr)} - ${calEscape(name)}</div>`;
     });
+    if (dayAppts.length > MONTH_CELL_MAX_APPTS) {
+        apptsHtml += `<div class="cal-more-link" data-date="${dateStr}">+${dayAppts.length - MONTH_CELL_MAX_APPTS} more</div>`;
+    }
 
     let closedBadge = '';
     if (isClosed) {
@@ -15234,9 +16294,9 @@ async function viewAppointmentDetails(appt) {
                     ${appt.appointment_for === 'Period' ? `<span class="badge" style="background:#e0f2fe; color:#0369a1; margin-left:6px;"><i class="fas fa-sync-alt"></i> Recurring (${appt.period_frequency || 'Weekly'})</span>` : ''}
                 </div>
                 ${(appt.appointment_mode === 'Telehealth') ? `
-                <a href="#telehealth" onclick="BsAlert.close();" class="btn" style="background:#7c3aed; color:#fff; font-weight:600; padding:8px 14px; border-radius:6px; text-decoration:none; display:inline-flex; align-items:center; gap:6px;">
+                <button type="button" onclick="window.openTelehealthForAppointment(${appt.id})" class="btn" style="background:#7c3aed; color:#fff; font-weight:600; padding:8px 14px; border-radius:6px; border:0; display:inline-flex; align-items:center; gap:6px;">
                     <i class="fas fa-video"></i> Launch Telehealth Session
-                </a>
+                </button>
                 ` : ''}
             </div>
 
@@ -15280,45 +16340,8 @@ async function viewAppointmentDetails(appt) {
                             initCalendarHandler();
 
                             if (newStatus === 'Arrived') {
-                                // Determine encounter type from appointment notes
-                                let encounterType = 'General';
-                                if (appt.notes) {
-                                    if (appt.notes.includes('[Pediatrics EHR]')) encounterType = 'Pediatrics';
-                                    else if (appt.notes.includes('[OB/GYN EHR]')) encounterType = 'OB/GYN';
-                                }
-
-                                // Automatically create the encounter
-                                const newNoteRes = await ApiService.request('/api/clinical/notes', 'POST', {
-                                    patient_id: appt.patient_id,
-                                    encounter_type: encounterType,
-                                    chief_complaint: 'Encounter started automatically from appointment Arrival.'
-                                });
-
-                                // Navigate to Patient Directory and open Patient Chart -> Encounters tab directly
-                                window.location.hash = '#patients';
-
-                                // Wait for the Patients module DOM to be ready before opening the chart
-                                const waitForPatientsModule = (callback, attempts = 0) => {
-                                    const listEl = document.getElementById('patient-directory-list-view');
-                                    if (listEl) {
-                                        callback();
-                                    } else if (attempts < 30) {
-                                        setTimeout(() => waitForPatientsModule(callback, attempts + 1), 100);
-                                    }
-                                };
-
-                                waitForPatientsModule(async () => {
-                                    let pObj = null;
-                                    try {
-                                        const pRes = await ApiService.request(`/api/patient/${appt.patient_id}`);
-                                        if (pRes.status === 'success' && pRes.data) {
-                                            pObj = pRes.data;
-                                        }
-                                    } catch (e) {}
-                                    if (pObj && window.openPatientChart) {
-                                        window.openPatientChart(pObj, 'encounters');
-                                    }
-                                });
+                                // Arrived -> create (or reuse) the visit's encounter and open its SOAP form straight away
+                                await window.openEncounterForArrival(appt.id, appt.patient_id);
                             }
                         } else {
                             Toast.show(statusRes.message || 'Failed to update status.', 'error');
@@ -15352,6 +16375,7 @@ async function viewAppointmentDetails(appt) {
 }
 
 async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPatient = null, onSaveSuccess = null) {
+    await Promise.all([loadClinicSchedule(), loadVisitTypes()]);
     // Check if the selected date is a clinic holiday or weekend closure day
     const closureReason = getClinicClosureReason(dateStr);
     if (closureReason !== null) {
@@ -15374,7 +16398,7 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
 
     const usersRes = await ApiService.request('/api/users');
     const users = usersRes.data || [];
-    const providers = users.filter(u => parseInt(u.is_active) === 1 && (u.role === 'Doctor' || u.role === 'Therapist' || u.role === 'Super Admin' || u.role === 'Nurse'));
+    const providers = users.filter(u => parseInt(u.is_active) === 1 && (u.role === 'Doctor' || u.role === 'Super Admin' || u.role === 'Nurse'));
 
     let defaultProviderId = editItem ? editItem.provider_id : '';
     if (!defaultProviderId) {
@@ -15531,9 +16555,7 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
                 <div style="display: grid; grid-template-columns: 130px 1fr; align-items: center; gap: 12px; margin-bottom: 12px;">
                     <label style="font-weight: 600; font-size: 0.9rem; text-align: right;">Visit Type</label>
                     <select id="swal-appt-visittype" class="form-select" style="height:36px; border-radius:4px; font-size:0.9rem;">
-                        <option value="">--Select--</option>
-                        <option value="New Patient" ${selVisitType === 'New Patient' ? 'selected' : ''}>New Patient</option>
-                        <option value="Follow Up" ${selVisitType === 'Follow Up' ? 'selected' : ''}>Follow Up</option>
+                        ${visitTypeOptionsHtml(selVisitType)}
                     </select>
                 </div>
 
@@ -15764,9 +16786,7 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
                 <div style="display: grid; grid-template-columns: 130px 1fr; align-items: center; gap: 12px; margin-bottom: 12px;">
                     <label style="font-weight: 600; font-size: 0.9rem; text-align: right;">Visit Type</label>
                     <select id="swal-wl-visittype" class="form-select" style="height:36px; border-radius:4px; font-size:0.9rem;">
-                        <option value="">--Select--</option>
-                        <option value="New Patient" ${selVisitType === 'New Patient' ? 'selected' : ''}>New Patient</option>
-                        <option value="Follow Up" ${selVisitType === 'Follow Up' ? 'selected' : ''}>Follow Up</option>
+                        ${visitTypeOptionsHtml(selVisitType)}
                     </select>
                 </div>
 
@@ -15953,7 +16973,7 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
         const endTimeStr = `${apptDate} ${endH}:${endM}:00`;
 
         const status = document.getElementById('swal-appt-status').value || 'Confirmed';
-        const visitType = document.getElementById('swal-appt-visittype').value || 'Follow Up';
+        const visitType = document.getElementById('swal-appt-visittype').value || 'Follow-Up Visit';
         const mode = document.querySelector('input[name="swal_appt_mode"]:checked')?.value || 'In Person';
         const periodFreq = document.getElementById('swal-period-freq').value || 'Weekly';
         const repeatEvery = parseInt(document.getElementById('swal-period-repeat-every').value, 10) || 1;
@@ -15994,7 +17014,7 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
             monthly_option: monthlyOpt,
             start_time: startTimeStr,
             end_time: endTimeStr,
-            notes: `[${specialty}] Visit: ${visitType || 'Follow Up'} — ${reason}`.trim(),
+            notes: `[${specialty}] Visit: ${visitType || 'Follow-Up Visit'} — ${reason}`.trim(),
             message_to_patient: message
         };
     };
@@ -16131,32 +17151,16 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
                         (o.flag ? `<span class="cal-flag-${o.flag}" title="${calEscape(o.reason || '')}">${o.flag === 'conflict' ? 'Conflict' : 'Unavailable'}</span>` : (getClinicClosureReason(o.start.slice(0, 10)) !== null ? '<span class="cal-flag-blocked">Clinic closed</span>' : '<span>OK</span>')) + '</div>').join('');
             };
 
-            // Cardiology slot types with default durations (only while specialty = Cardiology)
-            const specSel = mEl.querySelector('#swal-appt-specialty');
+            // Default appointment length per visit type (from the shared list); only pre-fills, and never once the user has typed a length
             const visitSel = mEl.querySelector('#swal-appt-visittype');
             const durInput = mEl.querySelector('#swal-appt-duration');
-            const CARDIO_SLOT_TYPES = { 'Echocardiogram': 30, 'Stress Test': 45, 'Holter Monitor': 15, 'ECG': 15, 'Cardiology Consult': 30 };
-            const BASE_SLOT_DURATIONS = { 'New Patient': 30, 'Follow Up': 15 };
             let durationTouched = !!editItem; // never override the duration of an appointment being edited
             durInput.addEventListener('input', () => { durationTouched = true; });
-            const syncCardioVisitTypes = () => {
-                const isCardio = specSel.value === 'Cardiology';
-                Object.keys(CARDIO_SLOT_TYPES).forEach(name => {
-                    const existing = Array.from(visitSel.options).find(o => o.value === name);
-                    if (isCardio && !existing) visitSel.add(new Option(name, name));
-                    if (!isCardio && existing) {
-                        if (visitSel.value === name) visitSel.value = '';
-                        existing.remove();
-                    }
-                });
-            };
-            specSel.addEventListener('change', syncCardioVisitTypes);
             visitSel.addEventListener('change', () => {
-                if (durationTouched || specSel.value !== 'Cardiology') return;
-                const mins = CARDIO_SLOT_TYPES[visitSel.value] ?? BASE_SLOT_DURATIONS[visitSel.value];
+                if (durationTouched) return;
+                const mins = visitTypeMinutes(visitSel.value);
                 if (mins) durInput.value = mins;
             });
-            syncCardioVisitTypes();
             if (selVisitType) visitSel.value = selVisitType;
 
             const catRadios = mEl.querySelectorAll('input[name="swal_appt_category"]');
@@ -16322,7 +17326,7 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
                     BsAlert.showValidationMessage('Please select Patient, Provider, and Specialty Type for Waiting List.');
                     return false;
                 }
-                const visitType = document.getElementById('swal-wl-visittype').value || 'Follow Up';
+                const visitType = document.getElementById('swal-wl-visittype').value || 'Follow-Up Visit';
                 const mode = document.querySelector('input[name="swal_wl_mode"]:checked')?.value || 'In Person';
                 const datePref = document.querySelector('input[name="swal_wl_date_pref"]:checked')?.value || 'Specific Date(s)';
 
@@ -16399,6 +17403,11 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
                 if (typeof initCalendarHandler === 'function') initCalendarHandler();
                 if (typeof renderWaitingListWorkspace === 'function') renderWaitingListWorkspace();
                 if (typeof onSaveSuccess === 'function') await onSaveSuccess();
+                // Status just became Arrived on a single appointment (not a recurring series): open its SOAP form
+                const becameArrived = result.value.status === 'Arrived' && (!editItem || editItem.status !== 'Arrived');
+                if (becameArrived && saveRes.appointment_id && !(saveRes.created_count > 1)) {
+                    await window.openEncounterForArrival(saveRes.appointment_id, result.value.patient_id);
+                }
             } else {
                 BsAlert.fire({
                     icon: 'warning',
@@ -21349,8 +22358,6 @@ async function initBillingHandler() {
 
     let allInvoices = [];
     let allCptCodes = [];
-    let currentInvoiceId = null;
-    let currentInvoiceBalance = 0;
 
     // ─── Tab Switching ───────────────────────────────────────────────
     document.querySelectorAll('.billing-tab-btn').forEach(btn => {
@@ -21373,6 +22380,7 @@ async function initBillingHandler() {
             }
             if (tab === 'unbilled') loadUnbilledEncounters();
             if (tab === 'invoices') loadInvoices();
+            if (tab === 'claims') { loadPayerFilter(); loadClaims(); }
             if (tab === 'chargemaster') loadCptCodes();
         };
     });
@@ -21380,7 +22388,7 @@ async function initBillingHandler() {
     // ─── Format Helpers ──────────────────────────────────────────────
     const fmt = (n) => '$' + parseFloat(n || 0).toFixed(2);
     const statusBadge = (s) => {
-        const map = { 'Draft': 'draft', 'Issued': 'issued', 'Partially Paid': 'partial', 'Paid': 'paid', 'Overdue': 'overdue' };
+        const map = { 'Draft': 'draft', 'Issued': 'issued', 'Awaiting Insurance': 'awaiting', 'Partially Paid': 'partial', 'Patient Balance': 'patientbal', 'Paid': 'paid', 'Overdue': 'overdue' };
         return `<span class="inv-status-${map[s] || 'draft'}">${s}</span>`;
     };
 
@@ -21469,6 +22477,7 @@ async function initBillingHandler() {
         document.getElementById('inv-due-date').value = due.toISOString().split('T')[0];
         document.getElementById('inv-discount').value = '0';
         document.getElementById('inv-notes').value = '';
+        window.prefillBillingType(data.patient);
         lineItemsBody.innerHTML = `<tr><td colspan="6" style="text-align:center;padding:20px;"><i class="fas fa-spinner fa-spin"></i> Loading charges from encounter CPT-4 codes...</td></tr>`;
         genModalInstance.show();
         recalcTotals();
@@ -21564,6 +22573,12 @@ async function initBillingHandler() {
             return;
         }
 
+        const billSel = document.getElementById('inv-billing-type');
+        if (billSel && billSel.value === 'Insurance' && billSel.dataset.hasCoverage === '0') {
+            Toast.show('This patient has no insurance on file. Add it in the patient record (Insurance step), or choose Patient (self pay).', 'error');
+            return;
+        }
+
         const btn = document.getElementById('save-invoice-btn');
         btn.disabled = true; btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating...';
 
@@ -21574,6 +22589,7 @@ async function initBillingHandler() {
             due_date: document.getElementById('inv-due-date').value,
             discount: parseFloat(document.getElementById('inv-discount').value || 0),
             notes: document.getElementById('inv-notes').value,
+            billing_type: document.getElementById('inv-billing-type')?.value || 'Self Pay',
             line_items: lineItems,
         };
 
@@ -21584,8 +22600,11 @@ async function initBillingHandler() {
             Toast.show(`Invoice ${res.invoice_number} created successfully!`, 'success');
             genModalInstance.hide();
             loadUnbilledEncounters();
-            // Switch to invoices tab
+            // Switch to invoices tab; an insurance invoice opens straight away so the next step (Create Claim) is in front of the user
             document.querySelector('[data-tab="invoices"]')?.click();
+            if (payload.billing_type === 'Insurance' && res.invoice_id) {
+                setTimeout(() => window.openGlobalViewInvoiceModal(res.invoice_id, async () => { await loadInvoices(); }), 500);
+            }
         } else {
             Toast.show(res.message || 'Failed to create invoice.', 'error');
         }
@@ -21675,145 +22694,781 @@ async function initBillingHandler() {
     document.getElementById('invoice-status-filter')?.addEventListener('change', renderInvoicesTable);
 
     // ─── VIEW INVOICE MODAL ──────────────────────────────────────────
-    const viewModal = document.getElementById('view-invoice-modal');
-    const viewModalInstance = bootstrap.Modal.getOrCreateInstance(viewModal, { backdrop: 'static', keyboard: false });
-    const printArea = document.getElementById('invoice-print-area');
+    // One shared viewer (window.openGlobalViewInvoiceModal, also used by the patient chart) so the payment
+    // ledger logic exists in exactly one place; refresh the ledger table after any payment/void.
+    const openViewInvoiceModal = (id) => window.openGlobalViewInvoiceModal(id, async () => { await loadInvoices(); });
 
-    const openViewInvoiceModal = async (id) => {
-        currentInvoiceId = id;
-        printArea.innerHTML = `<div style="text-align:center;padding:40px;"><i class="fas fa-spinner fa-spin fa-2x"></i><br>Loading invoice...</div>`;
-        viewModalInstance.show();
-        const res = await ApiService.request(`/api/billing/invoice/${id}`);
-        if (res.status !== 'success') { Toast.show('Failed to load invoice.', 'error'); return; }
-        const inv = res.invoice;
-        const items = res.line_items || [];
+    // ─── INSURANCE CLAIMS ────────────────────────────────────────────
+    // The claim is a page inside this tab (list -> claim workspace -> payers); actions render as inline forms in the workspace.
+    const OPEN_CLAIM_STATUSES = ['Draft', 'Ready', 'Submitted', 'Accepted', 'Rejected', 'Denied', 'Appealed'];
+    const CLAIM_CHIPS = ['open', 'all', 'Draft', 'Ready', 'Submitted', 'Accepted', 'Rejected', 'Denied', 'Appealed', 'Paid', 'Partially Paid', 'Closed'];
+    let claimsData = [], claimsCounts = {}, claimsKpis = {}, claimsFilter = 'open', claimsPage = 1, claimsPageSize = 10;
+    let currentClaimId = null, claimDetail = null, claimPanel = null;
 
-        // Get clinic name from settings if available
-        const clinicName = document.querySelector('.brand-title-text')?.textContent || 'Specialty EHR';
+    const cEsc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const usd = (n) => '$' + (parseFloat(n || 0)).toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    const dateOnly = (d) => (d ? String(d).slice(0, 10) : '—');
 
-        printArea.innerHTML = `
-            <div style="padding:8px;">
-                <!-- Header -->
-                <div style="display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid var(--border-color);">
-                    <div>
-                        <div style="font-size:1.4rem;font-weight:800;color:var(--primary-color);">${clinicName}</div>
-                        <div style="color:var(--text-secondary);font-size:0.85rem;margin-top:4px;">${document.getElementById('global-specialty-name')?.textContent || 'Clinical EHR'}</div>
-                    </div>
-                    <div style="text-align:right;">
-                        <div style="font-size:1.8rem;font-weight:800;color:var(--text-primary);">INVOICE</div>
-                        <div style="font-size:1rem;font-weight:700;color:var(--primary-color);">${inv.invoice_number}</div>
-                        <div style="font-size:0.8rem;color:var(--text-secondary);">Date: ${inv.invoice_date} &nbsp;|&nbsp; Due: ${inv.due_date}</div>
-                        <div style="margin-top:8px;">${statusBadge(inv.status)}</div>
-                    </div>
-                </div>
-
-                <!-- Bill To / From -->
-                <div style="display:grid;grid-template-columns:1fr 1fr;gap:24px;margin-bottom:24px;">
-                    <div style="background:var(--bg-secondary);padding:16px;border-radius:8px;">
-                        <div style="font-size:0.75rem;font-weight:700;color:var(--text-secondary);text-transform:uppercase;margin-bottom:8px;">BILL TO</div>
-                        <div style="font-weight:700;font-size:1rem;">${inv.patient_name}</div>
-                        ${inv.patient_phone ? `<div style="color:var(--text-secondary);font-size:0.85rem;margin-top:4px;">Phone: ${inv.patient_phone}</div>` : ''}
-                        ${inv.patient_dob ? `<div style="color:var(--text-secondary);font-size:0.85rem;">DOB: ${inv.patient_dob}</div>` : ''}
-                    </div>
-                    <div style="background:var(--bg-secondary);padding:16px;border-radius:8px;">
-                        <div style="font-size:0.75rem;font-weight:700;color:var(--text-secondary);text-transform:uppercase;margin-bottom:8px;">SERVICE DETAILS</div>
-                        <div style="font-size:0.85rem;margin-bottom:4px;"><strong>Provider:</strong> ${inv.provider_name || inv.created_by}</div>
-                        <div style="font-size:0.85rem;margin-bottom:4px;"><strong>Encounter:</strong> ${inv.encounter_id ? 'ENC-' + String(inv.encounter_id).padStart(5, '0') : 'N/A'}${inv.encounter_date ? ' &nbsp;(' + String(inv.encounter_date).slice(0, 10) + ')' : ''}</div>
-                        <div style="font-size:0.85rem;"><strong>Specialty:</strong> ${(document.getElementById('global-specialty-name')?.textContent || '').replace(/\s*EHR$/, '')}</div>
-                    </div>
-                </div>
-
-                <!-- Line Items Table -->
-                <table style="width:100%;min-width:0;border-collapse:collapse;margin-bottom:20px;">
-                    <thead>
-                        <tr style="background:var(--primary-color);color:white;">
-                            <th style="padding:10px 12px;text-align:left;font-size:0.8rem;">CPT-4 CODE</th>
-                            <th style="padding:10px 12px;text-align:left;font-size:0.8rem;">PROCEDURE DESCRIPTION</th>
-                            <th style="padding:10px 12px;text-align:center;font-size:0.8rem;">QTY</th>
-                            <th style="padding:10px 12px;text-align:right;font-size:0.8rem;">UNIT PRICE</th>
-                            <th style="padding:10px 12px;text-align:right;font-size:0.8rem;">TOTAL</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        ${items.map((item, idx) => `
-                            <tr style="background:${idx % 2 === 0 ? 'white' : 'var(--bg-secondary)'};">
-                                <td style="padding:10px 12px;font-size:0.85rem;font-weight:700;color:var(--primary-color);">${(item.cpt_code && item.cpt_code !== '-') ? item.cpt_code : '—'}</td>
-                                <td style="padding:10px 12px;font-size:0.85rem;">${item.cpt_description || 'Outpatient Procedure'}</td>
-                                <td style="padding:10px 12px;text-align:center;font-size:0.85rem;">${item.quantity}</td>
-                                <td style="padding:10px 12px;text-align:right;font-size:0.85rem;">${fmt(item.unit_price)}</td>
-                                <td style="padding:10px 12px;text-align:right;font-size:0.85rem;font-weight:700;">${fmt(item.total_price)}</td>
-                            </tr>
-                        `).join('')}
-                    </tbody>
-                </table>
-
-                <!-- Totals -->
-                <div style="display:flex;justify-content:flex-end;margin-bottom:20px;">
-                    <div style="min-width:260px;">
-                        <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-color);">
-                            <span style="color:var(--text-secondary);">Subtotal</span>
-                            <strong>${fmt(inv.subtotal)}</strong>
-                        </div>
-                        ${parseFloat(inv.discount) > 0 ? `
-                        <div style="display:flex;justify-content:space-between;padding:8px 0;border-bottom:1px solid var(--border-color);">
-                            <span style="color:var(--text-secondary);">Discount</span>
-                            <strong style="color:var(--danger-color);">-${fmt(inv.discount)}</strong>
-                        </div>` : ''}
-                        <div style="display:flex;justify-content:space-between;padding:10px 0;background:var(--primary-light,#dbeafe);border-radius:6px;padding:10px 12px;margin-top:8px;">
-                            <span style="font-weight:700;font-size:1rem;">TOTAL DUE</span>
-                            <strong style="font-size:1.2rem;color:var(--primary-color);">${fmt(inv.total_amount)}</strong>
-                        </div>
-                        <div style="display:flex;justify-content:space-between;padding:8px 12px;">
-                            <span style="color:var(--success-color);font-size:0.9rem;">Amount Paid</span>
-                            <strong style="color:var(--success-color);">${fmt(inv.paid_amount)}</strong>
-                        </div>
-                        <div style="display:flex;justify-content:space-between;padding:8px 12px;background:${parseFloat(inv.balance) > 0 ? '#fee2e2' : '#dcfce7'};border-radius:6px;">
-                            <span style="font-weight:700;">BALANCE DUE</span>
-                            <strong style="color:${parseFloat(inv.balance) > 0 ? 'var(--danger-color)' : 'var(--success-color)'};">${fmt(inv.balance)}</strong>
-                        </div>
-                    </div>
-                </div>
-
-                ${inv.notes ? `
-                <div style="background:var(--bg-secondary);padding:12px 16px;border-radius:8px;margin-bottom:16px;">
-                    <strong style="font-size:0.8rem;color:var(--text-secondary);text-transform:uppercase;">Billing Notes</strong>
-                    <p style="margin:4px 0 0;font-size:0.9rem;">${inv.notes}</p>
-                </div>` : ''}
-
-                <div style="text-align:center;padding:12px;color:var(--text-secondary);font-size:0.8rem;border-top:1px solid var(--border-color);">
-                    Thank you for choosing ${clinicName}. Please contact us if you have any questions about this invoice.
-                </div>
-            </div>
-        `;
-
-        // Show/hide payment section
-        const paySection = document.getElementById('record-payment-section');
-        if (paySection) {
-            paySection.style.display = parseFloat(inv.balance) > 0 ? 'flex' : 'none';
-        }
-        currentInvoiceBalance = parseFloat(inv.balance) || 0;
-        document.getElementById('payment-amount-input').value = currentInvoiceBalance > 0 ? currentInvoiceBalance.toFixed(2) : '';
+    const updateClaimsBadge = () => {
+        const badge = document.getElementById('claims-count-badge');
+        if (!badge) return;
+        const n = (claimsCounts['Rejected'] || 0) + (claimsCounts['Denied'] || 0);
+        badge.textContent = n > 0 ? n : '';
+        badge.style.display = n > 0 ? 'inline-block' : 'none';
     };
 
-    document.getElementById('close-view-invoice-btn')?.addEventListener('click', () => viewModalInstance.hide());
-    document.getElementById('close-view-invoice-btn2')?.addEventListener('click', () => viewModalInstance.hide());
+    const renderClaimsKpis = () => {
+        const k = claimsKpis || {};
+        const box = document.getElementById('claims-kpis');
+        if (!box) return;
+        box.innerHTML = `
+            <div class="clm-kpi"><div class="lb">Outstanding insurance AR</div><div class="vl">${usd(k.outstanding)}</div><div class="sub">Open claims not yet paid</div></div>
+            <div class="clm-kpi"><div class="lb">Awaiting payer</div><div class="vl">${usd(k.awaiting_amount)}</div><div class="sub">${k.awaiting_count || 0} claim(s) submitted / accepted / appealed</div></div>
+            <div class="clm-kpi ${k.denied_count ? 'danger' : ''}"><div class="lb">Denied</div><div class="vl">${usd(k.denied_amount)}</div><div class="sub">${k.denied_count || 0} claim(s) need action</div></div>
+            <div class="clm-kpi"><div class="lb">Patient balance</div><div class="vl">${usd(k.patient_balance)}</div><div class="sub">${k.patient_balance_count || 0} invoice(s) after insurance</div></div>`;
+    };
 
-    document.getElementById('print-invoice-btn')?.addEventListener('click', () => window.print());
+    const renderClaimChips = () => {
+        const box = document.getElementById('claims-chips');
+        if (!box) return;
+        const total = Object.values(claimsCounts).reduce((a, b) => a + b, 0);
+        const open = OPEN_CLAIM_STATUSES.reduce((a, s) => a + (claimsCounts[s] || 0), 0);
+        box.innerHTML = CLAIM_CHIPS.map((c) => {
+            const label = c === 'open' ? 'Open' : c === 'all' ? 'All' : c;
+            const n = c === 'open' ? open : c === 'all' ? total : (claimsCounts[c] || 0);
+            return `<button type="button" class="clm-chip ${claimsFilter === c ? 'active' : ''}" data-chip="${c}">${label} <span class="n">${n}</span></button>`;
+        }).join('');
+        box.querySelectorAll('.clm-chip').forEach((b) => {
+            b.onclick = () => { claimsFilter = b.dataset.chip; claimsPage = 1; loadClaims(); };
+        });
+    };
 
-    document.getElementById('submit-payment-btn')?.addEventListener('click', async () => {
-        const amount = parseFloat(document.getElementById('payment-amount-input').value || 0);
-        if (!amount || amount <= 0) { Toast.show('Please enter a valid payment amount.', 'error'); return; }
-        if (!currentInvoiceId) return;
-        if (amount > currentInvoiceBalance + 0.001) { Toast.show(`Payment cannot exceed the balance due ($${currentInvoiceBalance.toFixed(2)}).`, 'error'); return; }
-        const res = await ApiService.request(`/api/billing/invoice/${currentInvoiceId}/payment`, 'PUT', { amount });
-        if (res.status === 'success') {
-            Toast.show(res.message, 'success');
-            openViewInvoiceModal(currentInvoiceId);
-            loadInvoices();
-        } else {
-            Toast.show(res.message || 'Payment failed.', 'error');
+    const renderClaimsTable = () => {
+        const tbody = document.getElementById('claims-list');
+        if (!tbody) return;
+        if (!claimsData.length) {
+            tbody.innerHTML = `<tr><td colspan="10" style="text-align:center;padding:36px;color:var(--text-secondary);"><i class="fas fa-file-medical-alt" style="font-size:1.8rem;display:block;margin-bottom:10px;"></i>No claims match this view.</td></tr>`;
+            const p = document.getElementById('claims-pagination'); if (p) p.innerHTML = '';
+            return;
         }
+        const totalPages = Math.ceil(claimsData.length / claimsPageSize) || 1;
+        if (claimsPage > totalPages) claimsPage = totalPages;
+        const paged = claimsData.slice((claimsPage - 1) * claimsPageSize, claimsPage * claimsPageSize);
+        const today = new Date();
+        tbody.innerHTML = paged.map((c) => {
+            const isOpen = OPEN_CLAIM_STATUSES.includes(c.status);
+            let tf = '';
+            if (isOpen && c.timely_filing_due) {
+                const days = Math.ceil((new Date(c.timely_filing_due) - today) / 86400000);
+                if (days <= 30) tf = ` <span title="Timely filing deadline ${cEsc(c.timely_filing_due)}" style="color:var(--danger-color);font-size:0.72rem;font-weight:700;">TF ${days < 0 ? 'PAST' : days + 'd'}</span>`;
+            }
+            return `<tr>
+                <td><button type="button" class="clm-link claim-view-btn" data-id="${c.id}">${cEsc(c.claim_number)}</button><div style="font-size:0.72rem;color:var(--text-secondary);">${cEsc(c.invoice_number)}</div></td>
+                <td><strong>${cEsc(c.patient_name)}</strong></td>
+                <td>${cEsc(c.payer_name)}${c.sequence === 'Secondary' ? ' <span class="clm-seq">2nd</span>' : ''}</td>
+                <td>${dateOnly(c.date_of_service)}</td>
+                <td>${usd(c.billed_amount)}</td>
+                <td>${usd(c.insurance_paid)}</td>
+                <td>${usd(c.patient_resp)}</td>
+                <td>${window.claimStatusPill(c.status)}${tf}</td>
+                <td>${isOpen ? (c.age_days ?? 0) + 'd' : '—'}</td>
+                <td><button type="button" class="btn btn-secondary btn-sm claim-view-btn" data-id="${c.id}"><i class="fas fa-eye"></i> View</button></td>
+            </tr>`;
+        }).join('');
+        tbody.querySelectorAll('.claim-view-btn').forEach((b) => { b.onclick = () => window.openClaimDetail(b.dataset.id); });
+        renderPaginationControls({
+            containerId: 'claims-pagination',
+            currentPage: claimsPage,
+            totalItems: claimsData.length,
+            pageSize: claimsPageSize,
+            onPageChange: (p) => { claimsPage = p; renderClaimsTable(); },
+            onPageSizeChange: (s) => { claimsPageSize = s; claimsPage = 1; renderClaimsTable(); }
+        });
+    };
+
+    const renderAging = async () => {
+        const box = document.getElementById('ar-aging');
+        if (!box) return;
+        const res = await ApiService.request('/api/billing/ar-aging');
+        if (res.status !== 'success') { box.innerHTML = ''; return; }
+        const cols = [['b0_30', '0-30 days'], ['b31_60', '31-60'], ['b61_90', '61-90'], ['b90_plus', '90+ days']];
+        const cell = (v, old) => v.count ? `<td class="${old ? 'old' : ''}">${usd(v.amount)}<small>${v.count} item${v.count === 1 ? '' : 's'}</small></td>` : '<td style="color:var(--text-secondary);">&mdash;</td>';
+        const row = (label, d) => `<tr><td>${label}</td>${cols.map(([k]) => cell(d[k], k === 'b90_plus' || k === 'b61_90')).join('')}<td><strong>${usd(d.total.amount)}</strong><small>${d.total.count} item${d.total.count === 1 ? '' : 's'}</small></td></tr>`;
+        box.innerHTML = `<h3>Accounts receivable aging</h3>
+            <div class="note">Insurance: open claims, aged from date of service. Patient: balances not waiting on insurance, aged from invoice date. As of ${cEsc(res.as_of)}.</div>
+            <table><thead><tr><th></th>${cols.map(([, l]) => `<th>${l}</th>`).join('')}<th>Total</th></tr></thead>
+            <tbody>${row('Insurance', res.insurance)}${row('Patient', res.patient)}</tbody></table>`;
+    };
+
+    const loadClaims = async () => {
+        const params = new URLSearchParams();
+        if (claimsFilter && claimsFilter !== 'all') params.set('status', claimsFilter);
+        const payer = document.getElementById('claims-payer-filter')?.value;
+        if (payer) params.set('payer', payer);
+        const q = document.getElementById('claims-search')?.value.trim();
+        if (q) params.set('q', q);
+        const res = await ApiService.request('/api/billing/claims?' + params.toString());
+        if (res.status === 'success') {
+            claimsData = res.data || []; claimsCounts = res.counts || {}; claimsKpis = res.kpis || {};
+        } else {
+            claimsData = [];
+            Toast.show(res.message || 'Could not load claims.', 'error');
+        }
+        renderClaimsKpis(); renderClaimChips(); renderClaimsTable(); updateClaimsBadge();
+        renderAging();
+    };
+
+    const loadPayerFilter = async () => {
+        const sel = document.getElementById('claims-payer-filter');
+        if (!sel) return;
+        const res = await ApiService.request('/api/billing/payers');
+        const keep = sel.value;
+        sel.innerHTML = '<option value="">All Payers</option>' + ((res.data || []).map((p) => `<option value="${cEsc(p.name)}">${cEsc(p.name)}</option>`).join(''));
+        sel.value = keep;
+    };
+
+    document.getElementById('refresh-claims-btn')?.addEventListener('click', loadClaims);
+    document.getElementById('claims-payer-filter')?.addEventListener('change', () => { claimsPage = 1; loadClaims(); });
+    document.getElementById('claims-search')?.addEventListener('keyup', (e) => { if (e.key === 'Enter') { claimsPage = 1; loadClaims(); } });
+
+    // ── Claim detail ─────────────────────────────────────────────────
+    const CLAIM_ACTIONS = {
+        edit:           { label: 'Edit Claim',         icon: 'fa-pen',              cls: 'btn-secondary', panel: true },
+        ready:          { label: 'Mark Ready',         icon: 'fa-check',            cls: 'btn-primary' },
+        draft:          { label: 'Back to Draft',      icon: 'fa-undo',             cls: 'btn-secondary' },
+        submit:         { label: 'Mark Submitted',     icon: 'fa-paper-plane',      cls: 'btn-primary', panel: true },
+        accept:         { label: 'Mark Accepted',      icon: 'fa-check-double',     cls: 'btn-primary', panel: true },
+        reject:         { label: 'Mark Rejected',      icon: 'fa-ban',              cls: 'btn-secondary', panel: true },
+        remit:          { label: 'Post Remittance',    icon: 'fa-money-check-alt',  cls: 'btn-success', panel: true },
+        appeal:         { label: 'Appeal',             icon: 'fa-gavel',            cls: 'btn-primary', panel: true },
+        reverse:        { label: 'Reverse Remittance', icon: 'fa-undo-alt',         cls: 'btn-secondary', panel: true },
+        bill_secondary: { label: 'Bill Secondary',     icon: 'fa-layer-group',      cls: 'btn-primary' },
+        edi837:         { label: 'Download 837',       icon: 'fa-download',         cls: 'btn-secondary' },
+        cms1500:        { label: 'CMS-1500 Sheet',     icon: 'fa-print',            cls: 'btn-secondary' },
+        close:          { label: 'Close Claim',        icon: 'fa-times-circle',     cls: 'btn-secondary', panel: true },
+    };
+
+    const claimPanelHtml = (d) => {
+        const c = d.claim;
+        const today = new Date();
+        const localToday = `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, '0')}-${String(today.getDate()).padStart(2, '0')}`;
+        const err = '<div class="clm-err" id="clm-panel-error" style="display:none;"></div>';
+        const btns = (label) => `<div class="clm-panel-btns"><button type="button" class="btn btn-secondary btn-sm" id="clm-panel-cancel">Cancel</button><button type="button" class="btn btn-primary btn-sm" id="clm-panel-save">${label}</button></div>`;
+        switch (claimPanel) {
+            case 'edit':
+                return `<div class="clm-panel"><h4>Edit claim</h4>
+                    <div class="clm-grid2"><div><label class="clm-lbl">Payer</label><input class="form-control" value="${cEsc(c.payer_name)}" disabled></div>
+                    <div><label class="clm-lbl" for="clm-e-payerid">Payer ID code</label><input class="form-control" id="clm-e-payerid" maxlength="30" value="${cEsc(c.payer_id_code || '')}"></div></div>
+                    <table class="clm-lines" style="margin-top:12px;"><thead><tr><th>CPT</th><th>ICD-10 diagnosis</th><th>Modifiers (comma separated)</th><th>Dx pointer (A-L)</th></tr></thead><tbody>
+                    ${d.lines.map((l) => `<tr><td>${cEsc(l.cpt_code)}</td><td><input class="form-control clm-e-icd" data-id="${l.id}" maxlength="10" placeholder="e.g. I10" value="${cEsc(l.icd10_code || '')}"></td><td><input class="form-control clm-e-mod" data-id="${l.id}" maxlength="11" placeholder="e.g. 25,59" value="${cEsc(l.modifiers || '')}"></td><td><input class="form-control clm-e-ptr" data-id="${l.id}" maxlength="4" placeholder="A" value="${cEsc(l.dx_pointer || '')}"></td></tr>`).join('')}
+                    </tbody></table>
+                    <div style="margin-top:12px;"><label class="clm-lbl" for="clm-e-notes">Notes</label><input class="form-control" id="clm-e-notes" maxlength="255" value="${cEsc(c.notes || '')}"></div>${err}${btns('Save Changes')}</div>`;
+            case 'submit':
+                return `<div class="clm-panel"><h4>Mark submitted</h4>
+                    <div class="clm-grid2"><div><label class="clm-lbl" for="clm-s-date">Date submitted</label><input type="date" class="form-control" id="clm-s-date" max="${localToday}" value="${localToday}"></div>
+                    <div><label class="clm-lbl" for="clm-s-ref">Clearinghouse / tracking reference (optional)</label><input class="form-control" id="clm-s-ref" maxlength="100"></div></div>${err}${btns('Mark Submitted')}</div>`;
+            case 'accept':
+                return `<div class="clm-panel"><h4>Mark accepted by payer</h4>
+                    <div><label class="clm-lbl" for="clm-a-pcn">Payer claim number (optional)</label><input class="form-control" id="clm-a-pcn" maxlength="100"></div>${err}${btns('Mark Accepted')}</div>`;
+            case 'reject':
+                return `<div class="clm-panel"><h4>Mark rejected</h4>
+                    <div><label class="clm-lbl" for="clm-r-reason">Rejection reason <span style="color:#ef4444;">*</span></label><input class="form-control" id="clm-r-reason" maxlength="255" placeholder="e.g. Invalid member ID"></div>${err}${btns('Mark Rejected')}</div>`;
+            case 'appeal':
+                return `<div class="clm-panel"><h4>Appeal denial</h4>
+                    <div><label class="clm-lbl" for="clm-p-note">Appeal details <span style="color:#ef4444;">*</span></label><textarea class="form-control" id="clm-p-note" rows="3" placeholder="What was sent to the payer and when"></textarea></div>${err}${btns('Record Appeal')}</div>`;
+            case 'reverse':
+                return `<div class="clm-panel"><h4>Reverse posted remittance</h4>
+                    <p style="font-size:0.85rem;color:var(--text-secondary);margin:0 0 10px;">This voids the insurance payment and adjustments posted for this claim and returns it to Submitted.</p>
+                    <div><label class="clm-lbl" for="clm-v-reason">Reason <span style="color:#ef4444;">*</span></label><input class="form-control" id="clm-v-reason" maxlength="255"></div>${err}${btns('Reverse Remittance')}</div>`;
+            case 'close':
+                return `<div class="clm-panel"><h4>Close claim</h4>
+                    <div style="display:flex;flex-direction:column;gap:6px;margin-bottom:10px;font-size:0.88rem;">
+                        <label><input type="radio" name="clm-c-disp" value="patient" checked> Move the balance to the patient (invoice becomes "Patient Balance")</label>
+                        <label><input type="radio" name="clm-c-disp" value="write_off"> Write the balance off (no one is billed)</label></div>
+                    <div><label class="clm-lbl" for="clm-c-reason">Reason <span style="color:#ef4444;">*</span></label><input class="form-control" id="clm-c-reason" maxlength="255"></div>${err}${btns('Close Claim')}</div>`;
+            case 'remit':
+                return `<div class="clm-panel"><h4>Post remittance (payer response)</h4>
+                    <table class="clm-lines" id="clm-remit-table"><thead><tr><th>CPT</th><th class="r">Charge</th><th>Allowed</th><th>Paid</th><th>Denial code</th><th class="r">Adjustment</th><th class="r">Patient resp.</th></tr></thead><tbody>
+                    ${d.lines.map((l) => `<tr data-id="${l.id}" data-charge="${l.charge}"><td>${cEsc(l.cpt_code)}</td><td class="r">${usd(l.charge)}</td>
+                        <td><input type="number" min="0" step="0.01" class="form-control clm-rm-allowed" value="${parseFloat(l.charge).toFixed(2)}"></td>
+                        <td><input type="number" min="0" step="0.01" class="form-control clm-rm-paid" placeholder="0.00"></td>
+                        <td><input class="form-control clm-rm-denial" maxlength="20" placeholder="e.g. CO-50"></td>
+                        <td class="r clm-rm-adj">$0.00</td><td class="r clm-rm-resp">$0.00</td></tr>`).join('')}
+                    <tr style="font-weight:700;"><td>Total</td><td class="r">${usd(c.billed_amount)}</td><td colspan="2" id="clm-rm-tot-paid" class="r"></td><td></td><td class="r" id="clm-rm-tot-adj"></td><td class="r" id="clm-rm-tot-resp"></td></tr>
+                    </tbody></table>
+                    <div class="clm-grid3" style="margin-top:12px;">
+                        <div><label class="clm-lbl" for="clm-rm-method">Paid by</label><select class="form-select" id="clm-rm-method"><option>ACH</option><option>Check</option><option>Other</option></select></div>
+                        <div><label class="clm-lbl" for="clm-rm-ref">Check / EFT no.</label><input class="form-control" id="clm-rm-ref" maxlength="100"></div>
+                        <div><label class="clm-lbl" for="clm-rm-date">Payment date</label><input type="date" class="form-control" id="clm-rm-date" max="${localToday}" value="${localToday}"></div>
+                    </div>
+                    <div class="clm-grid2" style="margin-top:10px;">
+                        <div><label class="clm-lbl" for="clm-rm-pcn">Payer claim no. (optional)</label><input class="form-control" id="clm-rm-pcn" maxlength="100" value="${cEsc(c.payer_claim_no || '')}"></div>
+                        <div><label class="clm-lbl" for="clm-rm-dreason">Denial reason (required if every line is denied)</label><input class="form-control" id="clm-rm-dreason" maxlength="255"></div>
+                    </div>${err}${btns('Post Remittance')}</div>`;
+            default: return '';
+        }
+    };
+
+    const showPanelError = (msg) => { const e = document.getElementById('clm-panel-error'); if (e) { e.textContent = msg; e.style.display = msg ? 'block' : 'none'; } };
+
+    const claimApi = async (path, method, body) => {
+        const res = await ApiService.request(`/api/billing/claims/${currentClaimId}${path}`, method, body);
+        return res;
+    };
+
+    const afterClaimChange = async (message) => {
+        if (message) Toast.show(message, 'success');
+        claimPanel = null;
+        await refreshClaimDetail();
+        await loadClaims();
+        if (typeof loadInvoices === 'function') loadInvoices();
+    };
+
+    const wireClaimPanel = (d) => {
+        const cancel = document.getElementById('clm-panel-cancel');
+        const save = document.getElementById('clm-panel-save');
+        if (!cancel || !save) return;
+        cancel.onclick = () => { claimPanel = null; renderClaimDetail(); };
+        const val = (id) => (document.getElementById(id)?.value || '').trim();
+        const run = async (fn) => {
+            showPanelError('');
+            save.disabled = true;   // no double-posting
+            try {
+                const res = await fn();
+                if (res && res.status === 'success') { await afterClaimChange(res.message); return; }
+                showPanelError((res && res.message) || 'That did not work. Please try again.');
+            } catch (e) { showPanelError('That did not work. Please try again.'); }
+            save.disabled = false;
+        };
+        if (claimPanel === 'edit') {
+            save.onclick = () => run(() => claimApi('', 'PUT', {
+                payer_id_code: val('clm-e-payerid'), notes: val('clm-e-notes'),
+                lines: [...document.querySelectorAll('.clm-e-mod')].map((m) => ({
+                    id: parseInt(m.dataset.id, 10), modifiers: m.value.trim(),
+                    icd10_code: (document.querySelector(`.clm-e-icd[data-id="${m.dataset.id}"]`)?.value || '').trim(),
+                    dx_pointer: (document.querySelector(`.clm-e-ptr[data-id="${m.dataset.id}"]`)?.value || '').trim()
+                }))
+            }));
+        } else if (claimPanel === 'submit') {
+            save.onclick = () => run(() => claimApi('/status', 'POST', { status: 'Submitted', submitted_at: val('clm-s-date'), submission_ref: val('clm-s-ref') }));
+        } else if (claimPanel === 'accept') {
+            save.onclick = () => run(() => claimApi('/status', 'POST', { status: 'Accepted', payer_claim_no: val('clm-a-pcn') }));
+        } else if (claimPanel === 'reject') {
+            save.onclick = () => { if (!val('clm-r-reason')) return showPanelError('Enter the rejection reason.'); run(() => claimApi('/status', 'POST', { status: 'Rejected', note: val('clm-r-reason') })); };
+        } else if (claimPanel === 'appeal') {
+            save.onclick = () => { if (!val('clm-p-note')) return showPanelError('Enter the appeal details.'); run(() => claimApi('/appeal', 'POST', { note: val('clm-p-note') })); };
+        } else if (claimPanel === 'reverse') {
+            save.onclick = () => { if (!val('clm-v-reason')) return showPanelError('A reason is required.'); run(() => claimApi('/reverse', 'POST', { reason: val('clm-v-reason') })); };
+        } else if (claimPanel === 'close') {
+            save.onclick = () => {
+                if (!val('clm-c-reason')) return showPanelError('A reason is required.');
+                run(() => claimApi('/close', 'POST', { disposition: document.querySelector('input[name="clm-c-disp"]:checked')?.value, reason: val('clm-c-reason') }));
+            };
+        } else if (claimPanel === 'remit') {
+            const rows = [...document.querySelectorAll('#clm-remit-table tbody tr[data-id]')];
+            const recalc = () => {
+                let tp = 0, ta = 0, tr = 0;
+                rows.forEach((r) => {
+                    const charge = parseFloat(r.dataset.charge) || 0;
+                    const denied = r.querySelector('.clm-rm-denial').value.trim() !== '';
+                    const allowedEl = r.querySelector('.clm-rm-allowed'), paidEl = r.querySelector('.clm-rm-paid');
+                    allowedEl.disabled = paidEl.disabled = denied;
+                    const allowed = denied ? 0 : (parseFloat(allowedEl.value) || 0);
+                    const paid = denied ? 0 : (parseFloat(paidEl.value) || 0);
+                    const adj = denied ? 0 : Math.round((charge - allowed) * 100) / 100;
+                    const resp = denied ? 0 : Math.round((allowed - paid) * 100) / 100;
+                    r.querySelector('.clm-rm-adj').textContent = denied ? 'denied' : usd(adj);
+                    r.querySelector('.clm-rm-resp').textContent = denied ? 'denied' : usd(resp);
+                    tp += paid; ta += adj; tr += resp;
+                });
+                document.getElementById('clm-rm-tot-paid').textContent = usd(tp);
+                document.getElementById('clm-rm-tot-adj').textContent = usd(ta);
+                document.getElementById('clm-rm-tot-resp').textContent = usd(tr);
+            };
+            rows.forEach((r) => r.querySelectorAll('input').forEach((i) => i.addEventListener('input', recalc)));
+            recalc();
+            save.onclick = () => {
+                const lines = [];
+                for (const r of rows) {
+                    const denial = r.querySelector('.clm-rm-denial').value.trim();
+                    const paidRaw = r.querySelector('.clm-rm-paid').value;
+                    if (!denial && paidRaw === '') return showPanelError('Enter the paid amount for every line (0 if nothing was paid) or a denial code.');
+                    lines.push({ id: parseInt(r.dataset.id, 10), allowed: r.querySelector('.clm-rm-allowed').value, paid: paidRaw, denial_code: denial });
+                }
+                run(() => claimApi('/remit', 'POST', {
+                    lines, payment_method: val('clm-rm-method'), reference_no: val('clm-rm-ref'), paid_at: val('clm-rm-date'),
+                    payer_claim_no: val('clm-rm-pcn'), denial_reason: val('clm-rm-dreason')
+                }));
+            };
+        }
+    };
+
+    // ── Claim workspace (in-page; replaces the old claim modal) ──────────────────────────────────
+    // Three views live inside the Insurance Claims tab: the list, the claim workspace and Payers & settings.
+    let claimView = 'list', wsStep = 1, wsFilter = 'all', payersReturnClaim = null;
+    let wf = { file: null, fileTx: null };            // raw EDI file currently being viewed
+    const wsScn = { elig: 'auto', send: 'auto', check: '' };   // simulator scenario picks (survive re-renders)
+    const SIM_SCENARIOS = [['auto', 'Auto (rules)'], ['paid', 'Paid'], ['partial', 'Partially paid'], ['denied', 'Denied'], ['rejected', 'Rejected at acknowledgment']];
+    const TX_LABEL = { '270': '270 Eligibility request', '271': '271 Eligibility response', '837': '837 Claim', '999': '999 Syntax acknowledgment', '277CA': '277CA Claim acknowledgment', '835': '835 Remittance advice' };
+    const ISSUE_GROUPS = [
+        ['setup', 'Payer &amp; submitter setup', ['settings', 'payer']],
+        ['provider', 'Rendering provider', ['provider']],
+        ['facility', 'Billing facility', ['facility']],
+        ['patient', 'Patient &amp; insurance coverage', ['patient', 'coverage']],
+        ['claim', 'Claim lines &amp; codes', ['claim']],
+    ];
+    const scenarioSelect = (id, list, selected) => `<select class="form-select clw-select" id="${id}" aria-label="Simulator scenario">${list.map(([v, l]) => `<option value="${v}" ${v === selected ? 'selected' : ''}>${l}</option>`).join('')}</select>`;
+
+    const showClaimsView = (v) => {
+        claimView = v;
+        [['list', 'claims-view-list'], ['claim', 'claims-view-claim'], ['payers', 'claims-view-payers']].forEach(([k, id]) => {
+            const el = document.getElementById(id);
+            if (el) el.style.display = (k === v) ? 'block' : 'none';
+        });
+        window.scrollTo(0, 0);
+        document.querySelector('.main-content')?.scrollTo?.(0, 0);
+    };
+
+    // ── derived state ───────────────────────────────────────────────────────────────────────────
+    const ctxOf = (d) => {
+        const c = d.claim, e = d.edi || {};
+        const elig = e.eligibility, val = e.validation;
+        const canAct = d.actions.some((a) => a !== 'cms1500');
+        const eligOk = !!(elig && elig.status === 'Active' && e.eligibility_current);
+        const sendable = ['Draft', 'Ready', 'Rejected'].includes(c.status);
+        const settled = ['Paid', 'Partially Paid', 'Denied'].includes(c.status);
+        const wasSent = settled || ['Submitted', 'Accepted', 'Appealed'].includes(c.status);
+        const txs = e.transactions || [];
+        const blockers = [];
+        if (!eligOk) blockers.push(!elig ? 'Eligibility has not been checked.' : (elig.status !== 'Active' ? `Coverage is ${elig.status}.` : 'The eligibility check is over 7 days old.'));
+        if (!val) blockers.push('The 837 has not been generated and validated.');
+        else if (!val.passed) blockers.push(`The 837 has ${val.errors} validation error${val.errors === 1 ? '' : 's'}.`);
+        if (!d.readiness.ready_ok) blockers.push('The claim checklist has open items.');
+        return { c, e, elig, val, canAct, eligOk, sendable, settled, wasSent, closed: c.status === 'Closed', txs, latest: (t) => txs.find((x) => x.type === t), blockers, canSend: sendable && canAct && blockers.length === 0, valPassed: !!(val && val.passed), sim: e.mode === 'simulator' };
+    };
+
+    const computeSteps = (d, X) => {
+        const { c, e, elig, val, eligOk, wasSent, settled } = X;
+        return [
+            { n: 1, title: 'Eligibility', state: elig && elig.status !== 'Active' ? 'error' : ((eligOk || wasSent) ? 'done' : 'todo'), sub: elig ? (elig.status === 'Active' ? (eligOk ? 'Active' : 'Re-check') : elig.status) : 'Not checked' },
+            { n: 2, title: 'Generate 837', state: (e.validated_at || wasSent) ? 'done' : 'todo', sub: e.validated_at ? 'Generated' : 'Not generated' },
+            { n: 3, title: 'Validate', state: val && val.errors > 0 ? 'error' : (((val && val.passed) || wasSent) ? 'done' : 'todo'), sub: val ? (val.errors > 0 ? `${val.errors} error${val.errors === 1 ? '' : 's'}` : 'No errors') : 'Waiting' },
+            { n: 4, title: 'Send', state: c.status === 'Rejected' ? 'error' : (wasSent ? 'done' : 'todo'), sub: c.status === 'Rejected' ? 'Rejected' : (wasSent ? 'Sent' : 'Not sent') },
+            { n: 5, title: 'Remittance', state: settled ? 'done' : 'todo', sub: settled ? c.status : (e.pending_835 ? 'Ready to post' : (wasSent ? 'Waiting' : '—')) },
+        ];
+    };
+
+    // the step to show: the first problem, else the first thing still to do, else the last
+    const autoStep = (d) => {
+        const s = computeSteps(d, ctxOf(d));
+        const err = s.find((x) => x.state === 'error');
+        if (err) return err.n;
+        const todo = s.find((x) => x.state === 'todo');
+        return todo ? todo.n : 5;
+    };
+
+    // ONE primary button that is always "the next thing to do"
+    const nextAction = (d, X) => {
+        const { c, e, val, canAct, eligOk, closed, settled } = X;
+        if (!canAct || closed) return null;
+        if (c.status === 'Denied') return { act: 'panel:appeal', label: 'Appeal denial', icon: 'fa-gavel' };   // Denied counts as "settled" below, so it must be checked first
+        if (settled) return d.actions.includes('bill_secondary') ? { act: 'bill_secondary', label: 'Bill secondary payer', icon: 'fa-layer-group' } : null;
+        if (c.status === 'Denied') return { act: 'panel:appeal', label: 'Appeal denial', icon: 'fa-gavel' };
+        if (['Submitted', 'Accepted', 'Appealed'].includes(c.status)) {
+            return e.pending_835 ? { act: 'post', label: 'Post to ledger', icon: 'fa-check-circle', tx: e.pending_835.transaction_id } : { act: 'check', label: 'Check for remittance', icon: 'fa-inbox' };
+        }
+        if (!eligOk) return { act: 'elig', label: e.eligibility ? 'Re-check eligibility' : 'Check eligibility', icon: 'fa-id-card' };
+        if (!e.validated_at) return { act: 'gen', label: 'Generate 837 & validate', icon: 'fa-file-code' };
+        if (val && val.errors > 0) return { act: 'goto3', label: `Fix ${val.errors} error${val.errors === 1 ? '' : 's'}`, icon: 'fa-wrench' };
+        if (!d.readiness.ready_ok) return { act: 'goto4', label: 'Complete the claim checklist', icon: 'fa-clipboard-check' };
+        return { act: 'send', label: `Send to clearinghouse${X.sim ? ' (Simulator)' : ''}`, icon: 'fa-paper-plane' };
+    };
+
+    // ── building blocks ─────────────────────────────────────────────────────────────────────────
+    const issueRow = (i) => `
+        <div class="clw-issue clw-issue-${i.level}">
+            <i class="fas ${i.level === 'error' ? 'fa-times-circle' : 'fa-exclamation-triangle'} clw-issue-ic" aria-hidden="true"></i>
+            <div class="clw-issue-body">
+                <div class="clw-issue-msg"><span class="clw-issue-tag">${i.level === 'error' ? 'Error' : 'Warning'}</span> ${cEsc(i.message)} <code>${cEsc(i.segment)}</code></div>
+                <div class="clw-issue-fix"><strong>How to fix:</strong> ${cEsc(i.suggestion)} <em>Where: ${cEsc(i.fix.label)}.</em></div>
+            </div>
+            <button type="button" class="btn btn-secondary btn-sm wf-fix" data-target="${cEsc(i.fix.target)}" data-field="${cEsc(i.fix.field || '')}">Fix &rsaquo;</button>
+        </div>`;
+
+    const paneHead = (title, lead) => `<div class="clw-pane-head"><h3>${title}</h3><p>${lead}</p></div>`;
+    const actionsRow = (inner) => `<div class="clw-actions">${inner}</div>`;
+    const bigBtn = (id, act, cls, icon, label, extra = '') => `<button type="button" class="btn ${cls}" id="${id}" data-act="${act}" ${extra}><i class="fas ${icon}"></i> ${label}</button>`;
+
+    const paneEligibility = (d, X) => {
+        const { elig, e, canAct, sim, settled, closed } = X;
+        let body;
+        if (elig) {
+            const active = elig.status === 'Active';
+            const ded = parseFloat(elig.deductible || 0), met = parseFloat(elig.deductible_met || 0);
+            const dedPct = ded > 0 ? Math.min(100, Math.round((met / ded) * 100)) : 0;
+            body = `<div class="clw-card ${active ? 'ok' : 'bad'}">
+                <div class="clw-card-top"><span class="clw-badge ${active ? 'ok' : 'bad'}"><i class="fas ${active ? 'fa-check-circle' : 'fa-times-circle'}"></i> ${cEsc(elig.status)}</span>
+                    <strong>${cEsc(elig.plan_name || d.coverage.plan_name || 'Coverage')}</strong>
+                    <span class="clm-muted">Checked ${cEsc(String(elig.checked_at).slice(0, 16))}${e.eligibility_current ? '' : ' &middot; <span class="clw-warn">older than 7 days &mdash; check again</span>'}</span></div>
+                ${active ? `<div class="clw-stats">
+                    <div class="clw-stat"><span>Copay</span><strong>${usd(elig.copay)}</strong></div>
+                    <div class="clw-stat"><span>Deductible</span><strong>${usd(ded)}</strong><div class="clw-bar" aria-hidden="true"><i style="width:${dedPct}%"></i></div><small>${usd(met)} met &middot; ${usd(ded - met)} remaining</small></div>
+                    <div class="clw-stat"><span>Coinsurance</span><strong>${parseFloat(elig.coinsurance_pct || 0)}%</strong></div></div>`
+                    : `<div class="clw-note bad">${cEsc(elig.message || 'The payer could not confirm coverage.')} The claim cannot be sent until coverage is active.</div>`}
+            </div>`;
+        } else {
+            body = `<div class="clw-empty"><i class="fas fa-id-card" aria-hidden="true"></i><div><strong>Coverage has not been verified yet</strong><p>Check that the patient's policy is active before building the claim.</p></div></div>`;
+        }
+        const can = canAct && !settled && !closed;
+        return paneHead('Insurance &amp; eligibility', 'Confirm the patient\'s coverage is active (270/271).') + body +
+            (can ? actionsRow(`${sim ? scenarioSelect('wf-elig-scn', [['auto', 'Coverage active'], ['inactive', 'Simulate inactive coverage']], wsScn.elig) : ''}${bigBtn('wf-elig-btn', 'elig', X.eligOk ? 'btn-secondary' : 'btn-primary', 'fa-id-card', elig ? 'Re-check eligibility' : 'Check eligibility')}`) : '');
+    };
+
+    const paneGenerate = (d, X) => {
+        const { c, e, latest, canAct, sendable } = X;
+        const last837 = latest('837');
+        const body = `<div class="clw-card">
+            <div class="clw-summary-grid">
+                <div><span>Payer</span><strong>${cEsc(c.payer_name)}${c.payer_id_code ? ' (' + cEsc(c.payer_id_code) + ')' : ''}</strong></div>
+                <div><span>Service lines</span><strong>${d.lines.length}</strong></div>
+                <div><span>Claim total</span><strong>${usd(c.billed_amount)}</strong></div>
+                <div><span>Last generated</span><strong>${e.validated_at ? cEsc(String(e.validated_at).slice(0, 16)) : 'Never'}</strong></div>
+            </div></div>`;
+        return paneHead('Generate the 837 file', 'Builds the electronic claim from the data as it is now, then checks it in the next step. Incomplete data is fine &mdash; problems are listed, not hidden.') + body +
+            (sendable && canAct ? actionsRow(`${bigBtn('wf-gen-btn', 'gen', 'btn-primary', 'fa-file-code', e.validated_at ? 'Re-generate &amp; validate' : 'Generate 837 &amp; validate')}${last837 ? `<button type="button" class="btn btn-secondary wf-view-tx" data-tx="${last837.id}"><i class="fas fa-eye"></i> View 837</button>` : ''}`) : (last837 ? actionsRow(`<button type="button" class="btn btn-secondary wf-view-tx" data-tx="${last837.id}"><i class="fas fa-eye"></i> View 837</button>`) : ''));
+    };
+
+    const paneValidate = (d, X) => {
+        const { val, canAct, sendable } = X;
+        if (!val) {
+            return paneHead('Validate the 837', 'Every check runs on the generated file itself.') +
+                `<div class="clw-empty"><i class="fas fa-clipboard-check" aria-hidden="true"></i><div><strong>Nothing to validate yet</strong><p>Generate the 837 first (step 2).</p></div></div>` +
+                (sendable && canAct ? actionsRow(bigBtn('wf-gen-btn', 'gen', 'btn-primary', 'fa-file-code', 'Generate 837 &amp; validate')) : '');
+        }
+        const issues = (val.issues || []).filter((i) => wsFilter === 'all' || i.level === wsFilter);
+        const chip = (k, label, n) => `<button type="button" class="clw-chip ${wsFilter === k ? 'active' : ''}" data-filter="${k}">${label} <span>${n}</span></button>`;
+        const groups = ISSUE_GROUPS.map(([key, title, targets]) => {
+            const list = issues.filter((i) => targets.includes(i.fix.target));
+            return list.length ? `<section class="clw-group"><h4>${title} <span>${list.length}</span></h4>${list.map(issueRow).join('')}</section>` : '';
+        }).join('');
+        return paneHead('Validate the 837', 'Fix what is listed, then generate again. The file cannot be sent while errors remain.') +
+            `<div class="clw-banner ${val.passed ? 'ok' : 'bad'}" role="status"><i class="fas ${val.passed ? 'fa-check-circle' : 'fa-exclamation-triangle'}" aria-hidden="true"></i>
+                <div><strong>${val.passed ? 'Ready to send' : `${val.errors} error${val.errors === 1 ? '' : 's'} to fix`}</strong><span>${val.checks} checks run &middot; ${val.errors} error${val.errors === 1 ? '' : 's'} &middot; ${val.warnings} warning${val.warnings === 1 ? '' : 's'}</span></div></div>` +
+            ((val.issues || []).length ? `<div class="clw-chips">${chip('all', 'All', (val.issues || []).length)}${chip('error', 'Errors', val.errors)}${chip('warning', 'Warnings', val.warnings)}</div>${groups || '<div class="clm-muted" style="padding:8px 0;">Nothing in this filter.</div>'}` : '') +
+            (sendable && canAct ? actionsRow(bigBtn('wf-gen-btn', 'gen', val.passed ? 'btn-secondary' : 'btn-primary', 'fa-redo', 'Re-generate &amp; validate')) : '');
+    };
+
+    const paneSend = (d, X) => {
+        const { c, e, elig, val, canAct, sendable, wasSent, latest, sim, canSend, eligOk } = X;
+        if (wasSent) {
+            const a999 = latest('999'), a277 = latest('277CA');
+            const card = (title, t, okText, badText) => t ? `<div class="clw-ack ${t.summary.accepted ? 'ok' : 'bad'}"><div class="clw-ack-top"><span class="clw-badge ${t.summary.accepted ? 'ok' : 'bad'}"><i class="fas ${t.summary.accepted ? 'fa-check-circle' : 'fa-times-circle'}"></i> ${t.summary.accepted ? 'Accepted' : 'Rejected'}</span><strong>${title}</strong></div><p>${t.summary.accepted ? okText(t) : badText(t)}</p></div>` : '';
+            return paneHead('Send &amp; acknowledgment', `Sent ${cEsc(String(c.submitted_at || '').slice(0, 16))}${e.clearinghouse_ref ? ' &middot; reference ' + cEsc(e.clearinghouse_ref) : ''}.`) +
+                `<div class="clw-two">${card('999 &mdash; syntax check', a999, () => 'The file passed the clearinghouse\'s format check.', (t) => cEsc((t.summary.errors || []).join('; ')))}
+                    ${card('277CA &mdash; payer acknowledgment', a277, (t) => 'The payer accepted the claim for processing' + (t.summary.payer_claim_no ? '. Payer claim no. <strong>' + cEsc(t.summary.payer_claim_no) + '</strong>.' : '.'), (t) => cEsc(t.summary.message || 'No reason given.'))}</div>`;
+        }
+        const item = (ok, title, detail, step) => `<li class="${ok ? 'ok' : 'bad'}"><i class="fas ${ok ? 'fa-check-circle' : 'fa-times-circle'}" aria-hidden="true"></i><div><strong>${title}</strong><span>${detail}</span></div>${ok ? '' : `<button type="button" class="clw-link" data-goto="${step}">Go to step ${step}</button>`}</li>`;
+        const failing = d.readiness.items.filter((i) => !i.ok && i.for === 'ready');
+        const rejected = c.status === 'Rejected' ? `<div class="clw-banner bad" role="alert"><i class="fas fa-ban" aria-hidden="true"></i><div><strong>The last send was rejected</strong><span>${cEsc(c.denial_reason || '')}</span><span>Fix the problem, generate again, then send again.</span></div></div>` : '';
+        return paneHead('Send &amp; acknowledgment', 'Three checks must pass before the claim can leave.') + rejected +
+            `<ul class="clw-check">
+                ${item(eligOk, 'Coverage verified and active', elig ? `${cEsc(elig.status)}, checked ${cEsc(String(elig.checked_at).slice(0, 10))}` : 'Not checked yet', 1)}
+                ${item(X.valPassed, 'The 837 is valid', val ? (val.passed ? `${val.checks} checks, no errors` : `${val.errors} error(s) to fix`) : 'Not generated yet', val ? 3 : 2)}
+                ${item(d.readiness.ready_ok, 'Claim checklist complete', failing.length ? failing.map((i) => cEsc(i.label)).join(', ') : 'All items pass', 3)}
+            </ul>` +
+            (canAct && sendable ? actionsRow(`${sim ? `<label class="clw-inline-lbl" for="wf-send-scn">Simulated payer answer</label>${scenarioSelect('wf-send-scn', SIM_SCENARIOS, wsScn.send)}` : ''}${bigBtn('wf-send-btn', 'send', 'btn-success', 'fa-paper-plane', `Send to clearinghouse${sim ? ' (Simulator)' : ''}`, canSend ? '' : 'disabled')}`) +
+                (canSend ? '' : `<p class="clm-muted" style="margin-top:8px;">${X.blockers.map(cEsc).join(' ')}</p>`) : '');
+    };
+
+    const paneRemit = (d, X) => {
+        const { c, e, canAct, sim, settled } = X;
+        const pend = e.pending_835;
+        if (pend) {
+            const cls = (pend.outcome || '').replace(/\s/g, '').toLowerCase();
+            return paneHead('Remittance (835) &amp; result', 'Review what the payer decided. Nothing is posted until you confirm.') +
+                `<div class="clw-outcome clw-outcome-${cls}"><div><span class="clm-remit-badge clm-remit-${cls}">${cEsc(pend.outcome || '')}</span><small>835 received ${cEsc(String(pend.received_at || '').slice(0, 16))} &middot; trace ${cEsc(pend.trace)} &middot; ${cEsc(pend.payer)}</small></div>
+                    <div class="clw-outcome-nums"><span>Insurance pays <strong>${usd(pend.totals.paid)}</strong></span><span>Patient owes <strong>${usd(pend.totals.patient_resp)}</strong></span><span>Written off <strong>${usd(pend.totals.contractual)}</strong></span></div></div>
+                <table class="clm-lines"><thead><tr><th>CPT</th><th class="r">Charge</th><th class="r">Allowed</th><th class="r">Paid</th><th class="r">Contractual</th><th class="r">Patient resp.</th><th>Reason codes</th></tr></thead><tbody>
+                ${pend.lines.map((l) => `<tr><td><strong>${cEsc(l.cpt)}</strong>${l.modifiers ? ' ' + cEsc(l.modifiers) : ''}</td><td class="r">${usd(l.charge)}</td><td class="r">${l.denied ? '&mdash;' : usd(l.allowed)}</td><td class="r">${usd(l.paid)}</td><td class="r">${usd(l.contractual)}</td><td class="r">${usd(l.patient_resp)}</td>
+                    <td>${l.adjustments.map((a) => `<span class="clm-carc ${l.denied && a.carc === (l.denial_code.split('-')[1] || '') ? 'den' : ''}" title="${cEsc(a.description)}">${cEsc(a.group + '-' + a.carc)}</span>`).join(' ')}${l.denied ? `<div class="clm-den-note">Denied: ${cEsc(l.denial_reason)}</div>` : ''}</td></tr>`).join('')}
+                <tr style="font-weight:700;"><td>Total</td><td class="r">${usd(pend.totals.charge)}</td><td class="r">${usd(pend.totals.allowed)}</td><td class="r">${usd(pend.totals.paid)}</td><td class="r">${usd(pend.totals.contractual)}</td><td class="r">${usd(pend.totals.patient_resp)}</td><td></td></tr></tbody></table>
+                ${(pend.problems || []).length ? `<div class="clw-banner bad" role="alert"><i class="fas fa-exclamation-triangle"></i><div><strong>This remittance cannot be posted</strong><span>${pend.problems.map(cEsc).join(' ')}</span></div></div>` : ''}` +
+                (canAct ? actionsRow(bigBtn('wf-post-btn', 'post', 'btn-success', 'fa-check-circle', 'Post to ledger', `data-tx="${pend.transaction_id}" ${pend.postable ? '' : 'disabled'}`)) : '');
+        }
+        if (['Submitted', 'Accepted', 'Appealed'].includes(c.status)) {
+            return paneHead('Remittance (835) &amp; result', c.status === 'Appealed' ? 'The appeal is with the payer.' : 'The payer accepted the claim. The remittance advice arrives once it is adjudicated.') +
+                `<div class="clw-empty"><i class="fas fa-hourglass-half" aria-hidden="true"></i><div><strong>Waiting for the remittance</strong><p>Check for the 835 to see whether the claim was paid, partly paid or denied.</p></div></div>` +
+                (canAct ? actionsRow(`${sim && c.status === 'Appealed' ? `<label class="clw-inline-lbl" for="wf-check-scn">Simulated payer answer</label>${scenarioSelect('wf-check-scn', [['paid', 'Payer pays the appeal'], ['partial', 'Payer pays partly'], ['denied', 'Payer upholds the denial']], wsScn.check || 'paid')}` : ''}${bigBtn('wf-check-btn', 'check', 'btn-primary', 'fa-inbox', 'Check for remittance (835)')}`) : '');
+        }
+        if (settled) {
+            const cls = c.status.replace(/\s/g, '').toLowerCase();
+            return paneHead('Remittance (835) &amp; result', c.status === 'Denied' ? 'The payer denied this claim. Appeal it with the button above, or close it from More.' : 'Posted to the ledger.') +
+                `<div class="clw-outcome clw-outcome-${cls}"><div><span class="clm-remit-badge clm-remit-${cls}">${cEsc(c.status)}</span><small>Posted &mdash; see the ledger and service lines in the summary.</small></div>
+                    <div class="clw-outcome-nums"><span>Insurance paid <strong>${usd(c.insurance_paid)}</strong></span><span>Patient owes <strong>${usd(c.patient_resp)}</strong></span><span>Written off <strong>${usd(c.adjustment_amount)}</strong></span></div></div>`;
+        }
+        return paneHead('Remittance (835) &amp; result', 'Available after the claim has been sent and accepted.') +
+            `<div class="clw-empty"><i class="fas fa-inbox" aria-hidden="true"></i><div><strong>${c.status === 'Rejected' ? 'No remittance' : 'Not yet'}</strong><p>${c.status === 'Rejected' ? 'The claim was rejected before adjudication.' : 'Send the claim first.'}</p></div></div>`;
+    };
+
+    const sidebarHtml = (d, X) => {
+        const c = d.claim, cov = d.coverage || {};
+        const sec = (title, icon, inner, open) => `<details class="clw-sec" ${open ? 'open' : ''}><summary><i class="fas ${icon}" aria-hidden="true"></i> ${title}</summary><div class="clw-sec-b">${inner}</div></details>`;
+        const kv = (k, v) => `<div class="clm-kv"><span>${k}</span><strong>${v}</strong></div>`;
+        const shownTxs = X.txs.filter((t, i) => !(t.type === '837' && t.status === 'created' && X.txs.findIndex((x) => x.type === '837' && x.status === 'created') !== i));
+        return [
+            sec('Coverage', 'fa-shield-alt', kv('Payer', `${cEsc(c.payer_name)}${c.payer_id_code ? ' (' + cEsc(c.payer_id_code) + ')' : ''}`) + kv('Member ID', cEsc(cov.member_id || '—')) + kv('Group / plan', `${cEsc(cov.group_no || '—')} / ${cEsc(cov.plan_name || '—')}`) + kv('Subscriber', `${cEsc(cov.relationship || 'Self')}${cov.subscriber_last ? ' &middot; ' + cEsc(cov.subscriber_first + ' ' + cov.subscriber_last) : ''}`) + kv('Payer claim no.', cEsc(c.payer_claim_no || '—')), true),
+            sec('Provider &amp; facility', 'fa-user-md', kv('Rendering provider', cEsc(d.provider.name || '—')) + kv('Provider NPI / taxonomy', `${cEsc(d.provider.npi || '—')} / ${cEsc(d.provider.taxonomy_code || '—')}`) + kv('Facility', cEsc(d.facility.name || '—')) + kv('Facility NPI / TIN', `${cEsc(d.facility.npi || '—')} / ${cEsc(d.facility.tax_id_ein || '—')}`), false),
+            sec(`Service lines <span class="clw-count">${d.lines.length}</span>`, 'fa-list', `<table class="clm-lines"><thead><tr><th>CPT</th><th>Dx</th><th class="r">Charge</th><th class="r">Paid</th></tr></thead><tbody>${d.lines.map((l) => `<tr><td><strong>${cEsc(l.cpt_code || '—')}</strong>${l.modifiers ? ' ' + cEsc(l.modifiers) : ''}</td><td>${cEsc(l.dx_pointer || '')} <span class="clm-muted">${cEsc(l.icd10_code || '')}</span></td><td class="r">${usd(l.charge)}</td><td class="r">${l.adjudicated ? (l.denial_code ? '<span class="clm-carc den">' + cEsc(l.denial_code) + '</span>' : usd(l.paid)) : '&mdash;'}</td></tr>`).join('')}</tbody></table>`, true),
+            sec('Ledger', 'fa-book', (d.payments.length || d.adjustments.length)
+                ? d.payments.map((p) => `<div class="clm-kv" style="${p.voided_at ? 'text-decoration:line-through;opacity:.6;' : ''}"><span>${cEsc(p.source)} &middot; ${cEsc(p.method)} ${cEsc(p.reference_no || '')}</span><strong>${usd(p.amount)}</strong></div>`).join('') + d.adjustments.map((a) => `<div class="clm-kv" style="${a.voided_at ? 'text-decoration:line-through;opacity:.6;' : ''}"><span>${cEsc(a.type)} adjustment${a.reason && a.type !== 'Contractual' ? ' &middot; ' + cEsc(a.reason) : ''}</span><strong>-${usd(a.amount)}</strong></div>`).join('')
+                : '<div class="clm-muted">Nothing posted yet.</div>', false),
+            sec('History', 'fa-history', `<ul class="clm-timeline">${d.history.slice().reverse().map((h) => `<li><strong>${cEsc(h.to_status)}</strong> <span class="clm-muted">${cEsc(String(h.created_at).slice(0, 16))}${h.user ? ' &middot; ' + cEsc(h.user) : ''}</span>${h.note ? '<div>' + cEsc(h.note) + '</div>' : ''}</li>`).join('')}</ul>`, false),
+            sec(`EDI files <span class="clw-count">${shownTxs.length}</span>`, 'fa-file-code', shownTxs.length ? shownTxs.map((t) => `<div class="clw-file-row"><div><strong>${cEsc(TX_LABEL[t.type] || t.type)}</strong><small>${t.direction === 'in' ? 'received' : (t.status === 'created' ? 'generated' : 'sent')} &middot; ${cEsc(String(t.created_at).slice(5, 16))}${t.status === 'posted' ? ' &middot; posted' : ''}</small></div><div><button type="button" class="btn btn-secondary btn-sm wf-view-tx" data-tx="${t.id}">View</button> <button type="button" class="btn btn-secondary btn-sm wf-dl-tx" data-tx="${t.id}">Download</button></div></div>`).join('') : '<div class="clm-muted">No files yet.</div>', false),
+        ].join('');
+    };
+
+    const stepperHtml = (steps) => {
+        const nextIdx = steps.findIndex((s) => s.state === 'todo');
+        return `<nav class="clw-stepper" aria-label="Claim workflow steps"><ol>${steps.map((s, i) => `
+            <li class="clw-st ${s.state} ${s.n === wsStep ? 'active' : ''} ${i === nextIdx ? 'next' : ''}">
+                <button type="button" class="clw-st-btn" data-step="${s.n}" ${s.n === wsStep ? 'aria-current="step"' : ''}>
+                    <span class="clw-st-dot">${s.state === 'done' ? '<i class="fas fa-check" aria-hidden="true"></i>' : (s.state === 'error' ? '<i class="fas fa-times" aria-hidden="true"></i>' : s.n)}</span>
+                    <span class="clw-st-txt"><span class="clw-st-title">${s.title}</span><span class="clw-st-sub">${cEsc(s.sub)}</span></span>
+                </button></li>`).join('')}</ol></nav>`;
+    };
+
+    const MORE_LABELS = { edit: 'Edit claim', ready: 'Mark ready', draft: 'Back to draft', submit: 'Mark submitted (manual)', accept: 'Mark accepted (manual)', reject: 'Mark rejected', remit: 'Post remittance (manual)', appeal: 'Appeal denial', reverse: 'Reverse remittance', bill_secondary: 'Bill secondary payer', close: 'Close claim', edi837: 'Download 837 file', cms1500: 'CMS-1500 sheet' };
+    const moreMenu = (d, cta) => {
+        const acts = d.actions.filter((a) => !(cta && ((cta.act === 'panel:appeal' && a === 'appeal') || (cta.act === 'bill_secondary' && a === 'bill_secondary'))));
+        const order = ['edit', 'ready', 'draft', 'submit', 'accept', 'reject', 'remit', 'appeal', 'reverse', 'bill_secondary', 'close'];
+        const main = order.filter((a) => acts.includes(a));
+        const docs = ['edi837', 'cms1500'].filter((a) => acts.includes(a));
+        const item = (a) => `<li><button type="button" class="dropdown-item clw-more-item" data-action="${a}">${MORE_LABELS[a]}</button></li>`;
+        return `<div class="dropdown"><button type="button" class="btn btn-secondary dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false"><i class="fas fa-ellipsis-h" aria-hidden="true"></i> More</button>
+            <ul class="dropdown-menu dropdown-menu-end">${main.map(item).join('')}${main.length && docs.length ? '<li><hr class="dropdown-divider"></li>' : ''}${docs.map(item).join('')}</ul></div>`;
+    };
+
+    // ── the workspace ───────────────────────────────────────────────────────────────────────────
+    const renderWorkspace = () => {
+        const d = claimDetail;
+        const root = document.getElementById('claims-view-claim');
+        if (!d || !root) return;
+        const X = ctxOf(d);
+        const c = d.claim;
+        const steps = computeSteps(d, X);
+        const cta = nextAction(d, X);
+        const tfDays = c.timely_filing_due ? Math.ceil((new Date(c.timely_filing_due) - new Date()) / 86400000) : null;
+        const panes = [null, paneEligibility, paneGenerate, paneValidate, paneSend, paneRemit];
+        const mainHtml = claimPanel ? claimPanelHtml(d) : panes[wsStep](d, X);
+        const rawViewer = wf.file !== null ? `<div class="clw-raw"><div class="clw-raw-top"><strong>Raw file</strong><button type="button" class="btn btn-secondary btn-sm" id="wf-file-close">Close</button></div><pre class="clm-file">${cEsc(wf.file)}</pre></div>` : '';
+        root.innerHTML = `
+            <div class="clw">
+                <div class="clw-top">
+                    <button type="button" class="clw-back" id="clw-back"><i class="fas fa-arrow-left" aria-hidden="true"></i> Back to claims</button>
+                    <div class="clw-top-actions">
+                        ${cta ? `<button type="button" class="btn btn-primary clw-cta" data-act="${cta.act}" ${cta.tx ? `data-tx="${cta.tx}"` : ''}><i class="fas ${cta.icon}" aria-hidden="true"></i> ${cta.label}</button>` : ''}
+                        ${moreMenu(d, cta)}
+                    </div>
+                </div>
+                <header class="clw-head">
+                    <div class="clw-title"><h2>${cEsc(c.claim_number)}</h2>${window.claimStatusPill(c.status)}<span class="clm-seq">${cEsc(c.sequence)}</span>${X.sim ? '<span class="clm-sim-badge" title="A built-in stand-in for the clearinghouse and payer. Nothing leaves this system.">SIMULATOR &mdash; no real payer connection</span>' : ''}</div>
+                    <div class="clw-meta"><strong>${cEsc(c.patient_name)}</strong><span>Invoice ${cEsc(c.invoice_number)}</span><span>${cEsc(c.payer_name)}${c.payer_id_code ? ' (' + cEsc(c.payer_id_code) + ')' : ''}</span><span>DOS ${dateOnly(c.date_of_service)}</span>${tfDays !== null && OPEN_CLAIM_STATUSES.includes(c.status) ? `<span class="${tfDays <= 30 ? 'clw-warn' : ''}">Timely filing ${tfDays < 0 ? 'passed' : 'in ' + tfDays + ' days'}</span>` : ''}</div>
+                    ${(c.status === 'Rejected' || c.status === 'Denied') && c.denial_reason ? `<div class="clw-banner bad" role="alert"><i class="fas fa-ban" aria-hidden="true"></i><div><strong>${c.status}</strong><span>${cEsc(c.denial_reason)}${c.denial_code ? ' (' + cEsc(c.denial_code) + ')' : ''}</span></div></div>` : ''}
+                    <div class="clw-money">
+                        <div><span>Billed</span><strong>${usd(c.billed_amount)}</strong></div>
+                        <div><span>Allowed</span><strong>${usd(c.allowed_amount)}</strong></div>
+                        <div><span>Insurance paid</span><strong class="pos">${usd(c.insurance_paid)}</strong></div>
+                        <div><span>Adjustments</span><strong>${usd(c.adjustment_amount)}</strong></div>
+                        <div><span>Patient resp.</span><strong>${usd(c.patient_resp)}</strong></div>
+                    </div>
+                </header>
+                ${stepperHtml(steps)}
+                <div class="clw-body">
+                    <section class="clw-main" aria-live="polite">${mainHtml}${rawViewer}</section>
+                    <aside class="clw-side" aria-label="Claim summary">${sidebarHtml(d, X)}</aside>
+                </div>
+            </div>`;
+        wireWorkspace(d);
+    };
+    const renderClaimDetail = renderWorkspace;   // kept for the action-panel code above
+
+    // ── actions ─────────────────────────────────────────────────────────────────────────────────
+    const post = async (path, body, btn) => {
+        if (btn) btn.disabled = true;
+        try {
+            const res = await claimApi(path, 'POST', body || {});
+            if (res.status === 'success') { await afterClaimChange(res.message); return res; }
+            Toast.show(res.message || 'That did not work.', 'error');
+            if (res.validation || res.readiness) await refreshClaimDetail(false);
+        } catch (err) { Toast.show('That did not work. Please try again.', 'error'); }
+        if (btn) btn.disabled = false;
+        return null;
+    };
+
+    const fetchTx = async (tx, download) => {
+        const r = await fetch(`${ApiService.getBaseUrl()}api/billing/claims/${currentClaimId}/edi/${tx}${download ? '?download=1' : ''}`, { credentials: 'same-origin' });
+        if (!r.ok) { Toast.show('Could not open that file.', 'error'); return null; }
+        return r.text();
+    };
+    const saveBlob = (text, name, type = 'text/plain') => {
+        const link = document.createElement('a');
+        link.href = URL.createObjectURL(new Blob([text], { type }));
+        link.download = name;
+        document.body.appendChild(link); link.click(); link.remove(); URL.revokeObjectURL(link.href);
+    };
+
+    const doAct = async (act, btn, ds = {}) => {
+        const c = claimDetail.claim;
+        if (act === 'elig') return post('/eligibility', { scenario: wsScn.elig || 'auto' }, btn);
+        if (act === 'gen') return post('/edi/generate', {}, btn);
+        if (act === 'send') return post('/edi/send', { scenario: wsScn.send || 'auto' }, btn);
+        if (act === 'check') return post('/edi/check-remittance', { scenario: wsScn.check || '' }, btn);
+        if (act === 'post') return post('/edi/post-835', { transaction_id: parseInt(ds.tx, 10) }, btn);
+        if (act.startsWith('goto')) { wsStep = parseInt(act.slice(4), 10); claimPanel = null; renderWorkspace(); return; }
+        if (act.startsWith('panel:')) { claimPanel = act.slice(6); renderWorkspace(); return; }
+        if (act === 'bill_secondary') {
+            if (btn) btn.disabled = true;
+            const res = await claimApi('/bill-secondary', 'POST', {});
+            if (res.status === 'success') { Toast.show(res.message, 'success'); claimPanel = null; loadClaims(); window.openClaimDetail(res.claim_id); return; }
+            Toast.show(res.message || 'Could not create the secondary claim.', 'error');
+            if (btn) btn.disabled = false;
+            return;
+        }
+        if (act === 'ready' || act === 'draft') {
+            const res = await claimApi('/status', 'POST', { status: act === 'ready' ? 'Ready' : 'Draft' });
+            if (res.status === 'success') { await afterClaimChange(res.message); return; }
+            Toast.show(res.message || 'Could not update the claim.', 'error');
+            return;
+        }
+        if (act === 'cms1500') { window.open(`${ApiService.getBaseUrl()}api/billing/claims/${currentClaimId}/cms1500`, '_blank'); return; }
+        if (act === 'edi837') {
+            const r = await fetch(`${ApiService.getBaseUrl()}api/billing/claims/${currentClaimId}/837`, { credentials: 'same-origin' });
+            if (!r.ok) { let m = 'Could not create the 837 file.'; try { m = (await r.json()).message || m; } catch (e) { } Toast.show(m, 'error'); await refreshClaimDetail(false); return; }
+            saveBlob(await r.text(), `${c.claim_number}.837`);
+            Toast.show('837 file downloaded.', 'success');
+            return;
+        }
+        if (CLAIM_ACTIONS[act] && CLAIM_ACTIONS[act].panel) { claimPanel = claimPanel === act ? null : act; renderWorkspace(); }
+    };
+
+    const wireWorkspace = (d) => {
+        const root = document.getElementById('claims-view-claim');
+        document.getElementById('clw-back')?.addEventListener('click', () => { claimPanel = null; wf = { file: null, fileTx: null }; showClaimsView('list'); loadClaims(); });
+        root.querySelectorAll('.clw-st-btn').forEach((b) => { b.onclick = () => { wsStep = parseInt(b.dataset.step, 10); claimPanel = null; renderWorkspace(); }; });
+        root.querySelectorAll('[data-act]').forEach((b) => { b.onclick = () => doAct(b.dataset.act, b, b.dataset); });
+        root.querySelectorAll('.clw-more-item').forEach((b) => { b.onclick = () => doAct(b.dataset.action, null, {}); });
+        root.querySelectorAll('[data-goto]').forEach((b) => { b.onclick = () => { wsStep = parseInt(b.dataset.goto, 10); claimPanel = null; renderWorkspace(); }; });
+        root.querySelectorAll('.clw-chip').forEach((b) => { b.onclick = () => { wsFilter = b.dataset.filter; renderWorkspace(); }; });
+        document.getElementById('wf-elig-scn')?.addEventListener('change', (ev) => { wsScn.elig = ev.target.value; });
+        document.getElementById('wf-send-scn')?.addEventListener('change', (ev) => { wsScn.send = ev.target.value; });
+        document.getElementById('wf-check-scn')?.addEventListener('change', (ev) => { wsScn.check = ev.target.value; });
+
+        root.querySelectorAll('.wf-view-tx').forEach((b) => { b.onclick = async () => { const t = await fetchTx(b.dataset.tx, false); if (t !== null) { wf.file = t; wf.fileTx = b.dataset.tx; renderWorkspace(); root.querySelector('.clw-raw')?.scrollIntoView({ block: 'nearest' }); } }; });
+        root.querySelectorAll('.wf-dl-tx').forEach((b) => { b.onclick = async () => { const t = await fetchTx(b.dataset.tx, true); if (t !== null) saveBlob(t, `${d.claim.claim_number}-${b.dataset.tx}.txt`); }; });
+        document.getElementById('wf-file-close')?.addEventListener('click', () => { wf.file = null; renderWorkspace(); });
+
+        // Fix buttons: claim fields are edited here; payer/submitter setup opens the in-page Payers view (with a way back);
+        // patient/provider/facility open in a NEW TAB so this claim and its list stay put.
+        root.querySelectorAll('.wf-fix').forEach((b) => {
+            b.onclick = () => {
+                const target = b.dataset.target;
+                if (target === 'claim') { claimPanel = 'edit'; renderWorkspace(); return; }
+                if (target === 'settings' || target === 'payer') { showPayersView(currentClaimId); return; }
+                const hash = { patient: '#patients', coverage: '#patients', provider: '#administration', facility: '#administration' }[target] || '#patients';
+                window.open(`${window.location.pathname}${hash}`, '_blank');
+                Toast.show('Opened in a new tab. Save the change there, come back here and click "Re-generate & validate".', 'info');
+            };
+        });
+        if (claimPanel) wireClaimPanel(d);
+    };
+
+    // keeps the selected step unless asked to jump to the next actionable one
+    const refreshClaimDetail = async (auto = true) => {
+        const res = await ApiService.request(`/api/billing/claims/${currentClaimId}`);
+        if (res.status !== 'success') { Toast.show(res.message || 'Could not load the claim.', 'error'); showClaimsView('list'); return; }
+        claimDetail = res;
+        if (auto) wsStep = autoStep(res);
+        renderWorkspace();
+    };
+
+    window.openClaimDetail = async (id) => {
+        const root = document.getElementById('claims-view-claim');
+        if (!root) return;
+        // arriving from the invoice viewer or another tab: make sure the Claims tab is the visible one
+        if (document.getElementById('billing-tab-claims')?.style.display !== 'block') document.querySelector('[data-tab="claims"]')?.click();
+        currentClaimId = id; claimPanel = null; claimDetail = null; wf = { file: null, fileTx: null }; wsFilter = 'all';
+        root.innerHTML = '<div class="clw-loading"><i class="fas fa-spinner fa-spin fa-2x" aria-hidden="true"></i></div>';
+        showClaimsView('claim');
+        await refreshClaimDetail(true);
+    };
+
+    // ── Payers & settings (in-page) ─────────────────────────────────────────────────────────────
+    const FILING_TYPES = [['CI', 'Commercial'], ['MB', 'Medicare Part B'], ['MC', 'Medicaid'], ['HM', 'HMO'], ['ZZ', 'Other']];
+    const renderPayers = async () => {
+        const body = document.getElementById('payers-page-body');
+        const [pr, sr] = await Promise.all([ApiService.request('/api/billing/payers'), ApiService.request('/api/billing/claim-settings')]);
+        const payers = pr.data || [], s = sr.data || {};
+        const filingOpts = (sel) => FILING_TYPES.map(([v, l]) => `<option value="${v}" ${v === sel ? 'selected' : ''}>${v} - ${l}</option>`).join('');
+        const row = (p) => `<tr data-id="${p.id || ''}">
+            <td><input class="form-control py-name" maxlength="150" value="${cEsc(p.name || '')}" placeholder="Payer name" aria-label="Payer name"></td>
+            <td><input class="form-control py-code" maxlength="30" value="${cEsc(p.payer_id_code || '')}" placeholder="Payer ID" aria-label="Payer ID"></td>
+            <td><select class="form-select py-filing" aria-label="Filing type">${filingOpts(p.claim_filing_code || 'CI')}</select></td>
+            <td style="text-align:center;"><input type="checkbox" class="py-active" aria-label="Active" ${p.is_active === undefined || parseInt(p.is_active, 10) ? 'checked' : ''}></td>
+            <td><button type="button" class="btn btn-primary btn-sm py-save">${p.id ? 'Save' : 'Add'}</button></td></tr>`;
+        body.innerHTML = `
+            <div class="clm-alert" style="background:#fffbeb;border-color:#fde68a;color:#92400e;">Clearinghouse: <strong>${s.clearinghouse_mode === 'simulator' ? 'Simulator' : cEsc(s.clearinghouse_mode)}</strong> &mdash; ${s.clearinghouse_mode === 'simulator' ? 'claims are answered by a built-in stand-in payer; nothing leaves this system.' : 'live connection.'}</div>
+            <div class="clw-two clw-two-top">
+                <div class="clm-panel"><h4>837 submitter settings</h4>
+                    <p class="clm-muted" style="margin:0 0 10px;">Supplied by your clearinghouse. Required only to generate 837 files.</p>
+                    <div class="clm-grid2"><div><label class="clm-lbl" for="st-sub">Submitter ID</label><input class="form-control" id="st-sub" maxlength="15" value="${cEsc(s.billing_submitter_id)}"></div>
+                    <div><label class="clm-lbl" for="st-rcv">Receiver ID</label><input class="form-control" id="st-rcv" maxlength="15" value="${cEsc(s.billing_receiver_id)}"></div>
+                    <div><label class="clm-lbl" for="st-cn">Billing contact name</label><input class="form-control" id="st-cn" maxlength="60" value="${cEsc(s.billing_contact_name)}"></div>
+                    <div><label class="clm-lbl" for="st-cp">Billing contact phone (10 digits)</label><input class="form-control" id="st-cp" maxlength="14" value="${cEsc(s.billing_contact_phone)}"></div></div>
+                    <div class="clm-err" id="st-err" style="display:none;"></div>
+                    <div class="clm-panel-btns"><button type="button" class="btn btn-primary btn-sm" id="st-save">Save 837 settings</button></div></div>
+                <div class="clm-panel"><h4>Payers</h4>
+                    <p class="clm-muted" style="margin:0 0 10px;">Enter the real payer ID for each payer before submitting claims. Names must match what is typed on the patient's insurance.</p>
+                    <table class="clm-lines"><thead><tr><th>Payer</th><th>Payer ID</th><th>Filing type</th><th style="text-align:center;">Active</th><th></th></tr></thead>
+                    <tbody id="payers-rows">${payers.map(row).join('')}${row({})}</tbody></table>
+                    <div class="clm-err" id="py-err" style="display:none;"></div></div>
+            </div>`;
+        document.getElementById('st-save').onclick = async () => {
+            const err = document.getElementById('st-err');
+            const res = await ApiService.request('/api/billing/claim-settings', 'PUT', {
+                billing_submitter_id: document.getElementById('st-sub').value, billing_receiver_id: document.getElementById('st-rcv').value,
+                billing_contact_name: document.getElementById('st-cn').value, billing_contact_phone: document.getElementById('st-cp').value
+            });
+            if (res.status === 'success') { err.style.display = 'none'; Toast.show(res.message, 'success'); } else { err.textContent = res.message || 'Could not save.'; err.style.display = 'block'; }
+        };
+        body.querySelectorAll('.py-save').forEach((btn) => {
+            btn.onclick = async () => {
+                const tr = btn.closest('tr'), err = document.getElementById('py-err');
+                btn.disabled = true;
+                const res = await ApiService.request('/api/billing/payers', 'POST', {
+                    id: parseInt(tr.dataset.id, 10) || undefined, name: tr.querySelector('.py-name').value, payer_id_code: tr.querySelector('.py-code').value,
+                    claim_filing_code: tr.querySelector('.py-filing').value, is_active: tr.querySelector('.py-active').checked ? 1 : 0
+                });
+                if (res.status === 'success') { Toast.show(res.message, 'success'); await renderPayers(); loadPayerFilter(); } else { err.textContent = res.message || 'Could not save.'; err.style.display = 'block'; btn.disabled = false; }
+            };
+        });
+    };
+
+    // returnClaimId: when the user came here from a validation "Fix", offer a way straight back to that claim
+    const showPayersView = async (returnClaimId = null) => {
+        payersReturnClaim = returnClaimId;
+        const back = document.getElementById('payers-back');
+        if (back) back.innerHTML = returnClaimId ? '<i class="fas fa-arrow-left" aria-hidden="true"></i> Back to the claim' : '<i class="fas fa-arrow-left" aria-hidden="true"></i> Back to claims';
+        document.getElementById('payers-page-body').innerHTML = '<div class="clw-loading"><i class="fas fa-spinner fa-spin fa-2x" aria-hidden="true"></i></div>';
+        showClaimsView('payers');
+        await renderPayers();
+    };
+    document.getElementById('manage-payers-btn')?.addEventListener('click', () => showPayersView(null));
+    document.getElementById('payers-back')?.addEventListener('click', () => {
+        if (payersReturnClaim) { const id = payersReturnClaim; payersReturnClaim = null; window.openClaimDetail(id); }
+        else { showClaimsView('list'); loadClaims(); }
     });
+    // The Rejected/Denied "needs action" badge should show even before the Claims tab is opened
+    ApiService.request('/api/billing/claims?status=open').then((r) => { if (r && r.status === 'success') { claimsCounts = r.counts || {}; updateClaimsBadge(); } }).catch(() => { });
 
     // ─── CPT CHARGE MASTER ───────────────────────────────────────────
     let cptCurrentPage = 1;
@@ -22338,7 +23993,7 @@ async function initOrdersWorkspace() {
             meUser = meRes.user;
         }
     } catch (e) { }
-    const canReview = meUser && ['Doctor', 'Therapist', 'Super Admin'].includes(meUser.role);
+    const canReview = meUser && ['Doctor', 'Super Admin'].includes(meUser.role);
 
     let rawOrders = [];
 
@@ -22870,7 +24525,7 @@ async function initMedicationsWorkspace() {
             meUser = meRes.user;
         }
     } catch (e) { }
-    const canManage = meUser && ['Doctor', 'Therapist', 'Super Admin'].includes(meUser.role);
+    const canManage = meUser && ['Doctor', 'Super Admin'].includes(meUser.role);
 
     let rawMedications = [];
 
@@ -24027,26 +25682,31 @@ async function loadDocumentsList(patientId) {
     renderDocumentsTable();
 }
 
-let jitsiApiInstance = null;
-let currentActiveRoomName = null;
+// Opens a telehealth room in a NEW browser tab so the provider keeps the EHR (chart, plan, orders) open during the call.
+// The join page lets logged-in staff in at any time; patients are time-gated server-side (see TelehealthController::joinCheck).
+window.openTelehealthTab = function (joinUrl) {
+    const w = window.open(joinUrl, '_blank', 'noopener');
+    if (!w) Toast.show('Your browser blocked the new tab. Allow pop-ups for this site, then click Join again.', 'warning');
+    return !!w;
+};
 
-function loadJitsiScript() {
-    return new Promise((resolve, reject) => {
-        if (window.JitsiMeetExternalAPI) {
-            resolve();
-            return;
-        }
-        const script = document.createElement('script');
-        script.src = 'https://meet.jit.si/external_api.js';
-        script.onload = resolve;
-        script.onerror = reject;
-        document.head.appendChild(script);
-    });
-}
+// From a calendar appointment: find its telehealth session and open it in a new tab.
+// A blank tab is opened synchronously (inside the click) so the pop-up blocker allows it, then pointed at the room.
+window.openTelehealthForAppointment = async function (appointmentId) {
+    const w = window.open('about:blank', '_blank');
+    try {
+        const res = await ApiService.request('/api/telehealth/sessions');
+        const s = (res.data || []).find(x => Number(x.appointment_id) === Number(appointmentId) && x.status === 'Active');
+        if (!s) { if (w) w.close(); Toast.show('No active telehealth session found for this appointment. Edit and re-save the appointment to generate one.', 'warning'); return; }
+        if (w) w.location.href = s.join_url; else Toast.show('Your browser blocked the new tab. Allow pop-ups for this site.', 'warning');
+    } catch (e) {
+        if (w) w.close();
+        Toast.show('Could not open the telehealth session.', 'error');
+    }
+};
 
 async function initTelehealthHandler() {
-    const container = document.getElementById('jitsi-meet-container');
-    if (!container) return;
+    if (!document.getElementById('telehealth-sessions-tbody')) return;
 
     let patientsCache = [];
 
@@ -24105,11 +25765,11 @@ async function initTelehealthHandler() {
                             <td style="padding: 12px 14px; color: #475569;">${s.patient_email}</td>
                             <td style="padding: 12px 14px;"><code style="font-size:0.8rem; background:#f1f5f9; padding:2px 6px; border-radius:4px;">${s.room_name}</code></td>
                             <td style="padding: 12px 14px;"><span class="badge ${badgeClass}">${s.status}</span></td>
-                            <td style="padding: 12px 14px; font-size: 0.82rem; color: #64748b;">${formattedDate}</td>
+                            <td style="padding: 12px 14px; font-size: 0.82rem; color: #64748b;">${s.scheduled_start ? `<strong style="color:#0f172a;">${new Date(s.scheduled_start.replace(' ', 'T')).toLocaleString([], { month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' })}</strong>` : '<em>On demand</em>'}<br><span style="font-size:0.74rem;">Created ${formattedDate}</span></td>
                             <td style="padding: 12px 14px; text-align: right;">
                                 <div style="display: flex; gap: 6px; justify-content: flex-end;">
                                     ${!isCompleted && !isCancelled ? `
-                                        <button class="btn btn-sm btn-success join-room-btn" data-room="${s.room_name}" data-patient="${s.patient_name}" title="Launch Jitsi Video Consultation">
+                                        <button class="btn btn-sm btn-success join-room-btn" data-url="${s.join_url}" title="Open the video consultation in a new tab">
                                             <i class="fas fa-video"></i> Join
                                         </button>
                                     ` : ''}
@@ -24134,9 +25794,7 @@ async function initTelehealthHandler() {
                 // Bind Event Listeners on Table Buttons
                 tbody.querySelectorAll('.join-room-btn').forEach(btn => {
                     btn.onclick = () => {
-                        const room = btn.getAttribute('data-room');
-                        const pat = btn.getAttribute('data-patient');
-                        startJitsiSession(room, pat);
+                        window.openTelehealthTab(btn.getAttribute('data-url'));
                     };
                 });
 
@@ -24242,8 +25900,8 @@ async function initTelehealthHandler() {
                     Toast.show(res.message || 'Telehealth invitation sent successfully!', 'success');
                     await loadTelehealthSessions();
 
-                    // Automatically start Jitsi session for provider
-                    startJitsiSession(res.data.room_name, res.data.patient_name);
+                    // Open the room in a new tab for the provider (may be pop-up blocked after the await; the Join button still works)
+                    if (res.data.join_url) window.openTelehealthTab(res.data.join_url);
                 } else {
                     Toast.show(res.message || 'Failed to create telehealth session.', 'error');
                 }
@@ -24264,98 +25922,6 @@ async function initTelehealthHandler() {
     // Initial loading calls
     await loadPatientsDropdown();
     await loadTelehealthSessions();
-
-    // Setup control buttons listeners
-    const toggleCam = document.getElementById('toggle-camera-btn');
-    if (toggleCam) {
-        toggleCam.onclick = () => {
-            if (jitsiApiInstance) jitsiApiInstance.executeCommand('toggleVideo');
-        };
-    }
-
-    const toggleMic = document.getElementById('toggle-mic-btn');
-    if (toggleMic) {
-        toggleMic.onclick = () => {
-            if (jitsiApiInstance) jitsiApiInstance.executeCommand('toggleAudio');
-        };
-    }
-
-    const endCall = document.getElementById('end-call-btn');
-    if (endCall) {
-        endCall.onclick = () => {
-            if (jitsiApiInstance) {
-                jitsiApiInstance.executeCommand('hangup');
-            }
-        };
-    }
-}
-
-async function startJitsiSession(roomName, patientName = '') {
-    const container = document.getElementById('jitsi-meet-container');
-    const titleEl = document.getElementById('active-session-title');
-    const badgeEl = document.getElementById('active-room-badge');
-    if (!container) return;
-
-    if (jitsiApiInstance) {
-        jitsiApiInstance.dispose();
-        jitsiApiInstance = null;
-    }
-
-    try {
-        await loadJitsiScript();
-        container.innerHTML = ''; // Clear status message
-
-        currentActiveRoomName = roomName;
-        if (titleEl) {
-            titleEl.innerHTML = `<i class="fas fa-video" style="color:#0284c7;"></i> Consultation: ${patientName ? patientName : roomName}`;
-        }
-        if (badgeEl) {
-            badgeEl.textContent = roomName;
-            badgeEl.style.display = 'inline-block';
-        }
-
-        const domain = 'meet.jit.si';
-        const options = {
-            roomName: roomName,
-            width: '100%',
-            height: '100%',
-            parentNode: container,
-            configOverwrite: {
-                startWithAudioMuted: false,
-                startWithVideoMuted: false,
-                prejoinPageEnabled: false,
-                disableDeepLinking: true
-            },
-            interfaceConfigOverwrite: {
-                TOOLBAR_BUTTONS: [
-                    'microphone', 'camera', 'desktop', 'fullscreen',
-                    'fodeviceselection', 'hangup', 'chat', 'settings',
-                    'videoquality', 'tileview', 'security'
-                ]
-            }
-        };
-
-        jitsiApiInstance = new JitsiMeetExternalAPI(domain, options);
-
-        jitsiApiInstance.addEventListener('videoConferenceLeft', () => {
-            container.innerHTML = `
-                <div style="text-align: center; color: #94a3b8; padding: 20px;">
-                    <i class="fas fa-check-circle" style="font-size: 3rem; margin-bottom: 12px; color: #0d9488; display: block;"></i>
-                    <p style="font-size: 1rem; font-weight: 600; color: #cbd5e1;">Consultation Session Ended</p>
-                </div>
-            `;
-            if (badgeEl) badgeEl.style.display = 'none';
-            if (titleEl) titleEl.innerHTML = `<i class="fas fa-video"></i> Video Stream Container`;
-            if (jitsiApiInstance) {
-                jitsiApiInstance.dispose();
-                jitsiApiInstance = null;
-            }
-        });
-
-    } catch (e) {
-        console.error('Failed to initiate Jitsi API', e);
-        container.innerHTML = '<p class="error-text">Failed to initiate video consultation. Please verify your connection.</p>';
-    }
 }
 
 
@@ -24548,22 +26114,15 @@ async function initAdministrationHandler() {
     const currentUserRole = meRes?.user?.role || window.currentUserRole || '';
     const isSuperAdmin = currentUserRole === 'Super Admin';
 
-    const saveRbacBtn = document.getElementById('save-rbac-policies-btn');
+    initInfoTips();
+
     const userCard = document.getElementById('user-management-card');
     const usersList = document.getElementById('administration-users-list');
 
-    // ── 0. Sidebar submenu toggle + tab-switching ──────────────────────────
-    const adminNavLink   = document.getElementById('nav-administration');
-    const adminParentLi  = adminNavLink ? adminNavLink.closest('.nav-item-has-submenu') : null;
-
-    // Toggle the submenu when the parent "Administration" link is clicked.
-    // Sub-links do NOT collapse it — only clicking the parent again does.
-    if (adminNavLink && adminParentLi) {
-        adminNavLink.addEventListener('click', function (e) {
-            e.preventDefault();
-            adminParentLi.classList.toggle('submenu-open');
-        });
-    }
+    // ── 0. Sidebar sub-link sync + tab-switching ───────────────────────────
+    // Opening/closing sidebar groups is global (initSidebarGroups, top level). The Administration pages
+    // live inside the Settings group, so this handler only keeps that group open and syncs the active sub-link.
+    const adminParentLi  = document.getElementById('nav-group-settings');
 
     /**
      * switchAdminTab(tabName)
@@ -24592,8 +26151,9 @@ async function initAdministrationHandler() {
         const subLink = document.querySelector(`.nav-sublink[data-admin-tab="${tabName}"]`);
         if (subLink) subLink.classList.add('active');
 
-        // Always keep the submenu open while on any administration page
-        if (adminParentLi) adminParentLi.classList.add('submenu-open');
+        // Always keep the Settings group and its Administration dropdown open while on any administration page
+        setSidebarGroupOpen(adminParentLi, true);
+        setSidebarSubgroupOpen(document.getElementById('nav-parent-administration'), true);
     };
 
     // Tab-bar button click — update URL hash param (router skips re-render)
@@ -24624,719 +26184,246 @@ async function initAdministrationHandler() {
     // ── end submenu / tab setup ────────────────────────────────────────────
 
 
-    // ── RBAC Sidebar Modules & Submenus Definitions ──────────────────────────
-    const RBAC_MODULES = [
-        // Main Navigation Menus
-        { key: 'dashboard', name: 'Dashboard', sub: '(Overview & Analytics)', group: 'Main Navigation Menus', tag: 'Main Menu' },
-        { key: 'calendar', name: 'Calendar / Scheduling', sub: '(Appointments & Waiting List)', group: 'Main Navigation Menus', tag: 'Main Menu' },
-        { key: 'patients', name: 'Patients', sub: '(Demographics, Chart & Vitals)', group: 'Main Navigation Menus', tag: 'Main Menu' },
-        { key: 'telehealth', name: 'Telehealth', sub: '(Virtual Video Consultations)', group: 'Main Navigation Menus', tag: 'Main Menu' },
-        { key: 'messaging', name: 'Messages', sub: '(Secure Staff & Patient Chat)', group: 'Main Navigation Menus', tag: 'Main Menu' },
-        { key: 'billing', name: 'Billing', sub: '(Invoices, Claims & Payments)', group: 'Main Navigation Menus', tag: 'Main Menu' },
-        { key: 'referrals', name: 'Referrals', sub: '(Inbound & Outbound Referrals)', group: 'Main Navigation Menus', tag: 'Main Menu' },
-        { key: 'recalls', name: 'Recalls', sub: '(Preventive Care Reminders)', group: 'Main Navigation Menus', tag: 'Main Menu' },
-        { key: 'reports', name: 'Audit & Reports', sub: '(HIPAA Logs & Analytics)', group: 'Main Navigation Menus', tag: 'Main Menu' },
-        { key: 'settings', name: 'Settings', sub: '(System Configuration)', group: 'Main Navigation Menus', tag: 'Main Menu' },
-        // Administration Submenus
-        { key: 'admin_facility', name: 'Facility Management', sub: '(Enterprise Hospital Org)', group: 'Administration Submenus', tag: 'Admin Submenu' },
-        { key: 'admin_specialties', name: 'Specialty Management', sub: '(Clinical Engines & Registry)', group: 'Administration Submenus', tag: 'Admin Submenu' },
-        { key: 'admin_users', name: 'User Management', sub: '(Staff Onboarding & Credentials)', group: 'Administration Submenus', tag: 'Admin Submenu' },
-        { key: 'admin_roles', name: 'Roles & Permissions', sub: '(RBAC Policies & Matrix)', group: 'Administration Submenus', tag: 'Admin Submenu' }
-    ];
+    // ── Roles & Permissions ──────────────────────────────────────────────────────────────────────────────
+    // The 5 built-in roles are fixed and shown read-only (generated server-side from App\Security\Roles).
+    // Custom roles (Super Admin) = a base role (the ceiling) + ticks. The server enforces them (AuthenticationMiddleware),
+    // and a custom role can only narrow its base role - cells the base role lacks are shown as dashes and can't be ticked.
+    let rbacMatrix = null;                      // { areas, roles, custom_roles }
+    let rbacSelected = { type: 'builtin', name: 'Super Admin' };   // or { type: 'custom', id } / { type: 'new' }
+    let rbacDraft = null;                       // working copy of the custom role being edited
+    const RBAC_ACTIONS = ['view', 'create', 'edit', 'delete'];
+    const rbacCollapsed = new Set();            // collapsed group names
 
-    const fullCrudPreset = { view: true, create: true, edit: true, delete: true };
-    const viewEditPreset = { view: true, create: true, edit: true, delete: false };
-    const viewOnlyPreset = { view: true, create: false, edit: false, delete: false };
-    const nonePreset = { view: false, create: false, edit: false, delete: false };
+    const rbacCeiling = (base, areaKey, action) => !!(rbacMatrix?.roles?.[base]?.[areaKey]?.[action]);
 
-    const DEFAULT_ROLE_PERMS = {
-        'Super Admin': {
-            dashboard: fullCrudPreset, calendar: fullCrudPreset, patients: fullCrudPreset, telehealth: fullCrudPreset,
-            messaging: fullCrudPreset, billing: fullCrudPreset, referrals: fullCrudPreset, recalls: fullCrudPreset,
-            reports: fullCrudPreset, settings: fullCrudPreset,
-            admin_facility: fullCrudPreset,
-            admin_specialties: fullCrudPreset, admin_users: fullCrudPreset, admin_roles: fullCrudPreset
-        },
-        'Admin': {
-            dashboard: fullCrudPreset, calendar: fullCrudPreset, patients: fullCrudPreset, telehealth: fullCrudPreset,
-            messaging: fullCrudPreset, billing: fullCrudPreset, referrals: fullCrudPreset, recalls: fullCrudPreset,
-            reports: fullCrudPreset, settings: fullCrudPreset,
-            admin_facility: fullCrudPreset,
-            admin_specialties: fullCrudPreset, admin_users: fullCrudPreset, admin_roles: fullCrudPreset
-        },
-        'Doctor': {
-            dashboard: viewEditPreset, calendar: fullCrudPreset, patients: fullCrudPreset, telehealth: fullCrudPreset,
-            messaging: fullCrudPreset, billing: { view: true, create: true, edit: false, delete: false }, referrals: fullCrudPreset, recalls: viewEditPreset,
-            reports: viewOnlyPreset, settings: nonePreset,
-            admin_facility: nonePreset,
-            admin_specialties: nonePreset, admin_users: nonePreset, admin_roles: nonePreset
-        },
-        'Physician': {
-            dashboard: viewEditPreset, calendar: fullCrudPreset, patients: fullCrudPreset, telehealth: fullCrudPreset,
-            messaging: fullCrudPreset, billing: { view: true, create: true, edit: false, delete: false }, referrals: fullCrudPreset, recalls: viewEditPreset,
-            reports: viewOnlyPreset, settings: nonePreset,
-            admin_facility: nonePreset,
-            admin_specialties: nonePreset, admin_users: nonePreset, admin_roles: nonePreset
-        },
-        'Nurse': {
-            dashboard: viewOnlyPreset, calendar: viewEditPreset, patients: viewEditPreset, telehealth: viewEditPreset,
-            messaging: viewEditPreset, billing: nonePreset, referrals: viewEditPreset, recalls: viewEditPreset,
-            reports: viewOnlyPreset, settings: nonePreset,
-            admin_facility: nonePreset,
-            admin_specialties: nonePreset, admin_users: nonePreset, admin_roles: nonePreset
-        },
-        'Therapist': {
-            dashboard: viewOnlyPreset, calendar: viewEditPreset, patients: viewEditPreset, telehealth: fullCrudPreset,
-            messaging: viewEditPreset, billing: nonePreset, referrals: viewEditPreset, recalls: viewOnlyPreset,
-            reports: nonePreset, settings: nonePreset,
-            admin_facility: nonePreset,
-            admin_specialties: nonePreset, admin_users: nonePreset, admin_roles: nonePreset
-        },
-        'Billing Staff': {
-            dashboard: viewOnlyPreset, calendar: viewOnlyPreset, patients: viewOnlyPreset, telehealth: nonePreset,
-            messaging: viewEditPreset, billing: fullCrudPreset, referrals: nonePreset, recalls: nonePreset,
-            reports: viewEditPreset, settings: nonePreset,
-            admin_facility: nonePreset,
-            admin_specialties: nonePreset, admin_users: nonePreset, admin_roles: nonePreset
-        },
-        'Front Desk': {
-            dashboard: viewOnlyPreset, calendar: fullCrudPreset, patients: viewEditPreset, telehealth: viewOnlyPreset,
-            messaging: viewEditPreset, billing: { view: true, create: true, edit: false, delete: false }, referrals: viewEditPreset, recalls: viewEditPreset,
-            reports: nonePreset, settings: nonePreset,
-            admin_facility: nonePreset,
-            admin_specialties: nonePreset, admin_users: nonePreset, admin_roles: nonePreset
-        }
+    const rbacClampDraft = () => {
+        rbacMatrix.areas.forEach(area => {
+            const cell = (rbacDraft.permissions[area.key] = rbacDraft.permissions[area.key] || {});
+            RBAC_ACTIONS.forEach(act => { if (!rbacCeiling(rbacDraft.base_role, area.key, act)) cell[act] = false; });
+        });
     };
 
-    let cachedRolePolicies = {};
-    let activeRbacRole = 'Super Admin';
-    let rbacMatrixCurrentPage = 1;
-    let rbacMatrixCurrentSearch = '';
+    const renderRolesMatrix = () => {
+        const pillBox = document.getElementById('rbac-role-pill-container');
+        const tbody = document.getElementById('rbac-role-matrix-tbody');
+        const editor = document.getElementById('rbac-custom-editor');
+        if (!pillBox || !tbody) return;
+        if (!rbacMatrix) {
+            tbody.innerHTML = '<tr><td colspan="5" class="center-col">Could not load the role rules.</td></tr>';
+            return;
+        }
+        const editing = rbacSelected.type !== 'builtin' && rbacDraft;
 
-    const renderPermissionsMatrixTbody = (tbodyId, prefix, permsObj = {}, onChangeCallback = null, page = 1, pageSize = (prefix === 'role' ? 7 : 50), searchQuery = '') => {
-        const tbody = document.getElementById(tbodyId);
-        if (!tbody) return;
-
-        // Tree structure definitions
-        const TREE_ITEMS = [
-            { key: 'dashboard', name: 'Dashboard', sub: '(Overview & Analytics)', isParent: false, tag: 'Main Menu' },
-            { key: 'calendar', name: 'Calendar / Scheduling', sub: '(Appointments & Waiting List)', isParent: false, tag: 'Main Menu' },
-            { key: 'patients', name: 'Patients', sub: '(Demographics, Chart & Vitals)', isParent: false, tag: 'Main Menu' },
-            { key: 'telehealth', name: 'Telehealth', sub: '(Virtual Video Consultations)', isParent: false, tag: 'Main Menu' },
-            { key: 'messaging', name: 'Messages', sub: '(Secure Staff & Patient Chat)', isParent: false, tag: 'Main Menu' },
-            { key: 'billing', name: 'Billing', sub: '(Invoices, Claims & Payments)', isParent: false, tag: 'Main Menu' },
-            { key: 'referrals', name: 'Referrals', sub: '(Inbound & Outbound Referrals)', isParent: false, tag: 'Main Menu' },
-            { key: 'recalls', name: 'Recalls', sub: '(Preventive Care Reminders)', isParent: false, tag: 'Main Menu' },
-            {
-                key: 'administration',
-                name: 'Administration',
-                sub: '(Click arrow to manage 3 submenus)',
-                isParent: true,
-                tag: 'Parent Menu',
-                children: [
-                    { key: 'admin_users', name: 'User Management', sub: '(Staff Onboarding & Directory)', tag: 'Admin Submenu' },
-                    { key: 'admin_roles', name: 'Roles & Permissions', sub: '(RBAC Policies & Matrix)', tag: 'Admin Submenu' }
-                ]
-            },
-            { key: 'reports', name: 'Audit & Reports', sub: '(HIPAA Logs & Analytics)', isParent: false, tag: 'Main Menu' },
-            { key: 'settings', name: 'Settings', sub: '(System Configuration)', isParent: false, tag: 'Main Menu' }
-        ];
-
-        // Filter items if search query provided
-        let filteredItems = TREE_ITEMS;
-        const q = (searchQuery || '').toLowerCase().trim();
-        if (q) {
-            filteredItems = TREE_ITEMS.filter(item => {
-                const matchParent = item.name.toLowerCase().includes(q) || item.sub.toLowerCase().includes(q);
-                if (matchParent) return true;
-                if (item.children) {
-                    return item.children.some(c => c.name.toLowerCase().includes(q) || c.sub.toLowerCase().includes(q));
+        // pills: built-in roles, then custom roles, then an unsaved new role
+        const ROLE_ICONS = { 'Super Admin': 'fa-user-shield', 'Doctor': 'fa-user-md', 'Nurse': 'fa-user-nurse', 'Receptionist': 'fa-concierge-bell', 'Billing Staff': 'fa-file-invoice-dollar' };
+        const pill = (key, label, active, extra = '') =>
+            `<button type="button" class="rbac-role-pill ${active ? 'active' : ''}" data-key="${calEscape(key)}" ${extra}><i class="fas ${ROLE_ICONS[label] || 'fa-cog'}"></i> ${calEscape(label)}</button>`;
+        let pills = Object.keys(rbacMatrix.roles).map(r => pill('b:' + r, r, rbacSelected.type === 'builtin' && rbacSelected.name === r)).join('');
+        pills += (rbacMatrix.custom_roles || []).map(r =>
+            pill('c:' + r.id, r.name, rbacSelected.type === 'custom' && rbacSelected.id === r.id, `title="Custom role, based on ${calEscape(r.base_role)} (${r.user_count} user${r.user_count === 1 ? '' : 's'})"`)
+        ).join('');
+        if (rbacSelected.type === 'new') pills += pill('new', 'New role', true);
+        pillBox.innerHTML = pills;
+        pillBox.querySelectorAll('.rbac-role-pill').forEach(p => {
+            p.onclick = () => {
+                const key = p.dataset.key;
+                if (key === 'new') return;
+                if (key.startsWith('b:')) { rbacSelected = { type: 'builtin', name: key.slice(2) }; rbacDraft = null; }
+                else {
+                    const id = parseInt(key.slice(2), 10);
+                    const role = (rbacMatrix.custom_roles || []).find(r => r.id === id);
+                    if (!role) return;
+                    rbacSelected = { type: 'custom', id };
+                    rbacDraft = JSON.parse(JSON.stringify(role));
                 }
-                return false;
-            });
-        }
-
-        // Pagination calculation
-        const totalItems = filteredItems.length;
-        const totalPages = Math.ceil(totalItems / pageSize) || 1;
-        const curPage = Math.min(Math.max(page, 1), totalPages);
-        if (prefix === 'role') {
-            rbacMatrixCurrentPage = curPage;
-            rbacMatrixCurrentSearch = searchQuery || '';
-        }
-        const startIndex = (curPage - 1) * pageSize;
-        const pageItems = filteredItems.slice(startIndex, startIndex + pageSize);
-
-        let html = '';
-
-        pageItems.forEach(item => {
-            if (item.isParent) {
-                // Check if all children have permissions checked
-                const childKeys = item.children.map(c => c.key);
-                const isViewAll = childKeys.every(k => permsObj?.[k]?.view === true || permsObj?.[k]?.view === 1);
-                const isCreateAll = childKeys.every(k => permsObj?.[k]?.create === true || permsObj?.[k]?.create === 1);
-                const isEditAll = childKeys.every(k => permsObj?.[k]?.edit === true || permsObj?.[k]?.edit === 1);
-                const isDeleteAll = childKeys.every(k => permsObj?.[k]?.delete === true || permsObj?.[k]?.delete === 1);
-
-                // Parent Row with Clickable Chevron Arrow
-                html += `
-                    <tr class="rbac-tree-row-parent" data-parent-key="${item.key}">
-                        <td>
-                            <div style="display: flex; align-items: center; cursor: pointer;" class="rbac-parent-toggle-btn" data-target="${item.key}">
-                                <span class="rbac-tree-arrow ${q ? 'open' : ''}" id="${prefix}-arrow-${item.key}">
-                                    <i class="fas fa-chevron-right"></i>
-                                </span>
-                                <div>
-                                    <div style="display: flex; align-items: center; gap: 6px;">
-                                        <strong style="color: #0f172a; font-size: 0.92rem;">${item.name}</strong>
-                                        <span class="rbac-menu-tag rbac-menu-tag-parent">3 Submenus</span>
-                                    </div>
-                                    <span class="rbac-module-sub" style="font-size: 0.76rem; color: #0284c7;">Click arrow or row to view submenus</span>
-                                </div>
-                            </div>
-                        </td>
-                        <td class="center-col">
-                            <label class="rbac-cb-label">
-                                <input type="checkbox" class="rbac-cb-input ${prefix}-parent-cb" data-parent="${item.key}" data-action="view" ${isViewAll ? 'checked' : ''} title="Toggle View for all submenus">
-                            </label>
-                        </td>
-                        <td class="center-col">
-                            <label class="rbac-cb-label">
-                                <input type="checkbox" class="rbac-cb-input ${prefix}-parent-cb" data-parent="${item.key}" data-action="create" ${isCreateAll ? 'checked' : ''} title="Toggle Create for all submenus">
-                            </label>
-                        </td>
-                        <td class="center-col">
-                            <label class="rbac-cb-label">
-                                <input type="checkbox" class="rbac-cb-input ${prefix}-parent-cb" data-parent="${item.key}" data-action="edit" ${isEditAll ? 'checked' : ''} title="Toggle Edit for all submenus">
-                            </label>
-                        </td>
-                        <td class="center-col">
-                            <label class="rbac-cb-label">
-                                <input type="checkbox" class="rbac-cb-input ${prefix}-parent-cb" data-parent="${item.key}" data-action="delete" ${isDeleteAll ? 'checked' : ''} title="Toggle Delete for all submenus">
-                            </label>
-                        </td>
-                    </tr>
-                `;
-
-                // Submenu child rows (indented under Administration)
-                item.children.forEach(child => {
-                    const p = permsObj?.[child.key] || {};
-                    const isView = p.view === true || p.view === 1;
-                    const isCreate = p.create === true || p.create === 1;
-                    const isEdit = p.edit === true || p.edit === 1;
-                    const isDelete = p.delete === true || p.delete === 1;
-
-                    html += `
-                        <tr class="rbac-sub-row ${prefix}-sub-${item.key} ${q ? '' : 'hidden-sub'}" data-parent="${item.key}">
-                            <td class="rbac-sub-indent">
-                                <div style="display: flex; align-items: center; gap: 6px;">
-                                    <span class="rbac-sub-tree-prefix">└──</span>
-                                    <span class="rbac-module-name" style="font-size: 0.88rem;">${child.name}</span>
-                                    <span class="rbac-menu-tag rbac-menu-tag-sub">Submenu</span>
-                                </div>
-                                <span class="rbac-module-sub" style="margin-left: 28px;">${child.sub}</span>
-                            </td>
-                            <td class="center-col">
-                                <label class="rbac-cb-label">
-                                    <input type="checkbox" class="rbac-cb-input ${prefix}-perm-cb ${prefix}-child-cb-${item.key}" data-parent="${item.key}" data-module="${child.key}" data-action="view" ${isView ? 'checked' : ''}>
-                                </label>
-                            </td>
-                            <td class="center-col">
-                                <label class="rbac-cb-label">
-                                    <input type="checkbox" class="rbac-cb-input ${prefix}-perm-cb ${prefix}-child-cb-${item.key}" data-parent="${item.key}" data-module="${child.key}" data-action="create" ${isCreate ? 'checked' : ''}>
-                                </label>
-                            </td>
-                            <td class="center-col">
-                                <label class="rbac-cb-label">
-                                    <input type="checkbox" class="rbac-cb-input ${prefix}-perm-cb ${prefix}-child-cb-${item.key}" data-parent="${item.key}" data-module="${child.key}" data-action="edit" ${isEdit ? 'checked' : ''}>
-                                </label>
-                            </td>
-                            <td class="center-col">
-                                <label class="rbac-cb-label">
-                                    <input type="checkbox" class="rbac-cb-input ${prefix}-perm-cb ${prefix}-child-cb-${item.key}" data-parent="${item.key}" data-module="${child.key}" data-action="delete" ${isDelete ? 'checked' : ''}>
-                                </label>
-                            </td>
-                        </tr>
-                    `;
-                });
-
-            } else {
-                // Standalone Module Row
-                const p = permsObj?.[item.key] || {};
-                const isView = p.view === true || p.view === 1;
-                const isCreate = p.create === true || p.create === 1;
-                const isEdit = p.edit === true || p.edit === 1;
-                const isDelete = p.delete === true || p.delete === 1;
-
-                html += `
-                    <tr>
-                        <td>
-                            <div style="display: flex; align-items: center; gap: 6px;">
-                                <span class="rbac-module-name">${item.name}</span>
-                                <span class="rbac-menu-tag rbac-menu-tag-main">${item.tag}</span>
-                            </div>
-                            <span class="rbac-module-sub">${item.sub}</span>
-                        </td>
-                        <td class="center-col">
-                            <label class="rbac-cb-label">
-                                <input type="checkbox" class="rbac-cb-input ${prefix}-perm-cb" data-module="${item.key}" data-action="view" ${isView ? 'checked' : ''}>
-                            </label>
-                        </td>
-                        <td class="center-col">
-                            <label class="rbac-cb-label">
-                                <input type="checkbox" class="rbac-cb-input ${prefix}-perm-cb" data-module="${item.key}" data-action="create" ${isCreate ? 'checked' : ''}>
-                            </label>
-                        </td>
-                        <td class="center-col">
-                            <label class="rbac-cb-label">
-                                <input type="checkbox" class="rbac-cb-input ${prefix}-perm-cb" data-module="${item.key}" data-action="edit" ${isEdit ? 'checked' : ''}>
-                            </label>
-                        </td>
-                        <td class="center-col">
-                            <label class="rbac-cb-label">
-                                <input type="checkbox" class="rbac-cb-input ${prefix}-perm-cb" data-module="${item.key}" data-action="delete" ${isDelete ? 'checked' : ''}>
-                            </label>
-                        </td>
-                    </tr>
-                `;
-            }
+                renderRolesMatrix();
+            };
         });
 
-        if (pageItems.length === 0) {
-            html = `<tr><td colspan="5" style="text-align: center; color: #94a3b8; padding: 24px;">No matching menus found for "${searchQuery}".</td></tr>`;
+        // editor card (custom / new only)
+        if (editor) {
+            editor.style.display = editing ? 'block' : 'none';
+            if (editing) {
+                const nameEl = document.getElementById('rbac-role-name');
+                const baseEl = document.getElementById('rbac-role-base');
+                const descEl = document.getElementById('rbac-role-desc');
+                if (document.activeElement !== nameEl) nameEl.value = rbacDraft.name || '';
+                if (document.activeElement !== descEl) descEl.value = rbacDraft.description || '';
+                baseEl.value = rbacDraft.base_role;
+                const used = rbacDraft.user_count || 0;
+                baseEl.disabled = used > 0;       // server refuses a base-role change while users are assigned
+                const note = document.getElementById('rbac-custom-users-note');
+                if (note) note.textContent = used > 0
+                    ? `${used} user${used === 1 ? '' : 's'} use this role, so its base role is locked and it can't be deleted until they are reassigned.`
+                    : '';
+                const delBtn = document.getElementById('btn-delete-custom-role');
+                if (delBtn) {
+                    // Always visible for a saved custom role; disabled (with the reason) while people are still assigned to it.
+                    delBtn.style.display = rbacSelected.type === 'custom' ? 'inline-flex' : 'none';
+                    delBtn.disabled = used > 0;
+                    delBtn.title = used > 0 ? 'Reassign the users on this role first, then you can delete it.' : 'Delete this custom role';
+                }
+            }
         }
 
-        tbody.innerHTML = html;
+        // Matrix: one row per area, one cell per action (View / Create / Edit / Delete), grouped and collapsible.
+        // Cell colour = the row's level: green when the role has everything its base role can do there ("full access"),
+        // blue when it has only some of it ("limited / view only"), empty when none. Custom roles click cells; built-in roles are read-only.
+        const AREA_ICONS = {
+            dashboard: 'fa-home', messaging: 'fa-bell', calendar: 'fa-calendar-alt', telehealth: 'fa-video', patients: 'fa-users',
+            referrals: 'fa-share-square', recalls: 'fa-redo-alt', encounters: 'fa-notes-medical', encounter_sign: 'fa-signature',
+            orders: 'fa-vial', medications: 'fa-pills', allergies_problems: 'fa-allergies', documents: 'fa-file-alt',
+            billing: 'fa-file-invoice-dollar', admin_facility: 'fa-hospital', admin_specialties: 'fa-heartbeat',
+            admin_users: 'fa-user-cog', admin_roles: 'fa-user-shield', settings: 'fa-cog', audit: 'fa-clipboard-list'
+        };
+        const GROUP_ICONS = { 'General': 'fa-th-large', 'Front desk': 'fa-calendar-check', 'Clinical': 'fa-stethoscope', 'Billing': 'fa-file-invoice-dollar', 'Administration': 'fa-cog' };
+        const builtIn = rbacSelected.type === 'builtin' ? (rbacMatrix.roles[rbacSelected.name] || {}) : null;
+        const permsOf = (areaKey) => builtIn ? (builtIn[areaKey] || {}) : (rbacDraft.permissions?.[areaKey] || {});
+        const ceilOf = (areaKey) => RBAC_ACTIONS.filter(act => builtIn ? !!builtIn[areaKey]?.[act] : rbacCeiling(rbacDraft.base_role, areaKey, act));
+        const q = (document.getElementById('rbac-search')?.value || '').trim().toLowerCase();
 
-        // Wire Expand/Collapse Arrow Click
-        tbody.querySelectorAll('.rbac-parent-toggle-btn').forEach(btn => {
+        const cellHtml = (a, act) => {
+            const ceil = ceilOf(a.key);
+            const have = RBAC_ACTIONS.filter(x => permsOf(a.key)[x]);
+            const on = !!permsOf(a.key)[act];
+            const full = have.length > 0 && have.length === ceil.length && ceil.length > 1;
+            const cls = on ? (full ? 'on-full' : 'on-part') : 'off';
+            if (builtIn) {
+                return `<td class="center-col"><span class="rbac-cell ${cls}" aria-label="${calEscape(a.label)} ${act}: ${on ? 'allowed' : 'not allowed'}">${on ? '<i class="fas fa-check"></i>' : ''}</span></td>`;
+            }
+            if (!ceil.includes(act)) {
+                return `<td class="center-col"><span class="rbac-cell na" title="Not available for this base role" aria-label="${calEscape(a.label)} ${act}: not available"></span></td>`;
+            }
+            return `<td class="center-col"><button type="button" class="rbac-cell rbac-cell-btn ${cls}" data-area="${calEscape(a.key)}" data-action="${act}" aria-pressed="${on}" aria-label="${calEscape(a.label)} ${act}">${on ? '<i class="fas fa-check"></i>' : ''}</button></td>`;
+        };
+
+        const shown = rbacMatrix.areas.filter(a => !q || a.label.toLowerCase().includes(q) || a.group.toLowerCase().includes(q));
+        let lastGroup = null, html = '';
+        shown.forEach(a => {
+            if (a.group !== lastGroup) {
+                lastGroup = a.group;
+                const collapsed = rbacCollapsed.has(a.group) && !q;
+                html += `<tr class="rbac-group-header-row" data-group="${calEscape(a.group)}"><td class="rbac-group-header-cell" colspan="5"><i class="fas fa-chevron-${collapsed ? 'right' : 'down'} rbac-chev"></i><i class="fas ${GROUP_ICONS[a.group] || 'fa-folder'} rbac-group-icon"></i>${calEscape(a.group)}</td></tr>`;
+            }
+            if (rbacCollapsed.has(a.group) && !q) return;
+            html += `<tr><td><span class="rbac-area"><i class="fas ${AREA_ICONS[a.key] || 'fa-circle'} rbac-area-icon"></i><span class="rbac-module-name">${calEscape(a.label)}</span></span></td>`
+                + RBAC_ACTIONS.map(act => cellHtml(a, act)).join('') + '</tr>';
+        });
+        tbody.innerHTML = html || '<tr><td colspan="5" class="center-col">No matching area.</td></tr>';
+
+        tbody.querySelectorAll('.rbac-group-header-row').forEach(row => {
+            row.onclick = () => {
+                const g = row.dataset.group;
+                if (rbacCollapsed.has(g)) rbacCollapsed.delete(g); else rbacCollapsed.add(g);
+                renderRolesMatrix();
+            };
+        });
+        tbody.querySelectorAll('.rbac-cell-btn').forEach(btn => {
             btn.onclick = () => {
-                const targetKey = btn.getAttribute('data-target');
-                const arrow = document.getElementById(`${prefix}-arrow-${targetKey}`);
-                const subRows = tbody.querySelectorAll(`.${prefix}-sub-${targetKey}`);
-                const isOpen = arrow?.classList.contains('open');
-
-                if (isOpen) {
-                    arrow?.classList.remove('open');
-                    subRows.forEach(r => r.classList.add('hidden-sub'));
-                } else {
-                    arrow?.classList.add('open');
-                    subRows.forEach(r => r.classList.remove('hidden-sub'));
-                }
+                const area = btn.dataset.area, act = btn.dataset.action;
+                const cell = (rbacDraft.permissions[area] = rbacDraft.permissions[area] || {});
+                cell[act] = !cell[act];
+                if (act === 'view' && !cell.view) RBAC_ACTIONS.forEach(x => { cell[x] = false; });                       // no view = nothing else
+                if (act !== 'view' && cell[act] && rbacCeiling(rbacDraft.base_role, area, 'view')) cell.view = true;     // doing something implies seeing it
+                renderRolesMatrix();
             };
         });
+    };
 
-        // Wire Parent Checkbox Cascade
-        tbody.querySelectorAll(`.${prefix}-parent-cb`).forEach(parentCb => {
-            parentCb.onchange = () => {
-                const parentKey = parentCb.getAttribute('data-parent');
-                const action = parentCb.getAttribute('data-action');
-                const isChecked = parentCb.checked;
-
-                tbody.querySelectorAll(`.${prefix}-child-cb-${parentKey}[data-action="${action}"]`).forEach(childCb => {
-                    childCb.checked = isChecked;
-                    const childMod = childCb.getAttribute('data-module');
-                    if (prefix === 'role' && cachedRolePolicies[activeRbacRole]) {
-                        if (!cachedRolePolicies[activeRbacRole].permissions_matrix) cachedRolePolicies[activeRbacRole].permissions_matrix = {};
-                        if (!cachedRolePolicies[activeRbacRole].permissions_matrix[childMod]) cachedRolePolicies[activeRbacRole].permissions_matrix[childMod] = {};
-                        cachedRolePolicies[activeRbacRole].permissions_matrix[childMod][action] = isChecked;
-                    }
-                });
-
-                if (typeof onChangeCallback === 'function') onChangeCallback();
-            };
-        });
-
-        // Wire Child Checkbox Sync
-        tbody.querySelectorAll(`.${prefix}-perm-cb`).forEach(childCb => {
-            childCb.addEventListener('change', () => {
-                const mod = childCb.getAttribute('data-module');
-                const action = childCb.getAttribute('data-action');
-                const isChecked = childCb.checked;
-
-                if (prefix === 'role' && cachedRolePolicies[activeRbacRole]) {
-                    if (!cachedRolePolicies[activeRbacRole].permissions_matrix) cachedRolePolicies[activeRbacRole].permissions_matrix = {};
-                    if (!cachedRolePolicies[activeRbacRole].permissions_matrix[mod]) cachedRolePolicies[activeRbacRole].permissions_matrix[mod] = {};
-                    cachedRolePolicies[activeRbacRole].permissions_matrix[mod][action] = isChecked;
-                }
-
-                const parentKey = childCb.getAttribute('data-parent');
-                if (parentKey) {
-                    const allChildren = Array.from(tbody.querySelectorAll(`.${prefix}-child-cb-${parentKey}[data-action="${action}"]`));
-                    const allChecked = allChildren.every(c => c.checked);
-                    const parentCb = tbody.querySelector(`.${prefix}-parent-cb[data-parent="${parentKey}"][data-action="${action}"]`);
-                    if (parentCb) parentCb.checked = allChecked;
-                }
-                if (typeof onChangeCallback === 'function') onChangeCallback();
-            });
-        });
-
-        // Disable checkboxes if current user doesn't have edit permission on roles
-        if (prefix === 'role') {
-            const canEditRole = isSuperAdmin || (userPerms?.admin_roles?.edit === true || userPerms?.admin_roles?.edit === 1);
-            if (!canEditRole) {
-                tbody.querySelectorAll('input[type="checkbox"]').forEach(cb => {
-                    cb.disabled = true;
-                });
-            }
+    const loadRolesMatrix = async (selectAfter = null) => {
+        const res = await ApiService.request('/api/roles/matrix');
+        rbacMatrix = (res && res.status === 'success' && res.data && res.data.roles) ? res.data : null;
+        if (rbacMatrix && selectAfter) {
+            const role = (rbacMatrix.custom_roles || []).find(r => r.id === selectAfter);
+            if (role) { rbacSelected = { type: 'custom', id: role.id }; rbacDraft = JSON.parse(JSON.stringify(role)); }
         }
+        renderRolesMatrix();
+    };
 
-        // Update Pagination Toolbar (if on Tab 4)
-        if (prefix === 'role') {
-            const infoEl = document.getElementById('rbac-pagination-info');
-            const pagesEl = document.getElementById('rbac-pagination-pages');
-            if (infoEl) {
-                const startNum = totalItems === 0 ? 0 : startIndex + 1;
-                const endNum = Math.min(startIndex + pageSize, totalItems);
-                infoEl.textContent = `Showing ${startNum} to ${endNum} of ${totalItems} menus`;
-            }
-            if (pagesEl) {
-                let pagesHtml = '';
-                pagesHtml += `<button type="button" class="rbac-page-btn" id="rbac-prev-page-btn" ${curPage <= 1 ? 'disabled' : ''}>&larr; Prev</button>`;
-                for (let i = 1; i <= totalPages; i++) {
-                    pagesHtml += `<button type="button" class="rbac-page-btn ${i === curPage ? 'active' : ''}" data-page="${i}">${i}</button>`;
-                }
-                pagesHtml += `<button type="button" class="rbac-page-btn" id="rbac-next-page-btn" ${curPage >= totalPages ? 'disabled' : ''}>Next &rarr;</button>`;
-                pagesEl.innerHTML = pagesHtml;
+    document.getElementById('rbac-search')?.addEventListener('input', () => { if (rbacMatrix) renderRolesMatrix(); });
 
-                pagesEl.querySelectorAll('.rbac-page-btn[data-page]').forEach(pBtn => {
-                    pBtn.onclick = () => {
-                        const targetP = parseInt(pBtn.getAttribute('data-page'), 10);
-                        const currentPerms = cachedRolePolicies[activeRbacRole]?.permissions_matrix || permsObj;
-                        renderPermissionsMatrixTbody(tbodyId, prefix, currentPerms, onChangeCallback, targetP, pageSize, searchQuery);
-                    };
-                });
-
-                const prevBtn = document.getElementById('rbac-prev-page-btn');
-                if (prevBtn) {
-                    prevBtn.onclick = () => {
-                        const currentPerms = cachedRolePolicies[activeRbacRole]?.permissions_matrix || permsObj;
-                        renderPermissionsMatrixTbody(tbodyId, prefix, currentPerms, onChangeCallback, curPage - 1, pageSize, searchQuery);
-                    };
-                }
-
-                const nextBtn = document.getElementById('rbac-next-page-btn');
-                if (nextBtn) {
-                    nextBtn.onclick = () => {
-                        const currentPerms = cachedRolePolicies[activeRbacRole]?.permissions_matrix || permsObj;
-                        renderPermissionsMatrixTbody(tbodyId, prefix, currentPerms, onChangeCallback, curPage + 1, pageSize, searchQuery);
-                    };
-                }
-            }
+    document.getElementById('btn-add-custom-role')?.addEventListener('click', () => {
+        if (!rbacMatrix) return;
+        rbacSelected = { type: 'new' };
+        rbacDraft = { id: null, name: '', description: '', base_role: 'Nurse', permissions: {}, user_count: 0 };
+        renderRolesMatrix();
+        document.getElementById('rbac-role-name')?.focus();
+    });
+    document.getElementById('rbac-role-name')?.addEventListener('input', e => { if (rbacDraft) rbacDraft.name = e.target.value; });
+    document.getElementById('rbac-role-desc')?.addEventListener('input', e => { if (rbacDraft) rbacDraft.description = e.target.value; });
+    document.getElementById('rbac-role-base')?.addEventListener('change', e => {
+        if (!rbacDraft) return;
+        rbacDraft.base_role = e.target.value;
+        rbacClampDraft();                       // drop ticks the new base role doesn't have
+        renderRolesMatrix();
+    });
+    document.getElementById('btn-cancel-custom-role')?.addEventListener('click', () => {
+        rbacSelected = { type: 'builtin', name: 'Super Admin' };
+        rbacDraft = null;
+        renderRolesMatrix();
+    });
+    document.getElementById('btn-save-custom-role')?.addEventListener('click', async () => {
+        if (!rbacDraft) return;
+        const name = (rbacDraft.name || '').trim();
+        if (!name) { Toast.show('Role name is required.', 'error'); return; }
+        rbacClampDraft();
+        if (!Object.values(rbacDraft.permissions).some(c => Object.values(c).some(Boolean))) {
+            Toast.show('Tick at least one permission for this role.', 'error');
+            return;
         }
-    };
-
-    const extractPermissionsMatrixFromTbody = (prefix) => {
-        const result = {};
-        const allModules = [
-            'dashboard', 'calendar', 'patients', 'telehealth', 'messaging',
-            'billing', 'referrals', 'recalls', 'reports', 'settings',
-            'admin_facility', 'admin_specialties', 'admin_users', 'admin_roles'
-        ];
-
-        allModules.forEach(key => {
-            const viewCb = document.querySelector(`.${prefix}-perm-cb[data-module="${key}"][data-action="view"]`);
-            const createCb = document.querySelector(`.${prefix}-perm-cb[data-module="${key}"][data-action="create"]`);
-            const editCb = document.querySelector(`.${prefix}-perm-cb[data-module="${key}"][data-action="edit"]`);
-            const deleteCb = document.querySelector(`.${prefix}-perm-cb[data-module="${key}"][data-action="delete"]`);
-
-            result[key] = {
-                view: viewCb ? viewCb.checked : (cachedRolePolicies[activeRbacRole]?.permissions_matrix?.[key]?.view ?? false),
-                create: createCb ? createCb.checked : (cachedRolePolicies[activeRbacRole]?.permissions_matrix?.[key]?.create ?? false),
-                edit: editCb ? editCb.checked : (cachedRolePolicies[activeRbacRole]?.permissions_matrix?.[key]?.edit ?? false),
-                delete: deleteCb ? deleteCb.checked : (cachedRolePolicies[activeRbacRole]?.permissions_matrix?.[key]?.delete ?? false)
-            };
-        });
-        return result;
-    };
-
-    const renderRolePills = () => {
-        const container = document.getElementById('rbac-role-pill-container');
-        if (!container) return;
-
-        const roles = Object.keys(cachedRolePolicies).filter(r => {
-            const t = cachedRolePolicies[r].role_type;
-            return t === 'security' || t === 'both';
-        });
-        if (!roles.includes('Super Admin')) roles.unshift('Super Admin');
-        if (!roles.includes(activeRbacRole)) activeRbacRole = roles[0] || 'Super Admin';
-
-        container.innerHTML = roles.map(r => `
-            <button type="button" class="rbac-role-pill ${r === activeRbacRole ? 'active' : ''}" data-role="${r}">${r}</button>
-        `).join('');
-
-        container.querySelectorAll('.rbac-role-pill').forEach(pill => {
-            pill.onclick = () => {
-                const r = pill.getAttribute('data-role');
-                selectRbacRole(r);
-            };
-        });
-
-        // Update Security Role dropdown in User form
-        const secRoleDropdown = document.getElementById('staff-security-role');
-        if (secRoleDropdown) {
-            const currentVal = secRoleDropdown.value;
-            secRoleDropdown.innerHTML = roles.map(r => `<option value="${r}" ${r === currentVal ? 'selected' : ''}>${r}</option>`).join('');
-        }
-    };
-
-    // Single fetch against the unified custom_roles table — feeds the Roles & Permissions
-    // pills/matrix here AND (via cachedCustomRoleTemplates, set once this resolves) the
-    // Staff wizard's Step 4 Role Template cards. Replaces the old separate rbac_policies fetch.
-    const loadRbacPolicies = async () => {
-        const res = await ApiService.request('/api/roles/custom');
-        const roles = (res.status === 'success' && Array.isArray(res.data)) ? res.data : [];
-
-        cachedRolePolicies = {};
-        roles.forEach(r => {
-            let matrix = r.permissions_matrix;
-            if (typeof matrix === 'string') {
-                try { matrix = JSON.parse(matrix); } catch (e) { matrix = null; }
-            }
-            if (!matrix || typeof matrix !== 'object') {
-                matrix = DEFAULT_ROLE_PERMS[r.name] || null;
-            }
-            let perms = r.permissions;
-            if (typeof perms === 'string') {
-                try { perms = JSON.parse(perms); } catch (e) { perms = []; }
-            }
-            cachedRolePolicies[r.name] = {
-                ...r,
-                role: r.name,
-                permissions: Array.isArray(perms) ? perms : [],
-                permissions_matrix: matrix
-            };
-        });
-
-        renderRolePills();
-        renderActiveRoleMatrix();
-    };
-
-    const renderActiveRoleMatrix = () => {
-        const canEditRole = isSuperAdmin || (userPerms?.admin_roles?.edit === true || userPerms?.admin_roles?.edit === 1);
-        const canDeleteRole = isSuperAdmin || (userPerms?.admin_roles?.delete === true || userPerms?.admin_roles?.delete === 1);
-        const activeRole = cachedRolePolicies[activeRbacRole] || null;
-        const isSystemRole = !!activeRole?.is_system;
-
-        const titleEl = document.getElementById('rbac-active-role-title');
-        if (titleEl) titleEl.textContent = activeRbacRole;
-
-        const delBtn = document.getElementById('btn-rbac-delete-role');
-        if (delBtn) {
-            delBtn.style.display = (!isSystemRole && canDeleteRole) ? 'inline-block' : 'none';
-        }
-
-        const selectAllBtn = document.getElementById('btn-rbac-select-all');
-        if (selectAllBtn) selectAllBtn.style.display = canEditRole ? 'inline-flex' : 'none';
-
-        const clearAllBtn = document.getElementById('btn-rbac-clear-all');
-        if (clearAllBtn) clearAllBtn.style.display = canEditRole ? 'inline-flex' : 'none';
-
-        const saveBtn = document.getElementById('save-rbac-policies-btn');
-        if (saveBtn) saveBtn.style.display = canEditRole ? 'inline-flex' : 'none';
-
-        // Identity fields
-        const idInput = document.getElementById('customrole-id');
-        if (idInput) idInput.value = activeRole?.id || '';
-        const nameInput = document.getElementById('customrole-name');
-        if (nameInput) { nameInput.value = activeRbacRole; nameInput.disabled = isSystemRole; }
-        const baseRoleSelect = document.getElementById('customrole-base-role');
-        if (baseRoleSelect) { baseRoleSelect.value = activeRole?.base_role || activeRbacRole; baseRoleSelect.disabled = isSystemRole; }
-        const roleTypeSelect = document.getElementById('customrole-role-type');
-        if (roleTypeSelect) roleTypeSelect.value = activeRole?.role_type || 'security';
-        const descInput = document.getElementById('customrole-description');
-        if (descInput) descInput.value = activeRole?.description || '';
-        const iconSelect = document.getElementById('customrole-icon');
-        if (iconSelect) iconSelect.value = activeRole?.icon || 'fas fa-id-badge';
-        const systemNote = document.getElementById('customrole-system-note');
-        if (systemNote) systemNote.textContent = isSystemRole ? 'This is a built-in role — its name and base role are locked, but permissions can still be customized.' : '';
-
-        // Feature permission checkboxes (used by the Staff wizard's Role Template cards)
-        const activePerms = activeRole?.permissions || [];
-        document.querySelectorAll('.customrole-perm-cb').forEach(cb => {
-            cb.checked = activePerms.includes(cb.value);
-        });
-
-        const searchInput = document.getElementById('rbac-matrix-search');
-        const q = searchInput?.value || '';
-
-        const rolePerms = activeRole?.permissions_matrix || DEFAULT_ROLE_PERMS[activeRbacRole] || DEFAULT_ROLE_PERMS['Super Admin'];
-        renderPermissionsMatrixTbody('rbac-role-matrix-tbody', 'role', rolePerms, null, rbacMatrixCurrentPage, 7, q);
-    };
-
-    const selectRbacRole = (roleName) => {
-        activeRbacRole = roleName;
-        rbacMatrixCurrentPage = 1;
-        document.querySelectorAll('#rbac-role-pill-container .rbac-role-pill').forEach(pill => {
-            if (pill.getAttribute('data-role') === roleName) {
-                pill.classList.add('active');
+        const btn = document.getElementById('btn-save-custom-role');
+        btn.disabled = true;
+        try {
+            const body = { name, description: (rbacDraft.description || '').trim(), base_role: rbacDraft.base_role, permissions: rbacDraft.permissions };
+            const res = rbacDraft.id
+                ? await ApiService.request(`/api/roles/custom/${rbacDraft.id}`, 'PUT', body)
+                : await ApiService.request('/api/roles/custom', 'POST', body);
+            if (res.status === 'success') {
+                Toast.show(res.message || 'Custom role saved.', 'success');
+                await loadRolesMatrix(rbacDraft.id || res.id);
             } else {
-                pill.classList.remove('active');
+                Toast.show(res.message || 'Could not save the role.', 'error');
             }
+        } catch (err) {
+            Toast.show('An unexpected error occurred while saving the role.', 'error');
+        } finally {
+            btn.disabled = false;
+        }
+    });
+    document.getElementById('btn-delete-custom-role')?.addEventListener('click', async () => {
+        if (!rbacDraft?.id) return;
+        const confirmRes = await BsAlert.fire({
+            title: 'Delete this custom role?',
+            text: `"${rbacDraft.name}" will be removed. This cannot be undone.`,
+            icon: 'warning',
+            showCancelButton: true,
+            confirmButtonText: 'Delete',
+            confirmButtonColor: '#dc2626'
         });
-        renderActiveRoleMatrix();
-    };
-
-    // Live search input in Tab 4
-    const rbacSearchInput = document.getElementById('rbac-matrix-search');
-    if (rbacSearchInput) {
-        rbacSearchInput.oninput = (e) => {
-            const q = e.target.value;
-            const rolePerms = cachedRolePolicies[activeRbacRole]?.permissions_matrix || DEFAULT_ROLE_PERMS[activeRbacRole] || DEFAULT_ROLE_PERMS['Super Admin'];
-            renderPermissionsMatrixTbody('rbac-role-matrix-tbody', 'role', rolePerms, null, 1, 7, q);
-        };
-    }
-
-    // Expand/Collapse All Submenus button in Tab 4
-    const btnToggleAllSubmenus = document.getElementById('btn-rbac-toggle-all-submenus');
-    if (btnToggleAllSubmenus) {
-        let allSubOpen = false;
-        btnToggleAllSubmenus.onclick = () => {
-            allSubOpen = !allSubOpen;
-            const arrows = document.querySelectorAll('#rbac-role-matrix-tbody .rbac-tree-arrow');
-            const subRows = document.querySelectorAll('#rbac-role-matrix-tbody .rbac-sub-row');
-            if (allSubOpen) {
-                arrows.forEach(a => a.classList.add('open'));
-                subRows.forEach(r => r.classList.remove('hidden-sub'));
-                btnToggleAllSubmenus.innerHTML = '<i class="fas fa-folder" style="margin-right: 4px; color: #0284c7;"></i> Collapse Submenus';
-            } else {
-                arrows.forEach(a => a.classList.remove('open'));
-                subRows.forEach(r => r.classList.add('hidden-sub'));
-                btnToggleAllSubmenus.innerHTML = '<i class="fas fa-folder-open" style="margin-right: 4px; color: #0284c7;"></i> Expand Submenus';
-            }
-        };
-    }
-
-    // Role pill clicks
-    document.querySelectorAll('#rbac-role-pill-container .rbac-role-pill').forEach(pill => {
-        pill.onclick = () => {
-            const r = pill.getAttribute('data-role');
-            selectRbacRole(r);
-        };
+        if (!confirmRes.isConfirmed) return;
+        const res = await ApiService.request(`/api/roles/custom/${rbacDraft.id}`, 'DELETE');
+        if (res.status === 'success') {
+            Toast.show(res.message || 'Custom role deleted.', 'success');
+            rbacSelected = { type: 'builtin', name: 'Super Admin' };
+            rbacDraft = null;
+            await loadRolesMatrix();
+        } else {
+            Toast.show(res.message || 'Could not delete the role.', 'error');
+        }
     });
 
-    const RBAC_ALL_MODULE_KEYS = [
-        'dashboard', 'calendar', 'patients', 'telehealth', 'messaging',
-        'billing', 'referrals', 'recalls', 'reports', 'settings',
-        'admin_facility', 'admin_specialties', 'admin_users', 'admin_roles'
-    ];
+    // Custom roles offered in the user wizard's "Access Role" select (value = id, data-base = base role)
+    const loadCustomRoleOptions = async (selectedId) => {
+        const sel = document.getElementById('staff-custom-role');
+        if (!sel) return;
+        const res = await ApiService.request('/api/roles/options');
+        const rows = (res && res.status === 'success' && Array.isArray(res.data)) ? res.data : [];
+        sel.innerHTML = '<option value="">Standard (from Job Role)</option>' + rows.map(r =>
+            `<option value="${r.id}" data-base="${calEscape(r.base_role)}" ${String(r.id) === String(selectedId || '') ? 'selected' : ''}>${calEscape(r.name)} (based on ${calEscape(r.base_role)})</option>`
+        ).join('');
+    };
 
-    // Select All / Clear All buttons in Tab 4
-    const btnRbacSelectAll = document.getElementById('btn-rbac-select-all');
-    if (btnRbacSelectAll) {
-        btnRbacSelectAll.onclick = () => {
-            document.querySelectorAll('#rbac-role-matrix-tbody .role-perm-cb').forEach(cb => cb.checked = true);
-            document.querySelectorAll('#rbac-role-matrix-tbody .role-parent-cb').forEach(cb => cb.checked = true);
-            if (!cachedRolePolicies[activeRbacRole]) return;
-            if (!cachedRolePolicies[activeRbacRole].permissions_matrix) cachedRolePolicies[activeRbacRole].permissions_matrix = {};
-            RBAC_ALL_MODULE_KEYS.forEach(mod => {
-                cachedRolePolicies[activeRbacRole].permissions_matrix[mod] = { view: true, create: true, edit: true, delete: true };
-            });
-        };
-    }
-
-    const btnRbacClearAll = document.getElementById('btn-rbac-clear-all');
-    if (btnRbacClearAll) {
-        btnRbacClearAll.onclick = () => {
-            document.querySelectorAll('#rbac-role-matrix-tbody .role-perm-cb').forEach(cb => cb.checked = false);
-            document.querySelectorAll('#rbac-role-matrix-tbody .role-parent-cb').forEach(cb => cb.checked = false);
-            if (!cachedRolePolicies[activeRbacRole]) return;
-            if (!cachedRolePolicies[activeRbacRole].permissions_matrix) cachedRolePolicies[activeRbacRole].permissions_matrix = {};
-            RBAC_ALL_MODULE_KEYS.forEach(mod => {
-                cachedRolePolicies[activeRbacRole].permissions_matrix[mod] = { view: false, create: false, edit: false, delete: false };
-            });
-        };
-    }
-
-    // Delete Custom Role button
-    const btnDeleteRole = document.getElementById('btn-rbac-delete-role');
-    if (btnDeleteRole) {
-        btnDeleteRole.onclick = () => {
-            const roleToDelete = cachedRolePolicies[activeRbacRole];
-            if (!roleToDelete || roleToDelete.is_system) {
-                Toast.show('Built-in roles cannot be deleted.', 'warning');
-                return;
-            }
-
-            BsAlert.fire({
-                title: `Delete Role "${activeRbacRole}"?`,
-                text: 'Are you sure you want to remove this role? Users with this role should be reassigned.',
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonText: 'Yes, Delete Role',
-                confirmButtonColor: '#ef4444',
-                cancelButtonText: 'Cancel'
-            }).then(async (res) => {
-                if (res.isConfirmed) {
-                    const delRes = await ApiService.request(`/api/roles/custom/${roleToDelete.id}`, 'DELETE');
-                    if (delRes.status === 'success') {
-                        activeRbacRole = 'Super Admin';
-                        await loadRbacPolicies();
-                        Toast.show('Role deleted successfully.', 'info');
-                    } else {
-                        Toast.show(delRes.message || 'Failed to delete role.', 'error');
-                    }
-                }
-            });
-        };
-    }
-
-    const gatherCustomRoleFeaturePermissions = () => Array.from(document.querySelectorAll('.customrole-perm-cb:checked')).map(cb => cb.value);
-
-    if (saveRbacBtn) {
-        saveRbacBtn.onclick = async () => {
-            const name = document.getElementById('customrole-name')?.value.trim() || activeRbacRole;
-            const baseRole = document.getElementById('customrole-base-role')?.value || 'Receptionist';
-            const roleType = document.getElementById('customrole-role-type')?.value || 'security';
-            const description = document.getElementById('customrole-description')?.value.trim() || '';
-            const icon = document.getElementById('customrole-icon')?.value || 'fas fa-id-badge';
-
-            if (!name) {
-                Toast.show('Please enter a role name.', 'error');
-                return;
-            }
-
-            saveRbacBtn.disabled = true;
-            saveRbacBtn.textContent = 'Saving...';
-            try {
-                const currentMatrix = extractPermissionsMatrixFromTbody('role');
-                const permissions = gatherCustomRoleFeaturePermissions();
-                const existingPolicy = cachedRolePolicies[activeRbacRole];
-
-                const payload = { name, description, icon, base_role: baseRole, role_type: roleType, permissions, permissions_matrix: currentMatrix };
-                const res = existingPolicy?.id
-                    ? await ApiService.request(`/api/roles/custom/${existingPolicy.id}`, 'PUT', payload)
-                    : await ApiService.request('/api/roles/custom', 'POST', payload);
-
-                if (res.status === 'success') {
-                    activeRbacRole = name;
-                    await loadRbacPolicies();
-                    Toast.show(`Saved permissions for "${name}" successfully.`, 'success');
-                } else {
-                    Toast.show(res.message || 'Failed to save role.', 'error');
-                }
-            } catch (e) {
-                Toast.show('Error saving role permissions.', 'error');
-            } finally {
-                saveRbacBtn.disabled = false;
-                saveRbacBtn.textContent = 'Save RBAC Policies';
-            }
-        };
-    }
-
-    // Feature Permission Presets sub-tabs (mirrors the Step-4 .athena-perm-tab handler, scoped to this panel)
-    document.querySelectorAll('.customrole-perm-tab').forEach(tab => {
-        tab.onclick = () => {
-            document.querySelectorAll('.customrole-perm-tab').forEach(t => t.classList.remove('active'));
-            tab.classList.add('active');
-            const targetTab = tab.getAttribute('data-perm-tab');
-            document.querySelectorAll('.customrole-perm-tab-panel').forEach(p => p.style.display = 'none');
-            const targetPanel = document.getElementById(`customrole-perm-tab-panel-${targetTab}`);
-            if (targetPanel) targetPanel.style.display = 'grid';
-        };
-    });
-
-    await loadRbacPolicies();
+    await loadRolesMatrix();
 
     // 2. User Management Directory with 7-Section Staff Onboarding Workflow & Full CRUD
     if (!userCard || !usersList) return;
@@ -25369,7 +26456,6 @@ async function initAdministrationHandler() {
         const first = document.getElementById('staff-first-name')?.value.trim() || '';
         const last = document.getElementById('staff-last-name')?.value.trim() || '';
         const role = document.getElementById('staff-role')?.value || 'Physician';
-        const jobTitle = document.getElementById('staff-job-title')?.value.trim() || '';
         const specialty = document.getElementById('staff-specialty')?.value || '';
         const email = document.getElementById('staff-work-email')?.value.trim() || '';
         const empId = document.getElementById('staff-employee-id')?.value.trim() || '';
@@ -25385,7 +26471,7 @@ async function initAdministrationHandler() {
         // Role & Specialty / Job Title
         const roleSpecEl = document.getElementById('summary-role-spec');
         if (roleSpecEl) {
-            const secondPart = jobTitle || specialty || '—';
+            const secondPart = specialty || '—';
             roleSpecEl.textContent = `${role || 'Staff'} • ${secondPart}`;
         }
 
@@ -25428,36 +26514,6 @@ async function initAdministrationHandler() {
         const progPills = Array.from(document.querySelectorAll('#staff-assigned-programs-box .staff-tag-pill')).map(p => p.dataset.val || p.querySelector('span')?.textContent?.trim() || p.textContent.replace(/[×x]/g, '').trim()).filter(Boolean);
         const progEl = document.getElementById('summary-programs');
         if (progEl) progEl.textContent = progPills.length > 0 ? progPills.join(', ') : 'None assigned';
-
-        // Permissions Block (Live permissions for the selected Security Role)
-        const permList = document.getElementById('summary-permissions-list');
-        if (permList) {
-            const roleKey = secRole || 'Doctor';
-            const roleMatrix = cachedRolePolicies[roleKey]?.permissions_matrix || DEFAULT_ROLE_PERMS[roleKey] || DEFAULT_ROLE_PERMS['Doctor'] || {};
-            const activePerms = [];
-            RBAC_MODULES.forEach(m => {
-                const p = roleMatrix[m.key];
-                if (p && (p.view || p.create || p.edit || p.delete)) {
-                    const actions = [];
-                    if (p.view) actions.push('V');
-                    if (p.create) actions.push('C');
-                    if (p.edit) actions.push('E');
-                    if (p.delete) actions.push('D');
-                    activePerms.push({ name: m.name, actions: actions.join('/') });
-                }
-            });
-
-            if (activePerms.length > 0) {
-                permList.innerHTML = activePerms.map(p => `
-                    <div class="staff-summary-check-item">
-                        <i class="fas fa-check-circle" style="color: #0284c7;"></i>
-                        <span>${p.name} <strong style="font-size: 0.72rem; color: #0284c7; background: #e0f2fe; padding: 1px 5px; border-radius: 4px; margin-left: 3px;">(${p.actions})</strong></span>
-                    </div>
-                `).join('');
-            } else {
-                permList.innerHTML = `<span style="font-size:0.75rem; color:#94a3b8;">No permissions enabled for ${roleKey}</span>`;
-            }
-        }
 
         // Communication Checkboxes
         const commList = document.getElementById('summary-communication-list');
@@ -25518,7 +26574,9 @@ async function initAdministrationHandler() {
     // scoping specialty instead.
     const filterSpecialtiesByFacility = (facilityId, selectedSpecialty = '') => {
         const specSelect = document.getElementById('staff-specialty');
+        const specNote = document.getElementById('staff-specialty-note');
         if (!specSelect) return;
+        if (specNote) { specNote.hidden = true; specNote.textContent = ''; }
 
         if (!facilityId) {
             specSelect.innerHTML = '<option value="">— Select Facility first to view specialties —</option>';
@@ -25527,32 +26585,40 @@ async function initAdministrationHandler() {
 
         const facility = cachedFacilitiesList.find(f => String(f.id) === String(facilityId));
         const allowedIds = (facility?.specialty_ids || []).map(String);
-        const filtered = cachedSpecialtiesList.filter(s => allowedIds.includes(String(s.id)));
+        const specActive = (s) => s.is_active == null || parseInt(s.is_active, 10) === 1;
+        const filtered = cachedSpecialtiesList.filter(s => allowedIds.includes(String(s.id)) && (specActive(s) || s.specialty_name === selectedSpecialty));
+
+        // Editing a user whose saved specialty the facility no longer practises: say so instead of silently showing a blank choice.
+        if (selectedSpecialty && !filtered.some(s => s.specialty_name === selectedSpecialty) && specNote) {
+            specNote.textContent = `Previously assigned: "${selectedSpecialty}" - it is no longer offered at this facility. Please choose another specialty.`;
+            specNote.hidden = false;
+        }
 
         if (filtered.length === 0) {
-            specSelect.innerHTML = '<option value="">— No specialties configured for this facility —</option>';
+            specSelect.innerHTML = '<option value="">— No specialties set for this facility (add them under Facility Management) —</option>';
         } else {
             specSelect.innerHTML = '<option value="">— Select Specialty —</option>' +
-                filtered.map(s => `<option value="${s.specialty_name}" ${selectedSpecialty === s.specialty_name ? 'selected' : ''}>${s.specialty_name}</option>`).join('');
+                filtered.map(s => `<option value="${calEscape(s.specialty_name)}" ${selectedSpecialty === s.specialty_name ? 'selected' : ''}>${calEscape(s.specialty_name)}${specActive(s) ? '' : ' (inactive)'}</option>`).join('');
         }
     };
 
     const populateStaffDropdowns = async (selectedFacilityId = '', selectedSpecialty = '') => {
         const facSelect = document.getElementById('staff-facility-id');
-        const supvSelect = document.getElementById('staff-supervising-provider');
 
         try {
-            const [facRes, specRes, usrRes] = await Promise.all([
+            const [facRes, specRes] = await Promise.all([
                 ApiService.request('/api/facilities'),
-                ApiService.request('/api/specialties'),
-                ApiService.request('/api/users')
+                ApiService.request('/api/specialties')
             ]);
 
             if (facRes?.status === 'success' && Array.isArray(facRes.data)) {
                 cachedFacilitiesList = facRes.data;
                 if (facSelect) {
-                    facSelect.innerHTML = '<option value="">— Select Enterprise Facility —</option>' +
-                        cachedFacilitiesList.map(f => `<option value="${f.id}" ${String(selectedFacilityId) === String(f.id) ? 'selected' : ''}>${f.facility_name} (${f.facility_code || 'FAC'})</option>`).join('');
+                    // New assignments only go to ACTIVE facilities; the facility a user already belongs to stays listed (flagged) even if it was deactivated later.
+                    const facActive = (f) => f.is_active == null || parseInt(f.is_active, 10) === 1;
+                    const usableFacilities = cachedFacilitiesList.filter(f => facActive(f) || String(f.id) === String(selectedFacilityId));
+                    facSelect.innerHTML = '<option value="">— Select Facility —</option>' +
+                        usableFacilities.map(f => `<option value="${calEscape(f.id)}" ${String(selectedFacilityId) === String(f.id) ? 'selected' : ''}>${calEscape(f.facility_name)}${facActive(f) ? '' : ' (inactive)'}</option>`).join('');
                 }
             }
 
@@ -25561,14 +26627,6 @@ async function initAdministrationHandler() {
             }
 
             filterSpecialtiesByFacility(selectedFacilityId, selectedSpecialty);
-
-            if (usrRes?.status === 'success' && Array.isArray(usrRes.data)) {
-                if (supvSelect) {
-                    const providers = usrRes.data.filter(u => u.role === 'Doctor' || u.role === 'Physician' || u.user_type === 'Provider / Clinician');
-                    supvSelect.innerHTML = '<option value="">— None / Self-Supervised —</option>' +
-                        providers.map(p => `<option value="Dr. ${p.first_name} ${p.last_name}">Dr. ${p.first_name} ${p.last_name} (${p.specialty || p.role})</option>`).join('');
-                }
-            }
 
         } catch (e) {
             console.warn('Error populating staff dropdowns:', e);
@@ -25694,7 +26752,7 @@ async function initAdministrationHandler() {
             if (pwdConfirmLabel) pwdConfirmLabel.innerHTML = editing ? 'Confirm New Password' : 'Confirm Password <span class="req">*</span>';
             if (pwdHelp) pwdHelp.textContent = editing
                 ? 'Only fill this in to reset the password. The new password will be emailed to the user, who must change it on next login.'
-                : 'Minimum 8 characters. This will be emailed to the user, who must change it on first login.';
+                : 'At least 10 characters with a letter and a number. This will be emailed to the user, who must change it on first login.';
         };
 
         if (user) {
@@ -25716,17 +26774,13 @@ async function initAdministrationHandler() {
             if (document.getElementById('staff-employee-id')) document.getElementById('staff-employee-id').value = user.employee_id || '';
             if (document.getElementById('staff-mobile-phone')) document.getElementById('staff-mobile-phone').value = user.phone || user.mobile_phone || '';
             if (document.getElementById('staff-work-phone')) document.getElementById('staff-work-phone').value = user.work_phone || '';
-            if (document.getElementById('staff-hire-date')) document.getElementById('staff-hire-date').value = user.hire_date || '';
-            if (document.getElementById('staff-termination-date')) document.getElementById('staff-termination-date').value = user.termination_date || '';
-            if (document.getElementById('staff-notes')) document.getElementById('staff-notes').value = user.notes || '';
 
             const userTypeVal = user.user_type || (user.role === 'Super Admin' ? 'Administrator' : (user.role === 'Doctor' ? 'Provider / Clinician' : 'Staff Member'));
             selectUserTypeCard(userTypeVal);
             filterJobRolesByUserType(userTypeVal);
 
             if (document.getElementById('staff-primary-role')) document.getElementById('staff-primary-role').value = user.role || '';
-            if (document.getElementById('staff-job-title')) document.getElementById('staff-job-title').value = user.job_title || '';
-            if (document.getElementById('staff-suffix')) document.getElementById('staff-suffix').value = user.suffix || '';
+            await loadCustomRoleOptions(user.custom_role_id || '');
 
             // Employment Type
             if (user.employment_type) {
@@ -25743,35 +26797,21 @@ async function initAdministrationHandler() {
 
             // Step 3 Assignment
             if (document.getElementById('staff-facility-id')) document.getElementById('staff-facility-id').value = user.facility_id || '';
-            if (document.getElementById('staff-specialty')) document.getElementById('staff-specialty').value = user.specialty || '';
-            if (document.getElementById('staff-supervising-provider')) document.getElementById('staff-supervising-provider').value = user.supervising_provider || '';
-            if (document.getElementById('staff-timezone')) document.getElementById('staff-timezone').value = user.timezone || 'America/New_York';
+            if (document.getElementById('staff-specialty')) {
+                const specSel = document.getElementById('staff-specialty');
+                specSel.value = user.specialty || '';
+                if (specSel.selectedIndex < 0) specSel.selectedIndex = 0;   // saved value no longer offered: show the "— Select —" prompt, not a blank box
+            }
 
             selectStatusRadio(parseInt(user.is_active) === 1);
 
             const lastLoginDisp = document.getElementById('staff-last-login-display');
             if (lastLoginDisp) lastLoginDisp.textContent = user.last_login || 'Never';
 
-            // Restore granular custom permissions if present
-            if (user.custom_permissions) {
-                try {
-                    const perms = typeof user.custom_permissions === 'string' ? JSON.parse(user.custom_permissions) : user.custom_permissions;
-                    if (Array.isArray(perms) && perms.length > 0) {
-                        document.querySelectorAll('.staff-perm-cb').forEach(cb => {
-                            cb.checked = perms.includes(cb.value);
-                        });
-                        document.querySelectorAll('.athena-template-card').forEach(c => c.classList.remove('selected'));
-                        const customCard = document.querySelector('.athena-template-card[data-template="Custom Role"]');
-                        if (customCard) customCard.classList.add('selected');
-                    }
-                } catch (e) {
-                    console.warn('Could not parse user custom_permissions', e);
-                }
-            }
-
         } else {
             // Create New User Mode
             await populateStaffDropdowns('', '');
+            await loadCustomRoleOptions('');
 
             if (titleEl) titleEl.textContent = 'Create Staff User';
             if (subEl) subEl.textContent = 'Add a new staff member to your organization. Complete the information below to set up their account and access.';
@@ -25788,11 +26828,7 @@ async function initAdministrationHandler() {
             if (document.getElementById('staff-employee-id')) document.getElementById('staff-employee-id').value = '';
             if (document.getElementById('staff-mobile-phone')) document.getElementById('staff-mobile-phone').value = '';
             if (document.getElementById('staff-work-phone')) document.getElementById('staff-work-phone').value = '';
-            if (document.getElementById('staff-hire-date')) document.getElementById('staff-hire-date').value = '';
-            if (document.getElementById('staff-termination-date')) document.getElementById('staff-termination-date').value = '';
-            if (document.getElementById('staff-notes')) document.getElementById('staff-notes').value = '';
-            if (document.getElementById('staff-job-title')) document.getElementById('staff-job-title').value = '';
-            if (document.getElementById('staff-suffix')) document.getElementById('staff-suffix').value = '';
+            ['staff-password', 'staff-confirm-password'].forEach((id) => setPasswordVisibility(document.getElementById(id), false));
 
             // Reset provider credentials
             if (document.getElementById('staff-provider-npi')) document.getElementById('staff-provider-npi').value = '';
@@ -25905,12 +26941,29 @@ async function initAdministrationHandler() {
         };
     }
 
-    // ── Athenahealth 5-Step Stepper Navigation Engine ──
+    // ── Athenahealth 4-Step Stepper Navigation Engine ──
     let currentWizardStep = 1;
+
+    // Step 3: show whether Primary Specialty is required for the person being created (see staffSpecialtyRequired). Returns true when required.
+    const refreshSpecialtyRequirement = () => {
+        const userType = document.querySelector('.athena-user-type-card.selected')?.dataset?.userType;
+        const customSel = document.getElementById('staff-custom-role');
+        const customBase = customSel && customSel.value ? customSel.options[customSel.selectedIndex]?.dataset?.base : '';
+        const needed = customBase ? ['Doctor', 'Nurse'].includes(customBase) : staffSpecialtyRequired(userType, document.getElementById('staff-primary-role')?.value);
+        const star = document.getElementById('staff-specialty-req');
+        const help = document.getElementById('staff-specialty-help');
+        if (star) star.hidden = !needed;
+        if (help) help.textContent = needed
+            ? 'Required for doctors and nurses.'
+            : 'Optional for front desk, billing and administrators. If left blank they open the default specialty workspace.';
+        return needed;
+    };
+
+    document.getElementById('staff-custom-role')?.addEventListener('change', refreshSpecialtyRequirement);
 
     const goToStep = (stepNumber) => {
         if (stepNumber < 1) stepNumber = 1;
-        if (stepNumber > 5) stepNumber = 5;
+        if (stepNumber > 4) stepNumber = 4;
 
         currentWizardStep = stepNumber;
 
@@ -25931,8 +26984,12 @@ async function initAdministrationHandler() {
             }
         });
 
-        if (currentWizardStep === 5) {
-            populateStep5ReviewSummary();
+        if (currentWizardStep === 3) {
+            refreshSpecialtyRequirement();
+        }
+
+        if (currentWizardStep === 4) {
+            populateReviewSummary();
         }
 
         if (currentWizardStep === 2) {
@@ -25948,18 +27005,16 @@ async function initAdministrationHandler() {
 
     const NOT_PROVIDED = '— Not provided —';
 
-    const populateStep5ReviewSummary = () => {
+    const populateReviewSummary = () => {
         const first = document.getElementById('staff-first-name')?.value.trim() || '';
         const last = document.getElementById('staff-last-name')?.value.trim() || '';
-        const suffix = document.getElementById('staff-suffix')?.value || '';
         const phone = document.getElementById('staff-mobile-phone')?.value.trim() || document.getElementById('staff-work-phone')?.value.trim() || '';
         const email = document.getElementById('staff-email')?.value.trim() || '';
         const empId = document.getElementById('staff-employee-id')?.value.trim() || '';
         const username = document.getElementById('staff-username')?.value.trim() || '';
-        const jobTitle = document.getElementById('staff-job-title')?.value.trim() || '';
 
         const revName = document.getElementById('rev-user-name');
-        if (revName) revName.textContent = `${first} ${last}${suffix ? ', ' + suffix : ''}`.trim() || NOT_PROVIDED;
+        if (revName) revName.textContent = `${first} ${last}`.trim() || NOT_PROVIDED;
 
         const revPhone = document.getElementById('rev-user-phone');
         if (revPhone) revPhone.textContent = phone || NOT_PROVIDED;
@@ -25984,12 +27039,6 @@ async function initAdministrationHandler() {
         const revRole = document.getElementById('rev-user-job-role');
         if (revRole) revRole.textContent = jobRole;
 
-        const revJobTitle = document.getElementById('rev-user-job-title');
-        if (revJobTitle) revJobTitle.textContent = jobTitle || NOT_PROVIDED;
-
-        const revSuffix = document.getElementById('rev-user-suffix');
-        if (revSuffix) revSuffix.textContent = suffix || NOT_PROVIDED;
-
         const revEmp = document.getElementById('rev-user-employment');
         if (revEmp) revEmp.textContent = employmentType;
 
@@ -26006,15 +27055,14 @@ async function initAdministrationHandler() {
         const revSpec = document.getElementById('rev-user-specialties');
         if (revSpec) revSpec.textContent = spec;
 
-        const selectedTemplateCard = document.querySelector('.athena-template-card.selected');
-        const templateName = selectedTemplateCard?.dataset?.template || 'Medical Assistant';
-
-        const revTemplate = document.getElementById('rev-user-template');
-        if (revTemplate) revTemplate.textContent = templateName;
-
-        const checkedPerms = Array.from(document.querySelectorAll('.staff-perm-cb:checked')).map(cb => cb.value);
-        const revPerms = document.getElementById('rev-user-perms');
-        if (revPerms) revPerms.textContent = checkedPerms.length > 0 ? checkedPerms.slice(0, 3).join(', ') + (checkedPerms.length > 3 ? ` +${checkedPerms.length - 3} more` : '') : 'Default permissions';
+        const revSysRole = document.getElementById('rev-user-role');
+        if (revSysRole) {
+            const customSel = document.getElementById('staff-custom-role');
+            const customOpt = customSel && customSel.value ? customSel.options[customSel.selectedIndex] : null;
+            revSysRole.textContent = customOpt
+                ? `Custom: ${customOpt.textContent}`
+                : staffSystemRole(selectedUserTypeCard?.dataset?.userType, document.getElementById('staff-primary-role')?.value);
+        }
     };
 
     // Per-step required-field validation. Returns true/valid, or false + shows a Toast for the first problem found.
@@ -26037,7 +27085,7 @@ async function initAdministrationHandler() {
             if (!isEditingUser || pwd || pwdConfirm) {
                 // Required when creating; when editing, only validated if the admin is actively resetting it.
                 if (!pwd) errors.push('Initial Password is required.');
-                else if (pwd.length < 8) errors.push('Password must be at least 8 characters.');
+                else if (passwordRuleProblem(pwd)) errors.push(passwordRuleProblem(pwd));
                 else if (pwd !== pwdConfirm) errors.push('Password and confirmation do not match.');
             }
 
@@ -26045,7 +27093,7 @@ async function initAdministrationHandler() {
             if (npiVal && !/^\d{10}$/.test(npiVal)) errors.push('NPI must be exactly 10 digits.');
         } else if (stepNumber === 3) {
             if (!document.getElementById('staff-facility-id')?.value) errors.push('Please select an Assigned Enterprise Facility.');
-            if (!document.getElementById('staff-specialty')?.value) errors.push('Please select a Primary Specialty.');
+            if (refreshSpecialtyRequirement() && !document.getElementById('staff-specialty')?.value) errors.push('Please select a Primary Specialty.');
         }
         if (errors.length > 0) {
             Toast.show(errors[0], 'error');
@@ -26076,8 +27124,6 @@ async function initAdministrationHandler() {
     document.getElementById('btn-step-3-back')?.addEventListener('click', () => goToStep(2));
     document.getElementById('btn-step-3-next')?.addEventListener('click', () => { if (validateStep(3)) goToStep(4); });
     document.getElementById('btn-step-4-back')?.addEventListener('click', () => goToStep(3));
-    document.getElementById('btn-step-4-next')?.addEventListener('click', () => goToStep(5));
-    document.getElementById('btn-step-5-back')?.addEventListener('click', () => goToStep(4));
 
     // Top Stepper Trail Items Click - blocked from jumping forward past an unvalidated step
     document.querySelectorAll('#athena-stepper-trail .athena-step-item').forEach(item => {
@@ -26087,7 +27133,7 @@ async function initAdministrationHandler() {
         };
     });
 
-    // Jump to Step buttons on Step 5 - these only ever jump backward, so no extra gating needed
+    // Jump to Step buttons on the Review step - these only ever jump backward, so no extra gating needed
     document.querySelectorAll('.btn-athena-edit-step').forEach(btn => {
         btn.onclick = () => {
             const jumpStep = parseInt(btn.getAttribute('data-jump-step'), 10);
@@ -26116,7 +27162,7 @@ async function initAdministrationHandler() {
         ],
         'Provider / Clinician': [
             'Physician (MD)', 'Physician (DO)', 'Nurse Practitioner (NP)',
-            'Physician Assistant (PA)', 'Clinical Specialist', 'Psychologist',
+            'Physician Assistant (PA)', 'Clinical Specialist',
             'Physical Therapist', 'Pharmacist (PharmD)', 'Other'
         ],
         'Administrator': [
@@ -26200,8 +27246,11 @@ async function initAdministrationHandler() {
         const randomBytes = new Uint32Array(12);
         window.crypto.getRandomValues(randomBytes);
         for (let i = 0; i < 12; i++) generated += chars[randomBytes[i] % chars.length];
-        if (pwdInput) { pwdInput.type = 'text'; pwdInput.value = generated; }
-        if (pwdConfirmInput) { pwdConfirmInput.type = 'text'; pwdConfirmInput.value = generated; }
+        // always satisfy the password rule (a letter and a number), whatever the random draw gave
+        if (!/[0-9]/.test(generated)) generated = '7' + generated.slice(1);
+        if (!/[A-Za-z]/.test(generated)) generated = generated.slice(0, 1) + 'k' + generated.slice(2);
+        if (pwdInput) { pwdInput.value = generated; setPasswordVisibility(pwdInput, true); }
+        if (pwdConfirmInput) { pwdConfirmInput.value = generated; setPasswordVisibility(pwdConfirmInput, true); }
     });
 
     // Mark as manually edited if user types in the fields
@@ -26210,227 +27259,6 @@ async function initAdministrationHandler() {
     });
     document.getElementById('staff-username')?.addEventListener('input', function() {
         this.dataset.manuallyEdited = 'true';
-    });
-
-    // ── Dynamic Role Templates & Custom Role Management ──
-    let cachedCustomRoleTemplates = [];
-
-    // Reads from cachedRolePolicies (already fetched once by loadRbacPolicies from the unified
-    // /api/roles/custom table) instead of fetching separately — one network call feeds both
-    // the Roles & Permissions tab and these Step-4 Role Template cards.
-    const loadCustomRoleTemplates = async () => {
-        const container = document.getElementById('athena-role-templates-container');
-
-        if (Object.keys(cachedRolePolicies).length === 0) {
-            await loadRbacPolicies();
-        }
-        cachedCustomRoleTemplates = Object.values(cachedRolePolicies).filter(r => r.role_type === 'template' || r.role_type === 'both');
-
-        // Fallback default presets if the table is empty
-        if (!cachedCustomRoleTemplates || cachedCustomRoleTemplates.length === 0) {
-            cachedCustomRoleTemplates = [
-                {
-                    name: 'Medical Assistant',
-                    description: 'Patient intake, documentation, orders, etc.',
-                    icon: 'fas fa-stethoscope',
-                    permissions: [
-                        'View patient demographics', 'Register new patients', 'Update patient information',
-                        'View clinical notes', 'Add documentation', 'Record vitals', 'Place orders', 'View lab results',
-                        'View schedule', 'Create appointments', 'Reschedule / Cancel',
-                        'Access all locations in practice', 'Access telehealth virtual clinics', 'Access all practice patient charts', 'Mask Social Security Numbers',
-                        'Broadcast practice announcements', 'Send direct secure staff messages', 'Send patient SMS & Email reminders',
-                        'Host video consultations', 'Share screen & digital whiteboard'
-                    ]
-                },
-                {
-                    name: 'Front Desk',
-                    description: 'Scheduling, registration, check-in/out.',
-                    icon: 'fas fa-user-clock',
-                    permissions: [
-                        'View patient demographics', 'Register new patients', 'Update patient information',
-                        'View schedule', 'Create appointments', 'Reschedule / Cancel', 'Block time', 'Manage provider schedules',
-                        'View billing information', 'View patient balances',
-                        'Access all locations in practice', 'Access all practice patient charts', 'Mask Social Security Numbers',
-                        'Broadcast practice announcements', 'Send direct secure staff messages', 'Send patient SMS & Email reminders'
-                    ]
-                },
-                {
-                    name: 'Billing Staff',
-                    description: 'Claims, payments, billing reports.',
-                    icon: 'fas fa-file-invoice-dollar',
-                    permissions: [
-                        'View patient demographics',
-                        'View billing information', 'Create claims', 'Post payments', 'View patient balances',
-                        'View standard reports', 'Export reports',
-                        'Access all locations in practice', 'Access all practice patient charts', 'Mask Social Security Numbers', 'Export PHI to Excel / CSV',
-                        'Send direct secure staff messages'
-                    ]
-                },
-                {
-                    name: 'Practice Manager',
-                    description: 'Operational access, reports, user oversight.',
-                    icon: 'fas fa-briefcase',
-                    permissions: [
-                        'View patient demographics', 'Register new patients', 'Update patient information', 'Merge duplicate patients',
-                        'View clinical notes', 'Add documentation', 'Record vitals', 'Place orders', 'Manage medications', 'View lab results',
-                        'View schedule', 'Create appointments', 'Reschedule / Cancel', 'Block time', 'Manage provider schedules',
-                        'View billing information', 'Create claims', 'Post payments', 'View patient balances',
-                        'View standard reports', 'Export reports',
-                        'Manage users', 'Manage practice settings', 'View audit logs',
-                        'Access all locations in practice', 'Access telehealth virtual clinics', 'Access all practice patient charts', 'Export PHI to Excel / CSV',
-                        'Create & invite new staff users', 'Edit user roles & security levels', 'Reset staff passwords & MFA',
-                        'Configure clinical templates & forms', 'Manage fee schedules & CPT codes', 'Manage lab & pharmacy integrations',
-                        'View system audit logs', 'Export HIPAA audit reports', 'Manage security policies & RBAC matrix',
-                        'Broadcast practice announcements', 'Send direct secure staff messages', 'Send patient SMS & Email reminders',
-                        'Host video consultations', 'Share screen & digital whiteboard'
-                    ]
-                }
-            ];
-        }
-
-        // Render role template cards in Step 4
-        if (container) {
-            const currentSelected = container.querySelector('.athena-template-card.selected')?.getAttribute('data-template') || 'Medical Assistant';
-            
-            let cardsHtml = cachedCustomRoleTemplates.map(r => `
-                <div class="athena-template-card ${currentSelected === r.name ? 'selected' : ''}" data-template="${r.name}">
-                    <div class="template-card-icon"><i class="${r.icon || 'fas fa-id-badge'}"></i></div>
-                    <h4>${r.name}</h4>
-                    <p>${r.description || 'Pre-configured access template.'}</p>
-                </div>
-            `).join('');
-
-            container.innerHTML = cardsHtml;
-
-            // Bind click handlers to template cards
-            container.querySelectorAll('.athena-template-card').forEach(card => {
-                card.onclick = () => {
-                    container.querySelectorAll('.athena-template-card').forEach(c => c.classList.remove('selected'));
-                    card.classList.add('selected');
-                    const template = card.getAttribute('data-template');
-                    if (template) applyRoleTemplatePermissions(template);
-                };
-            });
-        }
-    };
-
-    // Role Template Preset Application
-    const applyRoleTemplatePermissions = (templateName) => {
-        const foundTmpl = cachedCustomRoleTemplates.find(t => t.name === templateName);
-        const allowed = foundTmpl ? (Array.isArray(foundTmpl.permissions) ? foundTmpl.permissions : (typeof foundTmpl.permissions === 'string' ? JSON.parse(foundTmpl.permissions) : [])) : [];
-
-        if (allowed && Array.isArray(allowed)) {
-            document.querySelectorAll('.staff-perm-cb').forEach(cb => {
-                cb.checked = allowed.includes(cb.value);
-            });
-            Toast.show(`Loaded permissions preset for "${templateName}" template.`, 'success');
-        }
-
-        // Also assign the security role this template resolves to, so the choice actually takes effect.
-        const secRoleSelect = document.getElementById('staff-security-role');
-        if (secRoleSelect && foundTmpl?.base_role) {
-            secRoleSelect.value = foundTmpl.base_role;
-        }
-    };
-
-    // Toggle "Save as new reusable role template" fields in Step 4
-    const chkSaveAsRole = document.getElementById('chk-save-as-new-custom-role');
-    const saveRoleFields = document.getElementById('save-new-custom-role-fields');
-    if (chkSaveAsRole && saveRoleFields) {
-        chkSaveAsRole.onchange = () => {
-            saveRoleFields.style.display = chkSaveAsRole.checked ? 'block' : 'none';
-        };
-    }
-
-    // Modal: Add Custom Role in Roles & Permissions tab
-    const modalCustomRole = document.getElementById('modal-custom-role');
-    const btnOpenCustomRoleModal = document.getElementById('btn-add-new-role');
-    const btnCloseCustomRole = document.getElementById('btn-close-custom-role-modal');
-    const btnCancelCustomRole = document.getElementById('btn-cancel-custom-role');
-    const btnSaveCustomRole = document.getElementById('btn-save-custom-role');
-
-    if (btnOpenCustomRoleModal && modalCustomRole) {
-        btnOpenCustomRoleModal.onclick = () => {
-            document.getElementById('modal-role-name').value = '';
-            document.getElementById('modal-role-base').value = 'Nurse';
-            document.getElementById('modal-role-type').value = 'security';
-            modalCustomRole.style.display = 'flex';
-        };
-    }
-
-    const hideCustomRoleModal = () => {
-        if (modalCustomRole) modalCustomRole.style.display = 'none';
-    };
-
-    if (btnCloseCustomRole) btnCloseCustomRole.onclick = hideCustomRoleModal;
-    if (btnCancelCustomRole) btnCancelCustomRole.onclick = hideCustomRoleModal;
-
-    if (btnSaveCustomRole) {
-        btnSaveCustomRole.onclick = async () => {
-            const name = document.getElementById('modal-role-name')?.value.trim();
-            const base_role = document.getElementById('modal-role-base')?.value;
-            const role_type = document.getElementById('modal-role-type')?.value || 'security';
-
-            if (!name) {
-                Toast.show('Please enter a role name.', 'error');
-                return;
-            }
-            if (cachedRolePolicies[name]) {
-                Toast.show('A role with this name already exists.', 'error');
-                return;
-            }
-
-            btnSaveCustomRole.disabled = true;
-            btnSaveCustomRole.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
-
-            try {
-                const res = await ApiService.request('/api/roles/custom', 'POST', {
-                    name,
-                    description: '',
-                    base_role,
-                    role_type,
-                    icon: 'fas fa-id-badge',
-                    permissions: [],
-                    permissions_matrix: DEFAULT_ROLE_PERMS[base_role] || null
-                });
-
-                if (res && res.status === 'success') {
-                    Toast.show(res.message || 'Custom role created successfully!', 'success');
-                    hideCustomRoleModal();
-                    await loadRbacPolicies();
-                    selectRbacRole(name);
-                } else {
-                    Toast.show(res.message || 'Failed to save custom role.', 'error');
-                }
-            } catch (err) {
-                Toast.show('An unexpected error occurred while saving custom role.', 'error');
-            } finally {
-                btnSaveCustomRole.disabled = false;
-                btnSaveCustomRole.innerHTML = 'Create &amp; Continue';
-            }
-        };
-    }
-
-    // Load from Role Template Button
-    const btnLoadRoleTemplate = document.getElementById('btn-load-role-template');
-    if (btnLoadRoleTemplate) {
-        btnLoadRoleTemplate.onclick = () => {
-            const selectedCard = document.querySelector('.athena-template-card.selected');
-            const template = selectedCard ? selectedCard.getAttribute('data-template') : 'Medical Assistant';
-            applyRoleTemplatePermissions(template);
-        };
-    }
-
-    // Permissions Category Sub-Tabs (Step 4)
-    document.querySelectorAll('.athena-perm-tab').forEach(tab => {
-        tab.onclick = () => {
-            document.querySelectorAll('.athena-perm-tab').forEach(t => t.classList.remove('active'));
-            tab.classList.add('active');
-            const targetTab = tab.getAttribute('data-perm-tab');
-            document.querySelectorAll('.athena-perm-tab-panel').forEach(p => p.style.display = 'none');
-            const targetPanel = document.getElementById(`perm-tab-panel-${targetTab}`);
-            if (targetPanel) targetPanel.style.display = 'grid';
-        };
     });
 
     // ── Back / Cancel Buttons ──
@@ -26449,7 +27277,7 @@ async function initAdministrationHandler() {
         };
     }
 
-    // ── Save Staff User Handler (create/edit, reading all fields + granular custom permissions) ──
+    // ── Save Staff User Handler (create/edit) ──
     const buildStaffUserPayload = () => {
         const firstName = document.getElementById('staff-first-name')?.value.trim() || '';
         const lastName = document.getElementById('staff-last-name')?.value.trim() || '';
@@ -26461,17 +27289,12 @@ async function initAdministrationHandler() {
         const employeeId = document.getElementById('staff-employee-id')?.value.trim() || '';
         const mobilePhone = document.getElementById('staff-mobile-phone')?.value.trim() || '';
         const workPhone = document.getElementById('staff-work-phone')?.value.trim() || '';
-        const hireDate = document.getElementById('staff-hire-date')?.value || null;
-        const terminationDate = document.getElementById('staff-termination-date')?.value || null;
-        const notes = document.getElementById('staff-notes')?.value.trim() || '';
         const isActiveRadio = document.querySelector('input[name="staff-status-radio"]:checked')?.value || 'Active';
 
         const selectedTypeCard = document.querySelector('.athena-user-type-card.selected');
         const userType = selectedTypeCard?.dataset?.userType || 'Staff Member';
         // Security Role (if set) is the real access-control role; Job Role is a cosmetic title fallback.
         const role = document.getElementById('staff-security-role')?.value || document.getElementById('staff-primary-role')?.value || 'Staff';
-        const jobTitle = document.getElementById('staff-job-title')?.value.trim() || '';
-        const suffix = document.getElementById('staff-suffix')?.value || '';
         const employmentType = document.querySelector('input[name="staff-employment-type"]:checked')?.value || 'Full-time';
 
         // Provider Credentials (if Provider/Clinician)
@@ -26486,12 +27309,7 @@ async function initAdministrationHandler() {
 
         // Step 3 Assignment
         const facilityId = document.getElementById('staff-facility-id')?.value ? parseInt(document.getElementById('staff-facility-id').value, 10) : null;
-        const specialty = document.getElementById('staff-specialty')?.value || 'Primary Care';
-        const supervisingProvider = document.getElementById('staff-supervising-provider')?.value || '';
-        const timezone = document.getElementById('staff-timezone')?.value || 'America/New_York';
-
-        // Granular permissions
-        const customPermissions = Array.from(document.querySelectorAll('.staff-perm-cb:checked')).map(cb => cb.value);
+        const specialty = document.getElementById('staff-specialty')?.value || '';
 
         return {
             username,
@@ -26504,14 +27322,9 @@ async function initAdministrationHandler() {
             phone: mobilePhone || workPhone,
             mobile_phone: mobilePhone,
             work_phone: workPhone,
-            hire_date: hireDate,
-            termination_date: terminationDate,
-            notes,
             is_active: isActiveRadio === 'Active' ? 1 : 0,
             user_type: userType,
             role,
-            job_title: jobTitle,
-            suffix,
             employment_type: employmentType,
             employee_id: employeeId,
             facility_id: facilityId,
@@ -26521,9 +27334,7 @@ async function initAdministrationHandler() {
             state_licenses: stateLicenses,
             dea_number: deaNumber,
             taxonomy_code: taxonomyCode,
-            supervising_provider: supervisingProvider,
-            timezone,
-            custom_permissions: customPermissions
+            custom_role_id: document.getElementById('staff-custom-role')?.value || null
         };
     };
 
@@ -26531,7 +27342,7 @@ async function initAdministrationHandler() {
         const userId = document.getElementById('staff-user-id')?.value || null;
         const isEditing = !!userId;
 
-        // Re-validate every step before submitting, in case the user reached Step 5 by jumping back-and-forth.
+        // Re-validate every step before submitting, in case the user reached the Review step by jumping back-and-forth.
         for (let s = 1; s <= 3; s++) {
             if (!validateStep(s)) {
                 goToStep(s);
@@ -26544,27 +27355,6 @@ async function initAdministrationHandler() {
         if (isEditing && !payload.password) {
             // Editing without touching the password field means "leave it as-is" — never overwrite silently.
             delete payload.password;
-        }
-
-        // If "Save as new reusable role template" was checked in Step 4, also create the template
-        const chkSaveRole = document.getElementById('chk-save-as-new-custom-role');
-        const newRoleName = document.getElementById('new-custom-role-name')?.value.trim();
-        const newRoleDesc = document.getElementById('new-custom-role-desc')?.value.trim();
-        if (chkSaveRole && chkSaveRole.checked && newRoleName) {
-            try {
-                const resolvedBaseRole = cachedRolePolicies[payload.role]?.base_role || payload.role || 'Receptionist';
-                await ApiService.request('/api/roles/custom', 'POST', {
-                    name: newRoleName,
-                    description: newRoleDesc || 'Custom role template saved during onboarding.',
-                    base_role: resolvedBaseRole,
-                    role_type: 'template',
-                    icon: 'fas fa-id-badge',
-                    permissions: payload.custom_permissions
-                });
-                loadCustomRoleTemplates();
-            } catch (e) {
-                console.warn('Could not save role template during onboarding', e);
-            }
         }
 
         const originalHtml = btnSaveStaff ? btnSaveStaff.innerHTML : '';
@@ -26582,7 +27372,7 @@ async function initAdministrationHandler() {
             }
 
             if (res.status === 'success') {
-                Toast.show(res.message || (isEditing ? 'User updated successfully!' : 'User created successfully!'), 'success');
+                Toast.show(res.message || (isEditing ? 'User updated successfully!' : 'User created successfully!'), res.email_failed ? 'error' : 'success');
                 showUserDirectoryView();
             } else {
                 Toast.show(res.message || 'Error saving user.', 'error');
@@ -26600,9 +27390,6 @@ async function initAdministrationHandler() {
     if (btnSaveStaff) {
         btnSaveStaff.onclick = () => submitStaffUser(document.getElementById('staff-invite-email-toggle')?.checked !== false);
     }
-
-    // Call loadCustomRoleTemplates on init
-    loadCustomRoleTemplates();
 
     // ── Load Users in Directory Table ──
     const loadUsers = async () => {
@@ -26629,7 +27416,6 @@ async function initAdministrationHandler() {
                     case 'Super Admin': return 'badge-role-super-admin';
                     case 'Doctor':
                     case 'Physician': return 'badge-role-doctor';
-                    case 'Therapist': return 'badge-role-therapist';
                     case 'Billing Staff': return 'badge-role-billing-staff';
                     case 'Nurse': return 'badge-role-nurse';
                     default: return 'badge-role-super-admin';
@@ -26661,6 +27447,14 @@ async function initAdministrationHandler() {
                             </button>
                         `;
                     }
+                    const isLockedUser = parseInt(u.is_locked) === 1;
+                    if (isLockedUser && isSuperAdmin) {
+                        actionsHtml += `
+                            <button class="btn-unlock-user btn-icon-action btn-icon-edit" data-id="${u.id}" data-name="${calEscape(u.username)}" title="Unlock account" aria-label="Unlock account">
+                                <i class="fas fa-lock-open"></i>
+                            </button>
+                        `;
+                    }
                     if (canDeleteUser) {
                         actionsHtml += `
                             <button class="btn-delete-user btn-icon-action btn-icon-delete" data-id="${u.id}" data-name="${u.username}" title="Delete" aria-label="Delete">
@@ -26684,7 +27478,7 @@ async function initAdministrationHandler() {
                             <td class="col-org-loc">
                                 <span class="user-specialty-text" style="font-weight:600; color:#1e293b;">${facilityName}</span>
                             </td>
-                            <td class="col-status"><span class="badge-status ${statusClass}">${parseInt(u.is_active) ? 'Active' : 'Inactive'}</span></td>
+                            <td class="col-status"><span class="badge-status ${statusClass}">${parseInt(u.is_active) ? 'Active' : 'Inactive'}</span>${parseInt(u.is_locked) === 1 ? ' <span class="badge-status badge-status-inactive" title="Too many wrong passwords. It unlocks by itself after 15 minutes, or use Unlock.">Locked</span>' : ''}</td>
                             <td class="col-actions">
                                 <div class="action-buttons-flex">
                                     ${actionsHtml}
@@ -26693,6 +27487,15 @@ async function initAdministrationHandler() {
                         </tr>
                     `;
                 }).join('');
+
+                // Unlock (account locked after too many wrong passwords)
+                usersList.querySelectorAll('.btn-unlock-user').forEach(btn => {
+                    btn.onclick = async () => {
+                        const res = await ApiService.request(`/api/user/${btn.getAttribute('data-id')}/unlock`, 'PUT', {});
+                        Toast.show(res.message || (res.status === 'success' ? 'Account unlocked.' : 'Could not unlock the account.'), res.status === 'success' ? 'success' : 'error');
+                        if (res.status === 'success') loadUsers();
+                    };
+                });
 
                 // Wire up Edit buttons (opens the staff workflow in edit mode)
                 usersList.querySelectorAll('.btn-edit-user').forEach(btn => {
@@ -26824,13 +27627,13 @@ async function initAdministrationHandler() {
 
     const loadFacilities = async () => {
         if (!facList) return;
-        facList.innerHTML = '<tr><td colspan="7" style="text-align:center; padding: 20px; color: #64748b;"><i class="fas fa-spinner fa-spin"></i> Loading facilities...</td></tr>';
+        facList.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 20px; color: #64748b;"><i class="fas fa-spinner fa-spin"></i> Loading facilities...</td></tr>';
         try {
             await loadFacilitySpecialtiesList();
             const res = await ApiService.request('/api/facilities');
             if (res.status === 'success' && Array.isArray(res.data)) {
                 if (res.data.length === 0) {
-                    facList.innerHTML = '<tr><td colspan="7" style="text-align:center; padding: 24px; color: #64748b;">No enterprise facilities found. Click <strong>Add Facility</strong> to create one.</td></tr>';
+                    facList.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 24px; color: #64748b;">No enterprise facilities found. Click <strong>Add Facility</strong> to create one.</td></tr>';
                     return;
                 }
 
@@ -26848,7 +27651,6 @@ async function initAdministrationHandler() {
                                 ${f.legal_entity_name ? `<span class="user-empid-sub">${f.legal_entity_name}</span>` : ''}
                             </td>
                             <td class="col-role"><span class="user-specialty-text">${f.facility_type || 'Clinic'}</span></td>
-                            <td class="col-username">${f.facility_code || '—'}</td>
                             <td class="col-org-loc">
                                 <div class="org-loc-wrap">
                                     <span class="org-name-text">${f.phone || '—'}</span>
@@ -26881,7 +27683,7 @@ async function initAdministrationHandler() {
                                 const fac = detailRes.data;
                                 document.getElementById('facility-edit-id').value = fac.id;
                                 document.getElementById('facility-form-title').textContent = `Edit Facility: ${fac.facility_name}`;
-                                document.getElementById('facility-form-sub').textContent = 'Modify organizational entity details and contact information.';
+                                setInfoTipText(document.getElementById('facility-form-hint'), 'Modify organizational entity details and contact information.');
                                 document.getElementById('facility-save-btn-text').textContent = 'Save Changes';
 
                                 document.getElementById('fac-name-input').value = fac.facility_name || '';
@@ -26949,10 +27751,10 @@ async function initAdministrationHandler() {
                 });
 
             } else {
-                facList.innerHTML = '<tr><td colspan="7" class="error-text">Failed to load facilities.</td></tr>';
+                facList.innerHTML = '<tr><td colspan="6" class="error-text">Failed to load facilities.</td></tr>';
             }
         } catch (e) {
-            facList.innerHTML = `<tr><td colspan="7" class="error-text">Error: ${e.message}</td></tr>`;
+            facList.innerHTML = `<tr><td colspan="6" class="error-text">Error: ${e.message}</td></tr>`;
         }
     };
 
@@ -26960,7 +27762,7 @@ async function initAdministrationHandler() {
         addFacBtn.addEventListener('click', async () => {
             document.getElementById('facility-edit-id').value = '';
             document.getElementById('facility-form-title').textContent = 'Create Facility';
-            document.getElementById('facility-form-sub').textContent = 'Register a new enterprise hospital organization or healthcare network.';
+            setInfoTipText(document.getElementById('facility-form-hint'), 'Register a new enterprise hospital organization or healthcare network.');
             document.getElementById('facility-save-btn-text').textContent = 'Create Facility';
 
             document.getElementById('fac-name-input').value = '';
@@ -27090,12 +27892,12 @@ async function initAdministrationHandler() {
 
     const loadSpecialties = async () => {
         if (!specList) return;
-        specList.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 20px; color: #64748b;"><i class="fas fa-spinner fa-spin"></i> Loading specialties...</td></tr>';
+        specList.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 20px; color: #64748b;"><i class="fas fa-spinner fa-spin"></i> Loading specialties...</td></tr>';
         try {
             const res = await ApiService.request('/api/specialties');
             if (res.status === 'success' && Array.isArray(res.data)) {
                 if (res.data.length === 0) {
-                    specList.innerHTML = '<tr><td colspan="6" style="text-align:center; padding: 24px; color: #64748b;">No clinical specialties found. Click <strong>Add Specialty</strong> to create one.</td></tr>';
+                    specList.innerHTML = '<tr><td colspan="5" style="text-align:center; padding: 24px; color: #64748b;">No clinical specialties found. Click <strong>Add Specialty</strong> to create one.</td></tr>';
                     return;
                 }
 
@@ -27110,7 +27912,6 @@ async function initAdministrationHandler() {
                                 ${s.description ? `<span class="user-empid-sub">${s.description}</span>` : ''}
                             </td>
                             <td class="col-username">${s.specialty_key}</td>
-                            <td class="col-org-loc"><span class="user-specialty-text">${s.code || '—'}</span></td>
                             <td class="col-org-loc">
                                 <span class="user-specialty-text" style="font-weight:600; color:#1e293b;">${provCount} provider${provCount === 1 ? '' : 's'}</span>
                             </td>
@@ -27139,7 +27940,7 @@ async function initAdministrationHandler() {
                                 const sp = detailRes.data;
                                 document.getElementById('specialty-edit-id').value = sp.id;
                                 document.getElementById('specialty-form-title').textContent = `Edit Specialty: ${sp.specialty_name}`;
-                                document.getElementById('specialty-form-sub').textContent = 'Modify specialty metadata and encounter configuration.';
+                                setInfoTipText(document.getElementById('specialty-form-hint'), 'Modify specialty metadata and encounter configuration.');
                                 document.getElementById('specialty-save-btn-text').textContent = 'Save Changes';
 
                                 document.getElementById('spec-name-input').value = sp.specialty_name || '';
@@ -27191,10 +27992,10 @@ async function initAdministrationHandler() {
                 });
 
             } else {
-                specList.innerHTML = '<tr><td colspan="6" class="error-text">Failed to load specialties.</td></tr>';
+                specList.innerHTML = '<tr><td colspan="5" class="error-text">Failed to load specialties.</td></tr>';
             }
         } catch (e) {
-            specList.innerHTML = `<tr><td colspan="6" class="error-text">Error: ${e.message}</td></tr>`;
+            specList.innerHTML = `<tr><td colspan="5" class="error-text">Error: ${e.message}</td></tr>`;
         }
     };
 
@@ -27202,7 +28003,7 @@ async function initAdministrationHandler() {
         addSpecBtn.addEventListener('click', () => {
             document.getElementById('specialty-edit-id').value = '';
             document.getElementById('specialty-form-title').textContent = 'Create Clinical Specialty';
-            document.getElementById('specialty-form-sub').textContent = 'Register a clinical specialty discipline and its encounter configuration.';
+            setInfoTipText(document.getElementById('specialty-form-hint'), 'Register a clinical specialty discipline and its encounter configuration.');
             document.getElementById('specialty-save-btn-text').textContent = 'Create Specialty';
 
             document.getElementById('spec-name-input').value = '';
@@ -27820,7 +28621,8 @@ async function renderWaitingListWorkspace() {
     }
 }
 
-function openConfirmWaitingListModal(item) {
+async function openConfirmWaitingListModal(item) {
+    await loadVisitTypes();
     const mrn = 'PAT' + String(item.patient_id).padStart(4, '0');
     let datePrefDisplay = 'Sep 02, 2026';
     let timePrefDisplay = 'Any Time';
@@ -27908,9 +28710,7 @@ function openConfirmWaitingListModal(item) {
             <div style="display: grid; grid-template-columns: 140px 1fr; align-items: center; gap: 10px; margin-bottom: 10px;">
                 <label style="text-align: right; font-weight: 600; font-size: 0.88rem; color: #334155;">Visit Type <span style="color:#ef4444;">*</span></label>
                 <select id="swal-confirm-visittype" class="form-control" style="height:36px; border-radius:4px; max-width: 240px; font-size:0.88rem;">
-                    <option value="">--Select--</option>
-                    <option value="Follow Up" selected>Follow Up</option>
-                    <option value="New Patient">New Patient</option>
+                    ${visitTypeOptionsHtml(item.visit_type || 'Follow-Up Visit')}
                 </select>
             </div>
 
@@ -28532,47 +29332,10 @@ function initCalendarTopTabs() {
         loadGlobalNotifications();
     };
 
-    // Load and render HIPAA Compliance Audit Logs
-    window.loadAuditLogs = async function() {
-        const auditListEl = document.getElementById('audit-trail-list');
-        if (!auditListEl) return;
-
-        try {
-            const res = await ApiService.request('/api/reports/audit');
-            if (res.status === 'success' && Array.isArray(res.data)) {
-                const logs = res.data;
-                if (logs.length === 0) {
-                    auditListEl.innerHTML = `<tr><td colspan="8" style="text-align: center; color: #94a3b8; padding: 20px;">No audit trail records found.</td></tr>`;
-                    return;
-                }
-
-                auditListEl.innerHTML = logs.map(l => `
-                    <tr>
-                        <td style="font-size: 0.82rem; font-weight: 700; color: #0f172a;">${l.created_at || 'N/A'}</td>
-                        <td style="font-size: 0.85rem; font-weight: 600; color: #1e293b;">${l.username || 'System'}</td>
-                        <td><span style="font-size: 0.72rem; background: #e0f2fe; color: #0369a1; padding: 2px 8px; border-radius: 12px; font-weight: 700;">${l.user_role || 'User'}</span></td>
-                        <td style="font-size: 0.85rem; font-weight: 600; color: #475569;">${l.patient_id ? '#' + l.patient_id : 'N/A'}</td>
-                        <td><span style="font-size: 0.75rem; background: #f1f5f9; color: #334155; padding: 3px 8px; border-radius: 6px; font-weight: 700;">${l.action_type || 'ACCESS'}</span></td>
-                        <td style="font-size: 0.82rem; color: #64748b;">${l.target_module || 'System'}</td>
-                        <td style="font-size: 0.8rem; font-family: monospace; color: #64748b;">${l.ip_address || '127.0.0.1'}</td>
-                        <td style="font-size: 0.75rem; font-family: monospace; color: #0284c7; max-width: 140px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${l.log_hash || ''}">${l.log_hash ? l.log_hash.substring(0, 16) + '...' : 'N/A'}</td>
-                    </tr>
-                `).join('');
-            } else {
-                auditListEl.innerHTML = `<tr><td colspan="8" style="text-align: center; color: #94a3b8; padding: 20px;">No audit trail records found.</td></tr>`;
-            }
-        } catch (e) {
-            console.log('Error fetching audit logs', e);
-            auditListEl.innerHTML = `<tr><td colspan="8" style="text-align: center; color: #ef4444; padding: 20px;">Failed to load compliance audit log.</td></tr>`;
-        }
-    };
-
     // Run on initial load and route changes
     window.initGlobalNotificationBell();
-    window.loadAuditLogs();
 
     window.addEventListener('moduleLoaded', (e) => {
         window.initGlobalNotificationBell();
-        window.loadAuditLogs();
     });
 

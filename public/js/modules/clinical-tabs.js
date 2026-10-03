@@ -858,6 +858,35 @@ function wireAll(panes, tabLis, note, allCpts) {
         const sigNameInput = document.getElementById('signature-name');
         if (sigNameInput) sigNameInput.value = document.getElementById('cpSignProv')?.value || 'Provider';
         window._syncCustomTabsToDOM();
+
+        // Existing encounter: save, then really sign & lock it (POST /sign). Previously this button only
+        // saved, so nothing on the chart could ever lock an encounter or send it to Billing.
+        const signNoteId = window.activeClinicalNoteId;
+        const signPatientId = window.activeClinicalPatientId;
+        if (signNoteId && typeof window.submitEncounter === 'function') {
+            const ok = window.confirm('Sign & finalize this encounter?\n\nOnce signed the record is locked; later corrections go in an Addendum.');
+            if (!ok) return;
+            const btn = document.getElementById('cpSignBtn');
+            btn.disabled = true;
+            (async () => {
+                try {
+                    await window.submitEncounter({ preventDefault() { }, target: btn });
+                    if (window.activeClinicalNoteId) return;   // save failed (its own message already shown)
+                    const res = await ApiService.request(`/api/clinical/notes/${signNoteId}/sign`, 'POST', { signed_signature_data: document.getElementById('sig-data-url')?.value || '' });
+                    if (res && res.status === 'success') {
+                        Toast.show('Encounter signed and locked. Sent to the billing queue.', 'success');
+                        const fresh = await ApiService.request(`/api/clinical/note-single/${signNoteId}`);
+                        if (fresh.status === 'success' && fresh.data) window.populateEncounterModal(fresh.data, true);
+                        if (typeof window.refreshBillingData === 'function') { try { window.refreshBillingData(); } catch (_) { } }
+                    } else {
+                        window.activeClinicalNoteId = signNoteId;
+                        window.activeClinicalPatientId = signPatientId;
+                        alert('Sign failed: ' + ((res && res.message) || 'Could not sign the encounter.'));
+                    }
+                } finally { btn.disabled = false; }
+            })();
+            return;
+        }
         const rb = document.getElementById('save-encounter-btn') || document.getElementById('update-encounter-btn'); if (rb) rb.click();
     };
 
@@ -1119,7 +1148,11 @@ function syncToUI(note) {
             const dashboard = document.getElementById('patient-dashboard-full-content');
             if (!dashboard || dashboard.offsetParent === null) { window._originalPopulateEncounterModal(note, isFresh); return; }
 
-            const isSigned = !!(note.signed_signature_data || note.signed_by_name);
+            // lock_state is the real signed flag; signed_by_name/signed_signature_data are also written by a plain
+            // draft save, so they can't be used on their own (they wrongly showed drafts as "Signed (Locked)").
+            const isSigned = note.lock_state !== undefined && note.lock_state !== null
+                ? Number(note.lock_state) === 1
+                : !!(note.signed_signature_data || note.signed_by_name);
 
             // A. Edit Encounter button
             let editBtn = document.querySelector('.edit-patient-chart-btn') || document.querySelector('.custom-edit-enc-btn');

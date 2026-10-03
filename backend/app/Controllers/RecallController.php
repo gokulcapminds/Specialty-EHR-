@@ -3,20 +3,15 @@
 namespace App\Controllers;
 
 use App\Models\Database;
+use App\Security\Roles;
 use App\Services\AuditLogger;
 use App\Services\EncryptionService;
 use App\Services\EmailService;
 
 class RecallController {
     private function checkAccess(): void {
-        if (session_status() === PHP_SESSION_NONE) {
-            session_start();
-        }
-        if (!isset($_SESSION['user_id'])) {
-            http_response_code(401);
-            echo json_encode(['status' => 'error', 'message' => 'Unauthorized access.']);
-            exit;
-        }
+        // Recalls (follow-up outreach) are handled by clinical staff and the front desk; billing staff have no access.
+        Roles::enforce(Roles::CARE_COORDINATION);
     }
 
     public function all(): void {
@@ -29,8 +24,8 @@ class RecallController {
         $where = [];
         $params = [];
 
-        // Scope to logged in provider unless Super Admin/Staff
-        if (!in_array($userRole, ['Super Admin', 'Admin', 'Staff', 'Billing Staff'])) {
+        // Scope to the logged-in provider unless Super Admin
+        if (!in_array($userRole, Roles::ADMIN)) {
             $where[] = "(r.provider_id = ? OR r.provider_id IS NULL)";
             $params[] = $userId;
         }
@@ -368,7 +363,7 @@ class RecallController {
 
         $where = [];
         $params = [];
-        if (!in_array($userRole, ['Super Admin', 'Admin', 'Staff', 'Billing Staff'])) {
+        if (!in_array($userRole, Roles::ADMIN)) {
             $where[] = "(r.provider_id = ? OR r.provider_id IS NULL)";
             $params[] = $userId;
         }

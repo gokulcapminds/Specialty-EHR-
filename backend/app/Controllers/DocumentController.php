@@ -2,6 +2,7 @@
 namespace App\Controllers;
 
 use App\Models\Database;
+use App\Security\Roles;
 use App\Services\AuditLogger;
 
 class DocumentController {
@@ -16,7 +17,7 @@ class DocumentController {
     }
 
     public function upload(): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse']);
+        $this->checkAccess(Roles::CLINICAL);
         header('Content-Type: application/json');
 
         if (!isset($_FILES['document'])) {
@@ -107,7 +108,7 @@ class DocumentController {
     }
 
     public function index(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Billing Staff']);
+        $this->checkAccess(Roles::CLINICAL);
         header('Content-Type: application/json');
 
         $patientId = $params['patient_id'] ?? null;
@@ -131,7 +132,7 @@ class DocumentController {
     }
 
     public function download(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Billing Staff']);
+        $this->checkAccess(Roles::CLINICAL);
 
         $docId = $params['id'] ?? null;
         if (!$docId) {
@@ -168,7 +169,7 @@ class DocumentController {
     }
 
     public function delete(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse']);
+        $this->checkAccess(Roles::CLINICAL);
         header('Content-Type: application/json');
 
         $docId = $params['id'] ?? null;

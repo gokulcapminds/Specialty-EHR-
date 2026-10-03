@@ -196,6 +196,8 @@ CREATE TABLE IF NOT EXISTS telehealth_sessions (
     join_url VARCHAR(255) NOT NULL,
     jitsi_url VARCHAR(255) NOT NULL,
     status ENUM('Active', 'Completed', 'Cancelled') DEFAULT 'Active',
+    scheduled_start DATETIME DEFAULT NULL,
+    scheduled_end DATETIME DEFAULT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE,
     FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT
@@ -221,12 +223,8 @@ CREATE TABLE IF NOT EXISTS audit_logs (
 ) ENGINE=InnoDB;
 
 -- Seed default users with secure password hashes
--- Default passwords:
--- admin / AdminPassword123!
--- doctor / DoctorPassword123!
--- therapist / TherapistPassword123!
--- billing / BillingPassword123!
--- front_desk / FrontDeskPassword123!
+-- Seed demo users. Their initial passwords are intentionally NOT documented here: set a new password for every seeded account
+-- (Administration > User Management) before using the system.
 INSERT INTO users (username, password_hash, first_name, last_name, email, role, theme_preference) VALUES
 ('admin', '$2y$10$QfFvTum.HlOmRKtDt5plXerArLDkq.yIUP5bI/.bNZ51PqSHCMN1K', 'System', 'Admin', 'admin@bhevariol.health', 'Super Admin', 'dark'),
 ('dr_smith', '$2y$10$9ZsFoTAY7.PDaBUhysaV7Od63hkCe5Ftq8rmyEnCxu2miGSwoeh5y', 'John', 'Smith', 'smith@bhevariol.health', 'Doctor', 'light'),
@@ -495,3 +493,263 @@ ALTER TABLE appointments DROP COLUMN reminder_sent_at;
 
 -- Migration 2026-09-30: registration wizard drafts are stored as patients with status 'Draft'
 ALTER TABLE patients MODIFY patient_status ENUM('Active','Inactive','Deceased','Merged','Draft') DEFAULT 'Active';
+
+-- Migration 2026-09-30: billing payments ledger (applied live)
+-- invoices / invoice_line_items were MyISAM; converted to InnoDB so money records are transactional and can carry foreign keys.
+ALTER TABLE invoices ENGINE=InnoDB;
+ALTER TABLE invoice_line_items ENGINE=InnoDB;
+ALTER TABLE invoices ADD COLUMN billing_type ENUM('Self Pay','Insurance') NOT NULL DEFAULT 'Self Pay' AFTER status;
+-- Every payment is a row; rows are voided (voided_at), never deleted. invoices.paid_amount = SUM(non-void payments).
+CREATE TABLE IF NOT EXISTS payments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    invoice_id INT NOT NULL,
+    patient_id INT NOT NULL,
+    claim_id INT DEFAULT NULL,
+    source ENUM('Patient','Primary Insurance','Secondary Insurance') NOT NULL DEFAULT 'Patient',
+    method ENUM('Cash','Credit Card','Debit Card','Check','ACH','Other') NOT NULL DEFAULT 'Other',
+    reference_no VARCHAR(100) DEFAULT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    paid_at DATE NOT NULL,
+    notes TEXT DEFAULT NULL,
+    received_by INT DEFAULT NULL,
+    voided_at DATETIME DEFAULT NULL,
+    voided_by INT DEFAULT NULL,
+    void_reason VARCHAR(255) DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_pay_invoice (invoice_id),
+    INDEX idx_pay_patient (patient_id),
+    FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS adjustments (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    invoice_id INT NOT NULL,
+    claim_id INT DEFAULT NULL,
+    type ENUM('Contractual','Write-off','Discount') NOT NULL,
+    amount DECIMAL(10,2) NOT NULL,
+    reason VARCHAR(255) DEFAULT NULL,
+    created_by INT DEFAULT NULL,
+    voided_at DATETIME DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_adj_invoice (invoice_id),
+    FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+-- Existing invoices that only had a running paid_amount were backfilled with one 'Other' payment row each.
+
+-- Migration 2026-09-30: insurance claim workflow (applied live). billing_claims (legacy, unused, 0 rows) is superseded by insurance_claims.
+CREATE TABLE IF NOT EXISTS insurance_payers (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(150) NOT NULL UNIQUE,
+    payer_id_code VARCHAR(30) DEFAULT NULL,          -- clinic must enter the real payer ID before submitting
+    claim_filing_code VARCHAR(4) NOT NULL DEFAULT 'CI', -- 837 SBR09: CI commercial, MB Medicare Part B, MC Medicaid
+    phone VARCHAR(40) DEFAULT NULL,
+    claim_address VARCHAR(255) DEFAULT NULL,
+    is_active TINYINT(1) NOT NULL DEFAULT 1,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+) ENGINE=InnoDB;
+-- seeded: Blue Cross Blue Shield, Medicare Part B (MB), Medicaid (MC), Aetna, UnitedHealthcare, Cigna Health, Humana, Kaiser Permanente
+CREATE TABLE IF NOT EXISTS insurance_claims (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    claim_number VARCHAR(20) DEFAULT NULL UNIQUE,
+    invoice_id INT NOT NULL,
+    patient_id INT NOT NULL,
+    encounter_id INT DEFAULT NULL,
+    patient_insurance_id INT DEFAULT NULL,
+    parent_claim_id INT DEFAULT NULL,                -- secondary claim -> the primary it was billed after
+    sequence ENUM('Primary','Secondary') NOT NULL DEFAULT 'Primary',
+    status ENUM('Draft','Ready','Submitted','Accepted','Rejected','Partially Paid','Paid','Denied','Appealed','Closed') NOT NULL DEFAULT 'Draft',
+    payer_name VARCHAR(150) NOT NULL,
+    payer_id_code VARCHAR(30) DEFAULT NULL,
+    coverage_json TEXT DEFAULT NULL,                 -- snapshot of the patient_insurance row at claim creation
+    date_of_service DATE NOT NULL,
+    billed_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    allowed_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    insurance_paid DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    adjustment_amount DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    patient_resp DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    submitted_at DATETIME DEFAULT NULL,
+    submission_ref VARCHAR(100) DEFAULT NULL,
+    payer_claim_no VARCHAR(100) DEFAULT NULL,
+    denial_code VARCHAR(20) DEFAULT NULL,
+    denial_reason VARCHAR(255) DEFAULT NULL,
+    appeal_note TEXT DEFAULT NULL,
+    notes TEXT DEFAULT NULL,
+    timely_filing_due DATE DEFAULT NULL,
+    created_by INT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    INDEX idx_claim_invoice (invoice_id),
+    INDEX idx_claim_patient (patient_id),
+    INDEX idx_claim_status (status),
+    FOREIGN KEY (invoice_id) REFERENCES invoices(id) ON DELETE RESTRICT,
+    FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS claim_lines (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    claim_id INT NOT NULL,
+    invoice_line_item_id INT DEFAULT NULL,
+    cpt_code VARCHAR(10) DEFAULT NULL,
+    cpt_description VARCHAR(255) DEFAULT NULL,
+    modifiers VARCHAR(20) DEFAULT NULL,
+    icd10_code VARCHAR(15) DEFAULT NULL,
+    dx_pointer VARCHAR(4) DEFAULT NULL,
+    units INT NOT NULL DEFAULT 1,
+    charge DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    allowed DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    paid DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    adjustment DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    patient_resp DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+    denial_code VARCHAR(20) DEFAULT NULL,
+    adjudicated TINYINT(1) NOT NULL DEFAULT 0,
+    INDEX idx_cl_claim (claim_id),
+    FOREIGN KEY (claim_id) REFERENCES insurance_claims(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS claim_status_history (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    claim_id INT NOT NULL,
+    from_status VARCHAR(20) DEFAULT NULL,
+    to_status VARCHAR(20) NOT NULL,
+    note VARCHAR(500) DEFAULT NULL,
+    user_id INT DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_csh_claim (claim_id),
+    FOREIGN KEY (claim_id) REFERENCES insurance_claims(id) ON DELETE CASCADE
+) ENGINE=InnoDB;
+-- system_settings keys (blank until the clinic supplies them, needed for 837P export): billing_submitter_id, billing_receiver_id, billing_contact_name, billing_contact_phone
+
+-- Migration 2026-09-30: clearinghouse flow (eligibility 270/271, 837, 999/277CA, 835) with a built-in simulator (applied live)
+CREATE TABLE IF NOT EXISTS edi_transactions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    claim_id INT DEFAULT NULL,
+    patient_id INT NOT NULL,
+    type ENUM('270','271','837','999','277CA','835') NOT NULL,
+    direction ENUM('out','in') NOT NULL,
+    control_number VARCHAR(20) DEFAULT NULL,
+    status ENUM('created','sent','received','rejected','posted') NOT NULL DEFAULT 'created',
+    content_encrypted MEDIUMTEXT DEFAULT NULL,   -- X12 text contains PHI: stored via EncryptionService::encrypt()
+    summary_json TEXT DEFAULT NULL,
+    created_by INT DEFAULT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_edi_claim (claim_id),
+    INDEX idx_edi_patient (patient_id),
+    INDEX idx_edi_type (type)
+) ENGINE=InnoDB;
+CREATE TABLE IF NOT EXISTS eligibility_checks (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    patient_id INT NOT NULL,
+    claim_id INT DEFAULT NULL,
+    patient_insurance_id INT DEFAULT NULL,
+    sequence ENUM('Primary','Secondary') NOT NULL DEFAULT 'Primary',
+    status ENUM('Active','Inactive','Error') NOT NULL,
+    plan_name VARCHAR(150) DEFAULT NULL,
+    copay DECIMAL(10,2) DEFAULT NULL,
+    deductible DECIMAL(10,2) DEFAULT NULL,
+    deductible_met DECIMAL(10,2) DEFAULT NULL,
+    coinsurance_pct DECIMAL(5,2) DEFAULT NULL,
+    message VARCHAR(255) DEFAULT NULL,
+    request_tx_id INT DEFAULT NULL,
+    response_tx_id INT DEFAULT NULL,
+    checked_by INT DEFAULT NULL,
+    checked_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_elig_patient (patient_id),
+    INDEX idx_elig_claim (claim_id)
+) ENGINE=InnoDB;
+ALTER TABLE insurance_claims ADD COLUMN clearinghouse_ref VARCHAR(60) DEFAULT NULL AFTER submission_ref;
+ALTER TABLE insurance_claims ADD COLUMN validated_at DATETIME DEFAULT NULL AFTER clearinghouse_ref;
+ALTER TABLE insurance_claims ADD COLUMN validation_json TEXT DEFAULT NULL AFTER validated_at;
+ALTER TABLE insurance_claims ADD COLUMN pending_835_tx_id INT DEFAULT NULL AFTER validation_json;
+-- system_settings key: clearinghouse_mode = 'simulator' ('availity' reserved, not implemented)
+
+-- Migration 2026-09-30: Encounters module - one encounter per appointment (applied live)
+-- Replaces the plain idx_appointment index; NULLs stay allowed (walk-ins / chart-created notes have no appointment).
+ALTER TABLE clinical_notes DROP INDEX idx_appointment, ADD UNIQUE KEY uniq_note_appointment (appointment_id);
+
+-- Migration 2026-10-01: Telehealth timed join (applied live)
+-- Patients may join 5 min before scheduled_start until scheduled_end; NULL = ad-hoc session (ungated). Backfilled from appointments.
+ALTER TABLE telehealth_sessions ADD COLUMN scheduled_start DATETIME DEFAULT NULL AFTER status, ADD COLUMN scheduled_end DATETIME DEFAULT NULL AFTER scheduled_start;
+
+-- Migration 2026-10-01: Provider Availability - providers set when they ARE available ('In Office'); other categories are time off
+ALTER TABLE provider_time_blocks ADD COLUMN category VARCHAR(20) NOT NULL DEFAULT 'Out Of Office' AFTER weekday;
+ALTER TABLE provider_time_blocks ADD COLUMN facility_id INT NULL AFTER category;
+
+-- Migration 2026-10-03: Audit log is now tamper-evident and append-only (applied live; the old 3,223 rows were deleted on purpose - the old chain was unverifiable)
+-- * foreign keys removed: ON DELETE SET NULL silently rewrote audit rows when a user/patient was deleted (ids are kept as plain integers)
+-- * timestamp is a UTC DATETIME written by the logger (UTC_TIMESTAMP()); prev_hash links each row to the one before it
+-- * log_hash is now HMAC-SHA256 (key derived from the encryption key) over a canonical JSON of the row - see App\Services\AuditLogger
+-- * audit_chain_head (1 row, locked FOR UPDATE by the logger) serialises writers and lets verification detect deleted tail rows
+-- * BEFORE UPDATE / BEFORE DELETE triggers reject any change to audit_logs (TRUNCATE/DROP TRIGGER by root are NOT blocked - see CLAUDE.md)
+TRUNCATE TABLE audit_logs;
+ALTER TABLE audit_logs DROP FOREIGN KEY audit_logs_ibfk_1;
+ALTER TABLE audit_logs DROP FOREIGN KEY audit_logs_ibfk_2;
+ALTER TABLE audit_logs MODIFY `timestamp` DATETIME NOT NULL, ADD COLUMN prev_hash CHAR(64) NOT NULL AFTER `timestamp`;
+ALTER TABLE audit_logs ADD INDEX idx_audit_patient (patient_id, id), ADD INDEX idx_audit_username (username), ADD INDEX idx_audit_module (target_module), ADD INDEX idx_audit_time (`timestamp`);
+CREATE TABLE IF NOT EXISTS audit_chain_head (
+    id TINYINT UNSIGNED NOT NULL PRIMARY KEY,
+    last_id BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    last_hash CHAR(64) NOT NULL,
+    entry_count BIGINT UNSIGNED NOT NULL DEFAULT 0,
+    head_mac CHAR(64) NOT NULL
+) ENGINE=InnoDB;
+-- seed row (last_hash = 64 zeros, head_mac = AuditLogger::headMac(0, zeros, 0)) is inserted by the one-off migration script, because the MAC needs the PHP key:
+-- INSERT INTO audit_chain_head (id, last_id, last_hash, entry_count, head_mac) VALUES (1, 0, REPEAT('0',64), 0, '<AuditLogger::headMac(0, GENESIS, 0)>');
+CREATE TRIGGER audit_logs_block_update BEFORE UPDATE ON audit_logs FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_logs is append-only: rows cannot be changed';
+CREATE TRIGGER audit_logs_block_delete BEFORE DELETE ON audit_logs FOR EACH ROW SIGNAL SQLSTATE '45000' SET MESSAGE_TEXT = 'audit_logs is append-only: rows cannot be deleted';
+
+-- Migration 2026-10-03: the Therapist role was removed (applied live). Roles are now Super Admin, Doctor, Nurse, Receptionist, Billing Staff (+ Patient reserved).
+-- The seed user 'therapist_jane' above (never logged in, no data) was deleted; the Therapist rows in custom_roles / rbac_policies were removed.
+-- Access rules live in backend/app/Security/Roles.php (not in the database).
+DELETE FROM users WHERE role = 'Therapist';
+DELETE FROM custom_roles WHERE name = 'Therapist' OR base_role = 'Therapist';
+DELETE FROM rbac_policies WHERE role = 'Therapist';
+ALTER TABLE users MODIFY role ENUM('Super Admin','Doctor','Nurse','Receptionist','Billing Staff','Patient') NOT NULL;
+-- one spelling for the user type chosen in the wizard
+UPDATE users SET user_type = 'Staff Member' WHERE user_type = 'Staff';
+ALTER TABLE users ALTER COLUMN user_type SET DEFAULT 'Staff Member';
+
+-- ===== Roles & permissions: one source of truth (App\Security\Roles::AREAS) =====
+-- Removed the stored-but-never-enforced permission systems: custom roles / templates / matrices, the rbac_policies
+-- table and the per-user Step-4 tick list. Access is exactly the user's role; the Roles & Permissions tab is read-only
+-- and GET /api/me returns the derived `permissions`.
+DROP TABLE IF EXISTS custom_roles;
+DROP TABLE IF EXISTS rbac_policies;
+ALTER TABLE users DROP COLUMN custom_permissions;
+
+-- ===== Custom roles (enforced): role = base role (ceiling) + per-area View/Create/Edit/Delete ticks =====
+-- Effective access = base role's access AND the ticks (App\Security\Roles::customAllows + RouteAreas, checked in AuthenticationMiddleware).
+CREATE TABLE IF NOT EXISTS custom_roles (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(100) NOT NULL,
+    description VARCHAR(255) DEFAULT NULL,
+    base_role ENUM('Doctor','Nurse','Receptionist','Billing Staff') NOT NULL,
+    permissions_matrix JSON NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_custom_role_name (name)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+ALTER TABLE users ADD COLUMN custom_role_id INT NULL DEFAULT NULL;
+
+-- ===== Login hardening (Oct 2026): lockout, password-change session invalidation, password reset by email =====
+ALTER TABLE users ADD COLUMN failed_login_count INT NOT NULL DEFAULT 0;
+ALTER TABLE users ADD COLUMN locked_until DATETIME NULL DEFAULT NULL;
+ALTER TABLE users ADD COLUMN password_changed_at DATETIME NULL DEFAULT NULL;
+CREATE TABLE IF NOT EXISTS password_resets (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    user_id INT NOT NULL,
+    token_hash CHAR(64) NOT NULL,             -- SHA-256 of the emailed token; the token itself is never stored
+    expires_at DATETIME NOT NULL,
+    used_at DATETIME NULL DEFAULT NULL,
+    created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    requested_ip VARCHAR(45) NULL,
+    UNIQUE KEY uniq_reset_token (token_hash),
+    KEY idx_reset_user (user_id, created_at)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+-- The seeded demo accounts dr_smith and billing_staff were forced to change their (previously published) default passwords:
+UPDATE users SET must_change_password = 1, temp_password_expires = NULL WHERE username IN ('dr_smith', 'billing_staff');
+
+-- ===== Cardiology visit types (Oct 2026): one shared list in App\Support\VisitTypes =====
+-- Old free-text values were mapped to the closest current type (other values, e.g. 'Stress Test', were left as they are).
+UPDATE appointments SET visit_type = 'New Patient Consultation' WHERE visit_type = 'New Patient';
+UPDATE appointments SET visit_type = 'Follow-Up Visit' WHERE visit_type IN ('Follow Up', 'Follow-up');
+UPDATE appointments SET visit_type = 'Cardiology Consultation' WHERE visit_type = 'Cardiology Consult';
+UPDATE clinical_notes SET visit_type = 'New Patient Consultation' WHERE visit_type = 'New Patient';
+UPDATE clinical_notes SET visit_type = 'Follow-Up Visit' WHERE visit_type IN ('Follow Up', 'Follow-up');
+UPDATE clinical_notes SET visit_type = 'Cardiology Consultation' WHERE visit_type = 'Cardiology Consult';

@@ -2,6 +2,8 @@
 namespace App\Controllers;
 
 use App\Models\Database;
+use App\Security\Roles;
+use App\Services\AppUrl;
 use App\Services\AuditLogger;
 use App\Services\EncryptionService;
 
@@ -11,6 +13,7 @@ class IntakeController {
      * Send intake form link to patient (Internal Staff Endpoint)
      */
     public function send(): void {
+        $this->checkAccess();
         header('Content-Type: application/json');
 
         $input = json_decode(file_get_contents('php://input'), true);
@@ -41,37 +44,8 @@ class IntakeController {
             [$patientId, $token]
         );
 
-        // Fetch custom app_base_url setting if set in system_settings
-        $customBaseUrl = null;
-        try {
-            $row = Database::fetch("SELECT setting_value FROM system_settings WHERE setting_key = 'app_base_url'");
-            if ($row && !empty($row['setting_value'])) {
-                $customBaseUrl = rtrim($row['setting_value'], '/');
-            }
-        } catch (\Throwable $t) {}
-
-        $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? "https" : "http";
-        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-        $scriptPath = $_SERVER['SCRIPT_NAME'] ?? '/pf_ehr/public/index.php';
-        $baseDir = dirname(dirname($scriptPath));
-        if ($baseDir === '/' || $baseDir === '\\') $baseDir = '';
-
-        if ($customBaseUrl) {
-            $intakeUrl = "{$customBaseUrl}/public/intake.php?token={$token}";
-        } else {
-            // Auto-detect server network IP for mobile phones & remote devices
-            $localIp = gethostbyname(gethostname());
-            if (strpos($host, 'localhost') !== false && $localIp && $localIp !== '127.0.0.1') {
-                $port = $_SERVER['SERVER_PORT'] ?? 80;
-                $portStr = ($port != 80 && $port != 443) ? ":{$port}" : "";
-                $networkHost = $localIp . $portStr;
-                $intakeUrl = "{$protocol}://{$networkHost}{$baseDir}/public/intake.php?token={$token}";
-            } else {
-                $intakeUrl = "{$protocol}://{$host}{$baseDir}/public/intake.php?token={$token}";
-            }
-        }
-
-        $localIntakeUrl = "{$protocol}://{$host}{$baseDir}/public/intake.php?token={$token}";
+        // Honours Settings > Public EHR Base URL (or auto-detects when blank) - see AppUrl.
+        $intakeUrl = AppUrl::publicUrl('intake.php?token=' . $token);
 
         // Attempt sending email via EmailService
         $emailSent = false;
@@ -291,6 +265,7 @@ class IntakeController {
      * Get intake form details for a specific patient
      */
     public function getByPatientId(array $params): void {
+        $this->checkAccess();
         header('Content-Type: application/json');
         $patientId = intval($params['patient_id'] ?? 0);
 
@@ -300,8 +275,10 @@ class IntakeController {
             return;
         }
 
+        AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, $patientId, 'View Patient Intake Form', 'Intake', null);
+
         $form = Database::fetch(
-            "SELECT pif.*, p.first_name_encrypted, p.last_name_encrypted 
+            "SELECT pif.*, p.first_name_encrypted, p.last_name_encrypted
              FROM patient_intake_forms pif 
              JOIN patients p ON pif.patient_id = p.id 
              WHERE pif.patient_id = ? 
@@ -338,7 +315,7 @@ class IntakeController {
     }
 
     private function checkAccess(): void {
-        $allowedRoles = ['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff'];
+        $allowedRoles = Roles::CARE_COORDINATION;   // intake forms hold patient medical history: no billing access
         $userRole = $_SESSION['user_role'] ?? '';
         if (!in_array($userRole, $allowedRoles)) {
             http_response_code(403);
@@ -352,6 +329,7 @@ class IntakeController {
      * Get recent completed intake notifications for clinic staff
      */
     public function notifications(): void {
+        $this->checkAccess();
         header('Content-Type: application/json');
 
         $notifications = Database::fetchAll(

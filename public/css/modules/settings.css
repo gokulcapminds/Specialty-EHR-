@@ -83,30 +83,6 @@
     color: #0284c7;
 }
 
-.settings-pref-list {
-    display: flex;
-    flex-direction: column;
-    gap: 14px;
-}
-
-.settings-pref-item {
-    display: flex;
-    align-items: center;
-    gap: 12px;
-    font-size: 0.9rem;
-    font-weight: 600;
-    color: #334155;
-    cursor: pointer;
-    padding: 10px 14px;
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    border-radius: 8px;
-}
-
-.settings-pref-item:hover {
-    background: #f1f5f9;
-}
-
 .custom-accent-checkbox {
     width: 18px;
     height: 18px;

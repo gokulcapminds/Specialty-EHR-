@@ -15,6 +15,17 @@ class FacilityController {
         }
     }
 
+    // Facilities are told apart by name in dropdowns (the code is not shown), so two may not share one (case-insensitive).
+    private function nameTaken(string $name, ?int $exceptId = null): bool {
+        $sql = "SELECT id FROM facilities WHERE LOWER(TRIM(facility_name)) = LOWER(?)";
+        $args = [trim($name)];
+        if ($exceptId) {
+            $sql .= " AND id <> ?";
+            $args[] = $exceptId;
+        }
+        return (bool)Database::fetch($sql, $args);
+    }
+
     private function syncFacilitySpecialties(int $facilityId, array $specialtyIds): void {
         Database::query("DELETE FROM facility_specialties WHERE facility_id = ?", [$facilityId]);
         foreach ($specialtyIds as $specialtyId) {
@@ -89,6 +100,12 @@ class FacilityController {
             return;
         }
 
+        if ($this->nameTaken($name)) {
+            http_response_code(409);
+            echo json_encode(['status' => 'error', 'message' => "A facility named '{$name}' already exists. Use a different name."]);
+            return;
+        }
+
         try {
             $code         = trim($input['facility_code'] ?? '') ?: 'FAC-' . strtoupper(substr(preg_replace('/[^A-Za-z0-9]/', '', $name), 0, 3)) . '-' . rand(10, 99);
             $type         = trim($input['facility_type'] ?? 'Clinic');
@@ -130,7 +147,7 @@ class FacilityController {
             $this->syncFacilitySpecialties($newId, $specialtyIds);
 
             if (class_exists('App\Services\AuditLogger')) {
-                AuditLogger::log($_SESSION['user_id'] ?? null, 'FACILITY_CREATED', "Created facility: {$name}");
+                AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, null, "Create Facility: {$name}", 'Administration', isset($newId) ? (string)$newId : null);
             }
 
             echo json_encode(['status' => 'success', 'message' => 'Facility created successfully.', 'id' => $newId]);
@@ -155,6 +172,12 @@ class FacilityController {
         if (empty($specialtyIds)) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Select at least one clinical specialty this facility practices.']);
+            return;
+        }
+
+        if ($this->nameTaken($name, (int)$id)) {
+            http_response_code(409);
+            echo json_encode(['status' => 'error', 'message' => "A facility named '{$name}' already exists. Use a different name."]);
             return;
         }
 
@@ -205,7 +228,7 @@ class FacilityController {
             $this->syncFacilitySpecialties((int)$id, $specialtyIds);
 
             if (class_exists('App\Services\AuditLogger')) {
-                AuditLogger::log($_SESSION['user_id'] ?? null, 'FACILITY_UPDATED', "Updated facility: {$name} (ID: {$id})");
+                AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, null, "Update Facility: {$name}", 'Administration', (string)$id);
             }
 
             echo json_encode(['status' => 'success', 'message' => 'Facility updated successfully.']);
@@ -222,10 +245,18 @@ class FacilityController {
         $id = $params['id'] ?? null;
         if (!$id) { http_response_code(400); echo json_encode(['status' => 'error', 'message' => 'Facility ID required.']); return; }
 
+        // Staff have no foreign key to their facility, so without this check they would silently point at a facility that no longer exists.
+        $staff = (int)Database::fetch("SELECT COUNT(*) AS n FROM users WHERE facility_id = ?", [$id])['n'];
+        if ($staff > 0) {
+            http_response_code(409);
+            echo json_encode(['status' => 'error', 'message' => "Cannot delete this facility: {$staff} staff member(s) are assigned to it. Reassign them to another facility first."]);
+            return;
+        }
+
         try {
             Database::query("DELETE FROM facilities WHERE id = ?", [$id]);
             if (class_exists('App\Services\AuditLogger')) {
-                AuditLogger::log($_SESSION['user_id'] ?? null, 'FACILITY_DELETED', "Deleted facility ID: {$id}");
+                AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, null, 'Delete Facility', 'Administration', (string)$id);
             }
             echo json_encode(['status' => 'success', 'message' => 'Facility deleted successfully.']);
         } catch (\Exception $e) {

@@ -18,7 +18,7 @@
                 <label class="form-label" for="cp-new-password">New Password</label>
                 <div class="input-icon-wrapper">
                     <i class="fas fa-key input-icon-left"></i>
-                    <input class="form-control input-with-icon-left" type="password" id="cp-new-password" name="new_password" placeholder="Enter a new password (min. 8 characters)" required autocomplete="new-password">
+                    <input class="form-control input-with-icon-left" type="password" id="cp-new-password" name="new_password" placeholder="At least 10 characters, with a letter and a number" required autocomplete="new-password">
                 </div>
             </div>
 

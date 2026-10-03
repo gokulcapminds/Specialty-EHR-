@@ -126,7 +126,11 @@
 
         // Populate new Phase 2 fields
         const visitTypeEl = document.getElementById('encounter-visit-type');
-        if (visitTypeEl && note.visit_type) visitTypeEl.value = note.visit_type;
+        if (visitTypeEl && note.visit_type) {
+            // an older record may hold a value that is no longer in the list: keep it selectable so saving doesn't blank it
+            if (!Array.from(visitTypeEl.options).some(o => o.value === note.visit_type)) visitTypeEl.add(new Option(note.visit_type, note.visit_type));
+            visitTypeEl.value = note.visit_type;
+        }
 
         const modeEl = document.getElementById('encounter-mode-select');
         if (modeEl && note.encounter_mode) modeEl.value = note.encounter_mode;

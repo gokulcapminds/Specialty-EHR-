@@ -2,6 +2,7 @@
 namespace App\Controllers;
 
 use App\Models\Database;
+use App\Services\AppUrl;
 use App\Services\AuditLogger;
 use App\Services\EmailService;
 
@@ -62,6 +63,17 @@ class SettingsController {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Invalid settings payload.']);
             return;
+        }
+
+        // Validate before writing anything so a bad value never causes a partial save.
+        if (isset($input['app_base_url']) && trim((string)$input['app_base_url']) !== '') {
+            $normalizedBase = AppUrl::normalize((string)$input['app_base_url']);
+            if ($normalizedBase === null) {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'Public EHR Base URL must start with http:// or https://, contain no spaces, and not include /public (example: https://myclinic.com or http://192.168.1.20/Specialty_EHR).']);
+                return;
+            }
+            $input['app_base_url'] = $normalizedBase;
         }
 
         foreach ($input as $key => $val) {

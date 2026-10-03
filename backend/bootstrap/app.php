@@ -505,35 +505,19 @@ try {
         }
     }
 
-    // Create rbac_policies table if missing
-    $db->exec("CREATE TABLE IF NOT EXISTS rbac_policies (
-        role VARCHAR(50) PRIMARY KEY,
-        encounter_access VARCHAR(50) DEFAULT 'Full Access',
-        demographics_access VARCHAR(50) DEFAULT 'Full Access',
-        billing_access VARCHAR(50) DEFAULT 'Full Access',
-        audit_access VARCHAR(50) DEFAULT 'Full Access',
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )");
-
-    // Seed default RBAC policies for all 6 staff-assignable roles (users.role ENUM minus 'Patient')
-    $defaultRbac = [
-        ['Super Admin', 'Full Access', 'Full Access', 'Full Access', 'Full Access'],
-        ['Doctor', 'Full Access', 'Full Access', 'Create / View', 'View Only'],
-        ['Therapist', 'Full Access', 'View Only', 'Forbidden', 'Forbidden'],
-        ['Nurse', 'Full Access', 'View Only', 'Forbidden', 'Forbidden'],
-        ['Receptionist', 'View Only', 'Full Access', 'Forbidden', 'Forbidden'],
-        ['Billing Staff', 'View Only', 'View Only', 'Full Access', 'Forbidden']
-    ];
-    // Auto-migrate users table columns for custom permissions & provider details if missing
+    // Auto-migrate users table provider-detail columns if missing
     $userCols = $db->query("SHOW COLUMNS FROM users")->fetchAll(\PDO::FETCH_COLUMN);
     $newUserCols = [
-        'custom_permissions' => 'JSON DEFAULT NULL',
         'provider_locations' => 'JSON DEFAULT NULL',
         'provider_schedule' => 'JSON DEFAULT NULL',
         'provider_billing' => 'JSON DEFAULT NULL',
         'provider_preferences' => 'JSON DEFAULT NULL',
         'invite_token' => 'VARCHAR(64) DEFAULT NULL',
-        'invite_token_expires' => 'DATETIME DEFAULT NULL'
+        'invite_token_expires' => 'DATETIME DEFAULT NULL',
+        'custom_role_id' => 'INT NULL DEFAULT NULL',
+        'failed_login_count' => 'INT NOT NULL DEFAULT 0',
+        'locked_until' => 'DATETIME NULL DEFAULT NULL',
+        'password_changed_at' => 'DATETIME NULL DEFAULT NULL'
     ];
     foreach ($newUserCols as $cName => $cDef) {
         if (!in_array($cName, $userCols)) {
@@ -541,94 +525,30 @@ try {
         }
     }
 
-    // Auto-create custom_roles table if missing
+    // One-time password-reset links (only the SHA-256 of the emailed token is stored)
+    $db->exec("CREATE TABLE IF NOT EXISTS password_resets (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        user_id INT NOT NULL,
+        token_hash CHAR(64) NOT NULL,
+        expires_at DATETIME NOT NULL,
+        used_at DATETIME NULL DEFAULT NULL,
+        created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        requested_ip VARCHAR(45) NULL,
+        UNIQUE KEY uniq_reset_token (token_hash),
+        KEY idx_reset_user (user_id, created_at)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
+
+    // Custom roles: base role (ceiling) + per-area ticks. Created only - never seeded (the 5 built-in roles live in App\Security\Roles).
     $db->exec("CREATE TABLE IF NOT EXISTS custom_roles (
         id INT AUTO_INCREMENT PRIMARY KEY,
-        name VARCHAR(100) NOT NULL UNIQUE,
+        name VARCHAR(100) NOT NULL,
         description VARCHAR(255) DEFAULT NULL,
-        icon VARCHAR(50) DEFAULT 'fas fa-id-badge',
-        base_role VARCHAR(50) NOT NULL DEFAULT 'Receptionist',
-        permissions JSON NOT NULL,
-        is_system TINYINT(1) DEFAULT 0,
+        base_role ENUM('Doctor','Nurse','Receptionist','Billing Staff') NOT NULL,
+        permissions_matrix JSON NOT NULL,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
-    )");
-
-    // Seed default role templates if empty
-    $seedTemplates = [
-        [
-            'name' => 'Medical Assistant',
-            'description' => 'Patient intake, documentation, orders, vitals.',
-            'icon' => 'fas fa-stethoscope',
-            'base_role' => 'Nurse',
-            'is_system' => 1,
-            'permissions' => json_encode([
-                'View patient demographics', 'Register new patients', 'Update patient information',
-                'View clinical notes', 'Add documentation', 'Record vitals', 'Place orders', 'View lab results',
-                'View schedule', 'Create appointments', 'Reschedule / Cancel',
-                'Access all locations in practice', 'Access telehealth virtual clinics', 'Access all practice patient charts', 'Mask Social Security Numbers',
-                'Broadcast practice announcements', 'Send direct secure staff messages', 'Send patient SMS & Email reminders',
-                'Host video consultations', 'Share screen & digital whiteboard'
-            ])
-        ],
-        [
-            'name' => 'Front Desk',
-            'description' => 'Scheduling, registration, check-in/out.',
-            'icon' => 'fas fa-user-clock',
-            'base_role' => 'Receptionist',
-            'is_system' => 1,
-            'permissions' => json_encode([
-                'View patient demographics', 'Register new patients', 'Update patient information',
-                'View schedule', 'Create appointments', 'Reschedule / Cancel', 'Block time', 'Manage provider schedules',
-                'View billing information', 'View patient balances',
-                'Access all locations in practice', 'Access all practice patient charts', 'Mask Social Security Numbers',
-                'Broadcast practice announcements', 'Send direct secure staff messages', 'Send patient SMS & Email reminders'
-            ])
-        ],
-        [
-            'name' => 'Billing Staff',
-            'description' => 'Claims, payments, billing reports.',
-            'icon' => 'fas fa-file-invoice-dollar',
-            'base_role' => 'Billing Staff',
-            'is_system' => 1,
-            'permissions' => json_encode([
-                'View patient demographics',
-                'View billing information', 'Create claims', 'Post payments', 'View patient balances',
-                'View standard reports', 'Export reports',
-                'Access all locations in practice', 'Access all practice patient charts', 'Mask Social Security Numbers', 'Export PHI to Excel / CSV',
-                'Send direct secure staff messages'
-            ])
-        ],
-        [
-            'name' => 'Practice Manager',
-            'description' => 'Operational access, reports, user oversight.',
-            'icon' => 'fas fa-briefcase',
-            'base_role' => 'Super Admin',
-            'is_system' => 1,
-            'permissions' => json_encode([
-                'View patient demographics', 'Register new patients', 'Update patient information', 'Merge duplicate patients',
-                'View clinical notes', 'Add documentation', 'Record vitals', 'Place orders', 'Manage medications', 'View lab results',
-                'View schedule', 'Create appointments', 'Reschedule / Cancel', 'Block time', 'Manage provider schedules',
-                'View billing information', 'Create claims', 'Post payments', 'View patient balances',
-                'View standard reports', 'Export reports',
-                'Manage users', 'Manage practice settings', 'View audit logs',
-                'Access all locations in practice', 'Access telehealth virtual clinics', 'Access all practice patient charts', 'Export PHI to Excel / CSV',
-                'Create & invite new staff users', 'Edit user roles & security levels', 'Reset staff passwords & MFA',
-                'Configure clinical templates & forms', 'Manage fee schedules & CPT codes', 'Manage lab & pharmacy integrations',
-                'View system audit logs', 'Export HIPAA audit reports', 'Manage security policies & RBAC matrix',
-                'Broadcast practice announcements', 'Send direct secure staff messages', 'Send patient SMS & Email reminders',
-                'Host video consultations', 'Share screen & digital whiteboard'
-            ])
-        ]
-    ];
-
-    foreach ($seedTemplates as $tmpl) {
-        $exists = $db->query("SELECT 1 FROM custom_roles WHERE name = " . $db->quote($tmpl['name']))->fetch();
-        if (!$exists) {
-            $stmt = $db->prepare("INSERT INTO custom_roles (name, description, icon, base_role, permissions, is_system) VALUES (?, ?, ?, ?, ?, ?)");
-            $stmt->execute([$tmpl['name'], $tmpl['description'], $tmpl['icon'], $tmpl['base_role'], $tmpl['permissions'], $tmpl['is_system']]);
-        }
-    }
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_custom_role_name (name)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
 
     // Auto-create facilities table if missing
     $db->exec("CREATE TABLE IF NOT EXISTS facilities (
@@ -832,114 +752,10 @@ try {
         }
     }
 
-    // ── Ensure custom_roles has role_code, role_type ──
-    $roleCols = array_column($db->query("SHOW COLUMNS FROM custom_roles")->fetchAll(), 'Field');
-    $roleColsToAdd = [
-        'role_code' => "VARCHAR(50) DEFAULT NULL",
-        'role_type' => "VARCHAR(50) DEFAULT 'Standard'",
-    ];
-    foreach ($roleColsToAdd as $cName => $cDef) {
-        if (!in_array($cName, $roleCols)) {
-            $db->exec("ALTER TABLE custom_roles ADD COLUMN {$cName} {$cDef}");
-        }
-    }
-
-    // ── Unify Custom Role workflow: add the sidebar-permissions matrix column,
-    // backfill role_type, and seed the 6 built-in security roles into custom_roles.
-    // Scoped try/catch so a seeding hiccup can't abort every migration statement below it.
-    try {
-        $roleCols2 = array_column($db->query("SHOW COLUMNS FROM custom_roles")->fetchAll(), 'Field');
-        if (!in_array('permissions_matrix', $roleCols2)) {
-            $db->exec("ALTER TABLE custom_roles ADD COLUMN permissions_matrix JSON DEFAULT NULL AFTER permissions");
-        }
-
-        // Backfill the 4 pre-existing template rows (Medical Assistant, Front Desk, Billing Staff, Practice Manager)
-        $db->exec("UPDATE custom_roles SET role_type = 'template' WHERE role_type = 'Standard'");
-
-        $fullCrud = ['view' => true, 'create' => true, 'edit' => true, 'delete' => true];
-        $viewEdit = ['view' => true, 'create' => true, 'edit' => true, 'delete' => false];
-        $viewOnly = ['view' => true, 'create' => false, 'edit' => false, 'delete' => false];
-        $none     = ['view' => false, 'create' => false, 'edit' => false, 'delete' => false];
-        $billingViewCreate = ['view' => true, 'create' => true, 'edit' => false, 'delete' => false];
-
-        // Direct translation of the DEFAULT_ROLE_PERMS object in public/js/app.js (~line 17661)
-        $securityMatrices = [
-            'Super Admin' => [
-                'dashboard' => $fullCrud, 'calendar' => $fullCrud, 'patients' => $fullCrud, 'telehealth' => $fullCrud,
-                'messaging' => $fullCrud, 'billing' => $fullCrud, 'referrals' => $fullCrud, 'recalls' => $fullCrud,
-                'reports' => $fullCrud, 'settings' => $fullCrud,
-                'admin_facility' => $fullCrud, 'admin_specialties' => $fullCrud, 'admin_users' => $fullCrud, 'admin_roles' => $fullCrud
-            ],
-            'Doctor' => [
-                'dashboard' => $viewEdit, 'calendar' => $fullCrud, 'patients' => $fullCrud, 'telehealth' => $fullCrud,
-                'messaging' => $fullCrud, 'billing' => $billingViewCreate, 'referrals' => $fullCrud, 'recalls' => $viewEdit,
-                'reports' => $viewOnly, 'settings' => $none,
-                'admin_facility' => $none, 'admin_specialties' => $none, 'admin_users' => $none, 'admin_roles' => $none
-            ],
-            'Therapist' => [
-                'dashboard' => $viewOnly, 'calendar' => $viewEdit, 'patients' => $viewEdit, 'telehealth' => $fullCrud,
-                'messaging' => $viewEdit, 'billing' => $none, 'referrals' => $viewEdit, 'recalls' => $viewOnly,
-                'reports' => $none, 'settings' => $none,
-                'admin_facility' => $none, 'admin_specialties' => $none, 'admin_users' => $none, 'admin_roles' => $none
-            ],
-            'Nurse' => [
-                'dashboard' => $viewOnly, 'calendar' => $viewEdit, 'patients' => $viewEdit, 'telehealth' => $viewEdit,
-                'messaging' => $viewEdit, 'billing' => $none, 'referrals' => $viewEdit, 'recalls' => $viewEdit,
-                'reports' => $viewOnly, 'settings' => $none,
-                'admin_facility' => $none, 'admin_specialties' => $none, 'admin_users' => $none, 'admin_roles' => $none
-            ],
-            // Matches DEFAULT_ROLE_PERMS['Front Desk'] in app.js — same role, ENUM-correct name.
-            'Receptionist' => [
-                'dashboard' => $viewOnly, 'calendar' => $fullCrud, 'patients' => $viewEdit, 'telehealth' => $viewOnly,
-                'messaging' => $viewEdit, 'billing' => $billingViewCreate, 'referrals' => $viewEdit, 'recalls' => $viewEdit,
-                'reports' => $none, 'settings' => $none,
-                'admin_facility' => $none, 'admin_specialties' => $none, 'admin_users' => $none, 'admin_roles' => $none
-            ],
-            'Billing Staff' => [
-                'dashboard' => $viewOnly, 'calendar' => $viewOnly, 'patients' => $viewOnly, 'telehealth' => $none,
-                'messaging' => $viewEdit, 'billing' => $fullCrud, 'referrals' => $none, 'recalls' => $none,
-                'reports' => $viewEdit, 'settings' => $none,
-                'admin_facility' => $none, 'admin_specialties' => $none, 'admin_users' => $none, 'admin_roles' => $none
-            ],
-        ];
-
-        $roleIcons = [
-            'Super Admin' => 'fas fa-user-shield', 'Doctor' => 'fas fa-user-md', 'Therapist' => 'fas fa-hands-holding-child',
-            'Nurse' => 'fas fa-user-nurse', 'Receptionist' => 'fas fa-user-clock', 'Billing Staff' => 'fas fa-file-invoice-dollar'
-        ];
-
-        foreach ($securityMatrices as $roleName => $matrix) {
-            $matrixJson = json_encode($matrix);
-            if ($roleName === 'Billing Staff') {
-                // Already exists as a template row (seeded below) — upgrade it in place, never re-insert (name is UNIQUE).
-                $existingBilling = $db->query("SELECT id FROM custom_roles WHERE name = " . $db->quote($roleName))->fetch();
-                if ($existingBilling) {
-                    $stmt = $db->prepare("UPDATE custom_roles SET role_type = 'both', permissions_matrix = ?, is_system = 1 WHERE name = ?");
-                    $stmt->execute([$matrixJson, $roleName]);
-                } else {
-                    $stmt = $db->prepare("INSERT INTO custom_roles (name, description, icon, base_role, permissions, permissions_matrix, is_system, role_type) VALUES (?, ?, ?, ?, ?, ?, 1, 'both')");
-                    $stmt->execute([$roleName, 'Built-in security role.', $roleIcons[$roleName], $roleName, json_encode([]), $matrixJson]);
-                }
-                continue;
-            }
-
-            $existing = $db->query("SELECT id FROM custom_roles WHERE name = " . $db->quote($roleName))->fetch();
-            if ($existing) {
-                $stmt = $db->prepare("UPDATE custom_roles SET role_type = 'security', permissions_matrix = ?, is_system = 1, base_role = ? WHERE name = ?");
-                $stmt->execute([$matrixJson, $roleName, $roleName]);
-            } else {
-                $stmt = $db->prepare("INSERT INTO custom_roles (name, description, icon, base_role, permissions, permissions_matrix, is_system, role_type) VALUES (?, ?, ?, ?, ?, ?, 1, 'security')");
-                $stmt->execute([$roleName, 'Built-in security role.', $roleIcons[$roleName], $roleName, json_encode([]), $matrixJson]);
-            }
-        }
-    } catch (\Exception $roleSeedEx) {
-        error_log('Custom role migration/seed notice: ' . $roleSeedEx->getMessage());
-    }
-
     // ── Ensure users table has all enterprise provider fields ──
     $userCols2 = array_column($db->query("SHOW COLUMNS FROM users")->fetchAll(), 'Field');
     $userColsToAdd2 = [
-        'user_type'            => "VARCHAR(50) DEFAULT 'Staff'",
+        'user_type'            => "VARCHAR(50) DEFAULT 'Staff Member'",
         'title'                => 'VARCHAR(20) DEFAULT NULL',
         'middle_name'          => 'VARCHAR(80) DEFAULT NULL',
         'suffix'               => 'VARCHAR(20) DEFAULT NULL',

@@ -10,6 +10,9 @@ use App\Controllers\ClinicalController;
 use App\Controllers\DocumentController;
 use App\Controllers\MessagingController;
 use App\Controllers\BillingController;
+use App\Controllers\ClaimController;
+use App\Controllers\ClaimEdiController;
+use App\Controllers\EncounterController;
 use App\Controllers\IntakeController;
 use App\Controllers\ReferralController;
 use App\Controllers\RecallController;
@@ -60,12 +63,14 @@ $router->post('/api/appointment', CalendarController::class . '@store', [Authent
 $router->put('/api/appointment/{id}', CalendarController::class . '@update', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->put('/api/appointment/{id}/status', CalendarController::class . '@updateStatus', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->delete('/api/appointment/{id}', CalendarController::class . '@delete', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->get('/api/visit-types', CalendarController::class . '@visitTypes', [AuthenticationMiddleware::class]);
 $router->get('/api/provider-blocks', CalendarController::class . '@listBlocks', [AuthenticationMiddleware::class]);
 $router->post('/api/provider-blocks', CalendarController::class . '@storeBlock', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->delete('/api/provider-blocks/{id}', CalendarController::class . '@deleteBlock', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 
 // Dashboard Routes
-$router->get('/api/dashboard/recent-activity', \App\Controllers\AuditController::class . '@recentActivity', [AuthenticationMiddleware::class]);
+$router->get('/api/patient/{id}/dashboard', \App\Controllers\DashboardController::class . '@patient', [AuthenticationMiddleware::class]);
+$router->get('/api/dashboard/summary', \App\Controllers\DashboardController::class . '@summary', [AuthenticationMiddleware::class]);
 $router->get('/api/dashboard/doctor-appointments', CalendarController::class . '@doctorAppointmentsThisMonth', [AuthenticationMiddleware::class]);
 $router->get('/api/dashboard/doctor-appointments-monthly', CalendarController::class . '@doctorAppointmentsMonthWise', [AuthenticationMiddleware::class]);
 
@@ -77,6 +82,8 @@ $router->put('/api/clinical/notes/{id}', ClinicalController::class . '@update', 
 $router->delete('/api/clinical/notes/{id}', ClinicalController::class . '@delete', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->get('/api/clinical/icd10-search', ClinicalController::class . '@searchIcd10', [AuthenticationMiddleware::class]);
 // Phase 2 — Core Encounter lifecycle routes
+$router->get('/api/encounters/queue', EncounterController::class . '@queue', [AuthenticationMiddleware::class]);
+$router->post('/api/encounters/start', EncounterController::class . '@start', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->post('/api/clinical/notes/{id}/sign', ClinicalController::class . '@signAndLock', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->post('/api/clinical/notes/{id}/addendum', ClinicalController::class . '@addAddendum', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->put('/api/clinical/notes/{id}/status', ClinicalController::class . '@updateStatus', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
@@ -90,7 +97,7 @@ $router->delete('/api/documents/{id}', DocumentController::class . '@delete', [A
 // Referral Routes
 $router->get('/api/referrals', ReferralController::class . '@all', [AuthenticationMiddleware::class]);
 $router->get('/api/referrals/{patient_id}', ReferralController::class . '@index', [AuthenticationMiddleware::class]);
-$router->get('/api/referrals/{id}/document', ReferralController::class . '@downloadDocument');
+$router->get('/api/referrals/{id}/document', ReferralController::class . '@downloadDocument', [AuthenticationMiddleware::class]); // was unauthenticated: anyone could fetch a referral file by id
 $router->post('/api/referrals', ReferralController::class . '@store', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->post('/api/referrals/{id}', ReferralController::class . '@update', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->put('/api/referrals/{id}', ReferralController::class . '@update', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
@@ -162,10 +169,33 @@ $router->post('/api/billing/invoices', BillingController::class . '@storeInvoice
 $router->get('/api/billing/invoices', BillingController::class . '@listInvoices', [AuthenticationMiddleware::class]);
 $router->get('/api/billing/invoice/{id}', BillingController::class . '@getInvoice', [AuthenticationMiddleware::class]);
 $router->put('/api/billing/invoice/{id}/payment', BillingController::class . '@recordPayment', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
-$router->delete('/api/billing/invoice/{id}', BillingController::class . '@deleteInvoice', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
-// Legacy claims routes (kept for compatibility)
-$router->get('/api/billing/claims', BillingController::class . '@listInvoices', [AuthenticationMiddleware::class]);
-$router->post('/api/billing/claims', BillingController::class . '@store', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->post('/api/billing/payment/{id}/void', BillingController::class . '@voidPayment', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->delete('/api/billing/invoice/{id}',BillingController::class . '@deleteInvoice', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->get('/api/billing/patient/{id}/coverage', BillingController::class . '@patientCoverage', [AuthenticationMiddleware::class]);
+// Insurance claim workflow (ClaimController). Fixed-segment routes are registered before /{id} ones.
+$router->get('/api/billing/ar-aging', ClaimController::class . '@arAging', [AuthenticationMiddleware::class]);
+$router->get('/api/billing/claims', ClaimController::class . '@index', [AuthenticationMiddleware::class]);
+$router->post('/api/billing/claims', ClaimController::class . '@store', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->get('/api/billing/claims/{id}', ClaimController::class . '@show', [AuthenticationMiddleware::class]);
+$router->put('/api/billing/claims/{id}', ClaimController::class . '@update', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->post('/api/billing/claims/{id}/status', ClaimController::class . '@setStatus', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->post('/api/billing/claims/{id}/remit', ClaimController::class . '@remit', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->post('/api/billing/claims/{id}/reverse', ClaimController::class . '@reverseRemit', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->post('/api/billing/claims/{id}/appeal', ClaimController::class . '@appeal', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->post('/api/billing/claims/{id}/close', ClaimController::class . '@close', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->post('/api/billing/claims/{id}/bill-secondary', ClaimController::class . '@billSecondary', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->post('/api/billing/claims/{id}/edi/generate', ClaimEdiController::class . '@generate', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->post('/api/billing/claims/{id}/eligibility', ClaimEdiController::class . '@eligibility', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->post('/api/billing/claims/{id}/edi/send', ClaimEdiController::class . '@send', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->post('/api/billing/claims/{id}/edi/check-remittance', ClaimEdiController::class . '@checkRemittance', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->post('/api/billing/claims/{id}/edi/post-835', ClaimEdiController::class . '@post835', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->get('/api/billing/claims/{id}/edi/{tx}', ClaimEdiController::class . '@viewTransaction', [AuthenticationMiddleware::class]);
+$router->get('/api/billing/claims/{id}/837', ClaimController::class . '@edi837', [AuthenticationMiddleware::class]);
+$router->get('/api/billing/claims/{id}/cms1500', ClaimController::class . '@cms1500', [AuthenticationMiddleware::class]);
+$router->get('/api/billing/payers', ClaimController::class . '@payers', [AuthenticationMiddleware::class]);
+$router->post('/api/billing/payers', ClaimController::class . '@savePayer', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->get('/api/billing/claim-settings', ClaimController::class . '@getSettings', [AuthenticationMiddleware::class]);
+$router->put('/api/billing/claim-settings', ClaimController::class . '@saveSettings', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 // Phase 2 — Billing handoff queue (signed/locked encounters ready for charge capture)
 $router->get('/api/billing/queue', BillingController::class . '@billingQueue', [AuthenticationMiddleware::class]);
 
@@ -174,6 +204,7 @@ $router->get('/api/users', \App\Controllers\UserController::class . '@index', [A
 $router->get('/api/user/{id}', \App\Controllers\UserController::class . '@show', [AuthenticationMiddleware::class]);
 $router->post('/api/user', \App\Controllers\UserController::class . '@store', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->put('/api/user/{id}', \App\Controllers\UserController::class . '@update', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->put('/api/user/{id}/unlock', \App\Controllers\UserController::class . '@unlock', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->delete('/api/user/{id}', \App\Controllers\UserController::class . '@delete', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 
 // Facility Administration Routes
@@ -192,9 +223,13 @@ $router->delete('/api/specialties/{id}',               \App\Controllers\Specialt
 
 // Forced Password Change Route (admin-issued credentials must be changed on first login)
 $router->post('/api/auth/change-password', AuthController::class . '@changePassword', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+// Forgot / reset password (public: the user is not signed in; both are rate limited)
+$router->post('/api/auth/forgot-password', AuthController::class . '@forgotPassword', [RateLimitingMiddleware::class]);
+$router->post('/api/auth/reset-password', AuthController::class . '@resetPassword', [RateLimitingMiddleware::class]);
 
-// Custom Roles Routes
-$router->get('/api/roles/custom', \App\Controllers\RoleController::class . '@index', [AuthenticationMiddleware::class]);
+// Roles & Permissions (read-only table generated from App\Security\Roles; Super Admin only)
+$router->get('/api/roles/matrix', \App\Controllers\RoleController::class . '@matrix', [AuthenticationMiddleware::class]);
+$router->get('/api/roles/options', \App\Controllers\RoleController::class . '@options', [AuthenticationMiddleware::class]);
 $router->post('/api/roles/custom', \App\Controllers\RoleController::class . '@store', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->put('/api/roles/custom/{id}', \App\Controllers\RoleController::class . '@update', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->delete('/api/roles/custom/{id}', \App\Controllers\RoleController::class . '@delete', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
@@ -205,9 +240,13 @@ $router->post('/api/settings', \App\Controllers\SettingsController::class . '@sa
 $router->post('/api/settings/test-email', \App\Controllers\SettingsController::class . '@testEmail', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 
 // Telehealth Routes
+// Public: patient join page asks whether the 5-minute join window is open (timing state only, no PHI)
+$router->get('/api/telehealth/join-check', TelehealthController::class . '@joinCheck');
 $router->get('/api/telehealth/sessions', TelehealthController::class . '@index', [AuthenticationMiddleware::class]);
 $router->post('/api/telehealth/session', TelehealthController::class . '@store', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->post('/api/telehealth/session/{id}/resend', TelehealthController::class . '@resendLink', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->put('/api/telehealth/session/{id}/status', TelehealthController::class . '@updateStatus', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
-// Reports & Audit Logs Route
+// Reports & Audit Logs (Super Admin only - enforced in AuditController::checkAccess)
 $router->get('/api/reports/audit', \App\Controllers\AuditController::class . '@index', [AuthenticationMiddleware::class]);
+$router->get('/api/reports/audit/verify', \App\Controllers\AuditController::class . '@verify', [AuthenticationMiddleware::class]);
+$router->get('/api/reports/audit/export', \App\Controllers\AuditController::class . '@export', [AuthenticationMiddleware::class]);

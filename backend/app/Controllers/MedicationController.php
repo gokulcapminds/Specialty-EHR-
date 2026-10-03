@@ -2,22 +2,19 @@
 namespace App\Controllers;
 
 use App\Models\Database;
+use App\Security\Roles;
 use App\Services\AuditLogger;
 use App\Services\EncryptionService;
 
 class MedicationController {
     private function checkAccess(): void {
-        if (empty($_SESSION['user_id'])) {
-            http_response_code(401);
-            header('Content-Type: application/json');
-            echo json_encode(['status' => 'error', 'message' => 'Unauthenticated session.', 'authenticated' => false]);
-            exit();
-        }
+        // The medication list is clinical data: clinical roles only (prescribing/changing is narrowed to providers below).
+        Roles::enforce(Roles::CLINICAL);
     }
 
     private function checkManageAccess(): bool {
         $userRole = $_SESSION['user_role'] ?? '';
-        if (!in_array($userRole, ['Doctor', 'Therapist', 'Super Admin'])) {
+        if (!in_array($userRole, Roles::PROVIDER, true)) {
             http_response_code(403);
             header('Content-Type: application/json');
             echo json_encode(['status' => 'error', 'message' => 'Only a provider can manage medication status or refills.']);
@@ -43,7 +40,7 @@ class MedicationController {
         $where = [];
         $params = [];
 
-        if (!in_array($userRole, ['Super Admin', 'Admin', 'Staff', 'Billing Staff', 'Receptionist'])) {
+        if (!in_array($userRole, Roles::ADMIN)) {
             $where[] = "(m.provider_id = ? OR m.provider_id IS NULL)";
             $params[] = $userId;
         }
@@ -103,6 +100,7 @@ class MedicationController {
     // POST /api/medications — prescribe a new medication
     public function store(): void {
         $this->checkAccess();
+        Roles::enforce(Roles::PROVIDER);   // prescribing / adding a medication is a provider action
         header('Content-Type: application/json');
 
         $input = json_decode(file_get_contents('php://input'), true) ?? [];

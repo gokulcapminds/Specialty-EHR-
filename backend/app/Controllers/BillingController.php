@@ -2,6 +2,7 @@
 namespace App\Controllers;
 
 use App\Models\Database;
+use App\Security\Roles;
 use App\Services\EncryptionService;
 use App\Services\AuditLogger;
 
@@ -26,7 +27,8 @@ class BillingController {
         header('Content-Type: application/json');
 
         $patientId = $_GET['patient_id'] ?? null;
-        $where = ["cn.id NOT IN (SELECT encounter_id FROM invoices WHERE encounter_id IS NOT NULL)"];
+        // Only signed & locked encounters reach billing; an unsigned draft can't be billed
+        $where = ["cn.id NOT IN (SELECT encounter_id FROM invoices WHERE encounter_id IS NOT NULL)", "cn.lock_state = 1"];
         $params = [];
         if ($patientId) {
             $where[] = "cn.patient_id = ?";
@@ -222,7 +224,7 @@ class BillingController {
 
     // GET /api/billing/cpt-codes
     public function cptCodes(): void {
-        $this->checkAccess(['Super Admin', 'Billing Staff', 'Doctor', 'Therapist', 'Nurse', 'Receptionist']);
+        $this->checkAccess(Roles::ALL_STAFF);
         header('Content-Type: application/json');
 
         $category = trim($_GET['category'] ?? '');
@@ -279,6 +281,7 @@ class BillingController {
         $discount    = (float)($input['discount'] ?? 0);
         $notes       = $input['notes'] ?? '';
         $lineItems   = $input['line_items'] ?? [];
+        $billingType = (($input['billing_type'] ?? '') === 'Insurance') ? 'Insurance' : 'Self Pay';
 
         if (!$patientId || empty($lineItems)) {
             http_response_code(400);
@@ -294,7 +297,8 @@ class BillingController {
             $item['total_price'] = round($item['quantity'] * $item['unit_price'], 2);
             $subtotal += $item['total_price'];
         }
-        $total = round($subtotal - $discount, 2);
+        unset($item);   // break the reference, or the insert loop below overwrites the last line with the previous one
+        $total =round($subtotal - $discount, 2);
 
         // Generate invoice number
         $lastInv = Database::fetch("SELECT MAX(id) AS max_id FROM invoices");
@@ -303,9 +307,9 @@ class BillingController {
 
         // Insert invoice
         Database::query(
-            "INSERT INTO invoices (patient_id, encounter_id, invoice_number, invoice_date, due_date, subtotal, discount, total_amount, paid_amount, status, notes, created_by)
-             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0.00, 'Issued', ?, ?)",
-            [$patientId, $encounterId ?: null, $invNumber, $invoiceDate, $dueDate, $subtotal, $discount, $total, $notes, $_SESSION['user_id']]
+            "INSERT INTO invoices (patient_id, encounter_id, invoice_number, invoice_date, due_date, subtotal, discount, total_amount, paid_amount, status, billing_type, notes, created_by)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0.00, 'Issued', ?, ?, ?)",
+            [$patientId, $encounterId ?: null, $invNumber, $invoiceDate, $dueDate, $subtotal, $discount, $total, $billingType, $notes, $_SESSION['user_id']]
         );
         $invoiceId = Database::lastInsertId();
 
@@ -346,7 +350,8 @@ class BillingController {
         }
 
         $sql = "SELECT i.*, p.first_name_encrypted, p.last_name_encrypted,
-                       u.first_name AS created_fname, u.last_name AS created_lname
+                       u.first_name AS created_fname, u.last_name AS created_lname,
+                       (SELECT COALESCE(SUM(a.amount), 0) FROM adjustments a WHERE a.invoice_id = i.id AND a.voided_at IS NULL) AS adj_total
                 FROM invoices i
                 JOIN patients p ON i.patient_id = p.id
                 JOIN users u ON i.created_by = u.id
@@ -368,7 +373,9 @@ class BillingController {
                 'discount'       => $r['discount'],
                 'total_amount'   => $r['total_amount'],
                 'paid_amount'    => $r['paid_amount'],
-                'balance'        => round($r['total_amount'] - $r['paid_amount'], 2),
+                'adjustment_total' => $r['adj_total'],
+                'balance'        => round($r['total_amount'] - $r['paid_amount'] - $r['adj_total'], 2),
+                'billing_type'   => $r['billing_type'],
                 'status'         => $r['status'],
                 'notes'          => $r['notes'],
                 'created_by'     => 'Dr. ' . $r['created_fname'] . ' ' . $r['created_lname'],
@@ -377,6 +384,26 @@ class BillingController {
         }
 
         echo json_encode(['status' => 'success', 'data' => $result]);
+    }
+
+    // Primary/secondary payer summary for the invoice screen and the Generate Invoice "Bill to" default
+    private function coverageSummary(int $patientId): array {
+        $out = ['primary' => null, 'secondary' => null];
+        foreach (['Primary' => 'primary', 'Secondary' => 'secondary'] as $type => $key) {
+            $r = Database::fetch("SELECT primary_provider, member_id, primary_policy_no, plan_name, copay FROM patient_insurance WHERE patient_id = ? AND insurance_type = ? ORDER BY id DESC LIMIT 1", [$patientId, $type]);
+            $name = trim((string)($r['primary_provider'] ?? ''));
+            if ($r && $name !== '' && stripos($name, 'self pay') === false && stripos($name, 'uninsured') === false) {
+                $out[$key] = ['payer_name' => $name, 'member_id' => $r['member_id'] ?: $r['primary_policy_no'], 'plan_name' => $r['plan_name'], 'copay' => $r['copay']];
+            }
+        }
+        return $out;
+    }
+
+    // GET /api/billing/patient/{id}/coverage
+    public function patientCoverage(array $params): void {
+        $this->checkAccess(['Super Admin', 'Billing Staff', 'Doctor']);
+        header('Content-Type: application/json');
+        echo json_encode(['status' => 'success', 'coverage' => $this->coverageSummary((int)($params['id'] ?? 0))]);
     }
 
     // GET /api/billing/invoice/{id}
@@ -410,10 +437,31 @@ class BillingController {
             return;
         }
 
+        AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, $inv['patient_id'] ?? null, 'View Invoice', 'Billing', (string)$id);
+
         $lineItems = Database::fetchAll(
             "SELECT * FROM invoice_line_items WHERE invoice_id = ? ORDER BY id",
             [$id]
         );
+
+        $payments = Database::fetchAll(
+            "SELECT p.id, p.source, p.method, p.reference_no, p.amount, p.paid_at, p.notes, p.voided_at, p.void_reason,
+                    u.first_name AS rb_first, u.last_name AS rb_last
+             FROM payments p LEFT JOIN users u ON u.id = p.received_by
+             WHERE p.invoice_id = ? ORDER BY p.paid_at, p.id",
+            [$id]
+        );
+        foreach ($payments as &$pm) {
+            $pm['received_by'] = trim(($pm['rb_first'] ?? '') . ' ' . ($pm['rb_last'] ?? ''));
+            unset($pm['rb_first'], $pm['rb_last']);
+        }
+        unset($pm);
+        $adjustments = Database::fetchAll(
+            "SELECT id, type, amount, reason, voided_at, created_at FROM adjustments WHERE invoice_id = ? ORDER BY id",
+            [$id]
+        );
+        $adjTotal = 0.0;
+        foreach ($adjustments as $a) { if (!$a['voided_at']) $adjTotal += (float)$a['amount']; }
 
         $patientName = $this->decryptPatientName($inv);
         $dob = EncryptionService::decrypt($inv['dob_encrypted'] ?? '');
@@ -435,7 +483,9 @@ class BillingController {
                 'discount'       => $inv['discount'],
                 'total_amount'   => $inv['total_amount'],
                 'paid_amount'    => $inv['paid_amount'],
-                'balance'        => round($inv['total_amount'] - $inv['paid_amount'], 2),
+                'adjustment_total' => round($adjTotal, 2),
+                'balance'        => round($inv['total_amount'] - $inv['paid_amount'] - $adjTotal, 2),
+                'billing_type'   => $inv['billing_type'],
                 'status'         => $inv['status'],
                 'notes'          => $inv['notes'],
                 'created_by'     => 'Dr. ' . $inv['created_fname'] . ' ' . $inv['created_lname'],
@@ -444,49 +494,162 @@ class BillingController {
                 'created_at'     => $inv['created_at'],
             ],
             'line_items' => $lineItems,
+            'payments'    => $payments,
+            'adjustments' => $adjustments,
+            'claims'      => Database::fetchAll(
+                "SELECT id, claim_number, sequence, status, payer_name, billed_amount, insurance_paid, patient_resp FROM insurance_claims WHERE invoice_id = ? ORDER BY id",
+                [$id]
+            ),
+            'coverage'    => $this->coverageSummary((int)$inv['patient_id']),
         ]);
     }
 
-    // PUT /api/billing/invoice/{id}/payment
+    public const PAYMENT_METHODS = ['Cash', 'Credit Card', 'Debit Card', 'Check', 'ACH', 'Other'];
+
+    /**
+     * The only writer of invoices.paid_amount / status. paid_amount = SUM(non-void payments);
+     * balance = total - paid - SUM(non-void adjustments). Safe to call inside a transaction.
+     */
+    public static function recalcInvoice(int $invoiceId): array {
+        $inv = Database::fetch("SELECT id, total_amount, status FROM invoices WHERE id = ?", [$invoiceId]);
+        if (!$inv) return [];
+        $paid = (float)(Database::fetch("SELECT COALESCE(SUM(amount), 0) s FROM payments WHERE invoice_id = ? AND voided_at IS NULL", [$invoiceId])['s'] ?? 0);
+        $adj  = (float)(Database::fetch("SELECT COALESCE(SUM(amount), 0) s FROM adjustments WHERE invoice_id = ? AND voided_at IS NULL", [$invoiceId])['s'] ?? 0);
+        $balance = round((float)$inv['total_amount'] - $paid - $adj, 2);
+        $openClaim = Database::fetch("SELECT 1 x FROM insurance_claims WHERE invoice_id = ? AND status IN ('Draft','Ready','Submitted','Accepted','Rejected','Denied','Appealed') LIMIT 1", [$invoiceId]);
+        $settledClaim = Database::fetch("SELECT 1 x FROM insurance_claims WHERE invoice_id = ? AND status IN ('Paid','Partially Paid','Closed') LIMIT 1", [$invoiceId]);
+        if ($inv['status'] === 'Draft') {
+            $status = 'Draft';
+        } elseif ($balance <= 0.005) {
+            $status = 'Paid';
+        } elseif ($openClaim) {
+            $status = 'Awaiting Insurance';   // an insurance claim is still being worked
+        } elseif ($settledClaim) {
+            $status = 'Patient Balance';      // insurance is done; what remains is the patient's
+        } elseif ($paid > 0) {
+            $status = 'Partially Paid';
+        } else {
+            $status = 'Issued';
+        }
+        Database::query("UPDATE invoices SET paid_amount = ?, status = ? WHERE id = ?", [round($paid, 2), $status, $invoiceId]);
+        return ['paid_amount' => round($paid, 2), 'adjustment_total' => round($adj, 2), 'balance' => $balance, 'status' => $status];
+    }
+
+    // PUT /api/billing/invoice/{id}/payment  - records one patient payment in the ledger
     public function recordPayment(array $params): void {
         $this->checkAccess(['Super Admin', 'Billing Staff', 'Doctor']);
         header('Content-Type: application/json');
 
         $id = $params['id'] ?? null;
-        $input = json_decode(file_get_contents('php://input'), true);
-        $amount = (float)($input['amount'] ?? 0);
+        $input = json_decode(file_get_contents('php://input'), true) ?: [];
+        $amount = round((float)($input['amount'] ?? 0), 2);
+        $method = (string)($input['method'] ?? '');
+        $reference = trim((string)($input['reference_no'] ?? ''));
+        $paidAt = trim((string)($input['paid_at'] ?? '')) ?: date('Y-m-d');
+        $notes = trim((string)($input['notes'] ?? ''));
 
-        if (!$id || $amount <= 0) {
-            http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'Invoice ID and payment amount required.']);
+        $fail = function (int $code, string $msg): void {
+            http_response_code($code);
+            echo json_encode(['status' => 'error', 'message' => $msg]);
+        };
+
+        if (!$id || $amount <= 0) { $fail(400, 'Invoice ID and payment amount required.'); return; }
+        if (!in_array($method, self::PAYMENT_METHODS, true)) { $fail(400, 'Please choose a payment method.'); return; }
+        if (in_array($method, ['Check', 'Credit Card', 'Debit Card'], true) && $reference === '') {
+            $fail(400, $method === 'Check' ? 'Check number is required.' : 'Card reference (last 4 digits or approval code) is required.');
             return;
         }
+        $d = \DateTime::createFromFormat('Y-m-d', $paidAt);
+        if (!$d || $d->format('Y-m-d') !== $paidAt || $paidAt > date('Y-m-d')) { $fail(400, 'Payment date is not valid.'); return; }
 
         $inv = Database::fetch("SELECT * FROM invoices WHERE id = ?", [$id]);
-        if (!$inv) {
-            http_response_code(404);
-            echo json_encode(['status' => 'error', 'message' => 'Invoice not found.']);
+        if (!$inv) { $fail(404, 'Invoice not found.'); return; }
+        if ($inv['status'] === 'Draft') { $fail(400, 'Issue the invoice before recording payments.'); return; }
+
+        Database::beginTransaction();
+        try {
+            // Lock the invoice row and re-read the balance so two clerks can't overpay the same invoice.
+            Database::fetch("SELECT id FROM invoices WHERE id = ? FOR UPDATE", [$id]);
+            $cur = self::recalcInvoice((int)$id);
+            if ($cur['balance'] <= 0.005) {
+                Database::rollBack();
+                $fail(400, 'This invoice is already fully paid.');
+                return;
+            }
+            if ($amount > $cur['balance'] + 0.005) {
+                Database::rollBack();
+                $fail(400, 'Payment exceeds the balance due ($' . number_format($cur['balance'], 2) . ').');
+                return;
+            }
+            Database::query(
+                "INSERT INTO payments (invoice_id, patient_id, source, method, reference_no, amount, paid_at, notes, received_by)
+                 VALUES (?, ?, 'Patient', ?, ?, ?, ?, ?, ?)",
+                [$id, $inv['patient_id'], $method, $reference ?: null, $amount, $paidAt, $notes ?: null, $_SESSION['user_id']]
+            );
+            $paymentId = Database::lastInsertId();
+            Database::query("UPDATE invoices SET payment_method = ? WHERE id = ?", [$method, $id]);
+            $after = self::recalcInvoice((int)$id);
+            Database::commit();
+        } catch (\Throwable $e) {
+            try { Database::rollBack(); } catch (\Throwable $ignored) {}
+            $fail(500, 'Could not record the payment.');
             return;
         }
 
-        $newPaid = round((float)$inv['paid_amount'] + $amount, 2);
-        $total   = (float)$inv['total_amount'];
-        if ($inv['status'] === 'Paid' || $newPaid > $total + 0.005) {
+        AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], $inv['patient_id'], "Record {$method} payment $" . number_format($amount, 2) . " on Invoice #{$inv['invoice_number']}", 'Billing', $paymentId);
+
+        echo json_encode([
+            'status' => 'success',
+            'message' => 'Payment of $' . number_format($amount, 2) . ' recorded. Status: ' . $after['status'],
+            'new_status' => $after['status'],
+            'paid_amount' => $after['paid_amount'],
+            'balance' => $after['balance'],
+            'payment_id' => $paymentId,
+        ]);
+    }
+
+    // POST /api/billing/payment/{id}/void  - payments are never deleted, only voided with a reason
+    public function voidPayment(array $params): void {
+        $this->checkAccess(['Super Admin', 'Billing Staff']);
+        header('Content-Type: application/json');
+
+        $id = $params['id'] ?? null;
+        $input = json_decode(file_get_contents('php://input'), true) ?: [];
+        $reason = trim((string)($input['reason'] ?? ''));
+        if (!$id || $reason === '') {
             http_response_code(400);
-            $due = number_format(max(0, $total - (float)$inv['paid_amount']), 2);
-            echo json_encode(['status' => 'error', 'message' => $inv['status'] === 'Paid' ? 'This invoice is already fully paid.' : "Payment exceeds the balance due (\${$due})."]);
+            echo json_encode(['status' => 'error', 'message' => 'A reason is required to void a payment.']);
             return;
         }
-        $status  = $newPaid >= $total ? 'Paid' : 'Partially Paid';
-
-        Database::query(
-            "UPDATE invoices SET paid_amount = ?, status = ? WHERE id = ?",
-            [$newPaid, $status, $id]
-        );
-
-        AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], $inv['patient_id'], "Record Payment $$amount on Invoice #{$inv['invoice_number']}", 'Billing', $id);
-
-        echo json_encode(['status' => 'success', 'message' => "Payment of $$amount recorded. Status: $status", 'new_status' => $status, 'paid_amount' => $newPaid]);
+        $pay = Database::fetch("SELECT p.*, i.invoice_number FROM payments p JOIN invoices i ON i.id = p.invoice_id WHERE p.id = ?", [$id]);
+        if (!$pay) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Payment not found.']);
+            return;
+        }
+        if ($pay['voided_at']) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'This payment is already voided.']);
+            return;
+        }
+        if (!empty($pay['claim_id'])) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'This payment came from an insurance remittance. Reverse the remittance on the claim instead.']);
+            return;
+        }
+        Database::beginTransaction();
+        try {
+            Database::query("UPDATE payments SET voided_at = NOW(), voided_by = ?, void_reason = ? WHERE id = ?", [$_SESSION['user_id'], $reason, $id]);
+            $after = self::recalcInvoice((int)$pay['invoice_id']);
+            Database::commit();
+        } catch (\Throwable $e) {
+            try { Database::rollBack(); } catch (\Throwable $ignored) {}
+            http_response_code(500);
+            echo json_encode(['status' => 'error', 'message' => 'Could not void the payment.']);
+            return;
+        }
+        AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], $pay['patient_id'], "Void payment $" . number_format((float)$pay['amount'], 2) . " on Invoice #{$pay['invoice_number']}: {$reason}", 'Billing', $id);
+        echo json_encode(['status' => 'success', 'message' => 'Payment voided.', 'new_status' => $after['status'], 'paid_amount' => $after['paid_amount'], 'balance' => $after['balance']]);
     }
 
     // DELETE /api/billing/invoice/{id}
@@ -501,6 +664,14 @@ class BillingController {
             return;
         }
 
+        // Financial history is never erased: an invoice with any payment (even a voided one) can't be deleted.
+        $hasPay = Database::fetch("SELECT COUNT(*) c FROM payments WHERE invoice_id = ?", [$id])['c'];
+        if ((int)$hasPay > 0) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'This invoice has payment history and cannot be deleted.']);
+            return;
+        }
+        Database::query("DELETE FROM invoice_line_items WHERE invoice_id = ?", [$id]);
         Database::query("DELETE FROM invoices WHERE id = ?", [$id]);
         echo json_encode(['status' => 'success', 'message' => 'Invoice deleted.']);
     }

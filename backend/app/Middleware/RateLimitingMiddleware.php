@@ -8,7 +8,7 @@ class RateLimitingMiddleware {
             return true;
         }
 
-        $ip = $_SERVER['REMOTE_ADDR'];
+        $ip = $_SERVER['REMOTE_ADDR'] ?? 'unknown';
         $now = time();
 
         // Create temporary storage directory if not exists
@@ -17,17 +17,21 @@ class RateLimitingMiddleware {
             mkdir($dir, 0755, true);
         }
 
-        $limitFile = $dir . '/rate_limits.json';
-        $data = [];
-        if (file_exists($limitFile)) {
-            $data = json_decode(file_get_contents($limitFile), true) ?: [];
+        // Read-modify-write under an exclusive lock: parallel requests (the SPA fires several at once) used to overwrite each
+        // other's entries, and a half-written file could reset every counter.
+        $handle = fopen($dir . '/rate_limits.json', 'c+');
+        if ($handle === false) {
+            return true;      // can't track limits right now; don't lock everyone out
         }
+        flock($handle, LOCK_EX);
+        $raw = stream_get_contents($handle);
+        $data = $raw ? (json_decode($raw, true) ?: []) : [];
 
         // Clean up expired limits
         foreach ($data as $key => $timestamps) {
-            $data[$key] = array_filter($timestamps, function($ts) use ($now, $config) {
+            $data[$key] = array_values(array_filter($timestamps, function ($ts) use ($now, $config) {
                 return ($now - $ts) < $config['rate_limit']['window'];
-            });
+            }));
             if (empty($data[$key])) {
                 unset($data[$key]);
             }
@@ -35,10 +39,16 @@ class RateLimitingMiddleware {
 
         // Add current timestamp
         $data[$ip][] = $now;
+        $tooMany = count($data[$ip]) > $config['rate_limit']['max_requests'];
 
-        // Check limit
-        if (count($data[$ip]) > $config['rate_limit']['max_requests']) {
-            file_put_contents($limitFile, json_encode($data));
+        ftruncate($handle, 0);
+        rewind($handle);
+        fwrite($handle, json_encode($data));
+        fflush($handle);
+        flock($handle, LOCK_UN);
+        fclose($handle);
+
+        if ($tooMany) {
             http_response_code(429);
             header('Content-Type: application/json');
             echo json_encode([
@@ -47,8 +57,6 @@ class RateLimitingMiddleware {
             ]);
             return false;
         }
-
-        file_put_contents($limitFile, json_encode($data));
         return true;
     }
 }

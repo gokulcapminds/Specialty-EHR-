@@ -24,11 +24,7 @@
             </div>
 
             <div class="form-group login-options-row">
-                <label class="checkbox-container">
-                    <input type="checkbox" id="login-remember" name="remember_me" aria-label="Remember me">
-                    <span class="checkmark"></span>
-                    Remember me
-                </label>
+                <span></span>
                 <a href="#forgot-password" class="forgot-password-link" id="forgot-password-btn">Forgot password ?</a>
             </div>
 

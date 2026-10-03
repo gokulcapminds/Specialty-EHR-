@@ -106,7 +106,7 @@ class SpecialtyController {
             $newId = Database::lastInsertId();
 
             if (class_exists('App\Services\AuditLogger')) {
-                AuditLogger::log($_SESSION['user_id'] ?? null, 'SPECIALTY_CREATED', "Created specialty: {$name} ({$key})");
+                AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, null, "Create Specialty: {$name} ({$key})", 'Administration', null);
             }
 
             echo json_encode([
@@ -154,7 +154,7 @@ class SpecialtyController {
             ", [$name, $code, $icon, $desc, $isActive, $id]);
 
             if (class_exists('App\Services\AuditLogger')) {
-                AuditLogger::log($_SESSION['user_id'] ?? null, 'SPECIALTY_UPDATED', "Updated specialty ID: {$id}");
+                AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, null, 'Update Specialty', 'Administration', (string)$id);
             }
 
             echo json_encode([
@@ -210,7 +210,7 @@ class SpecialtyController {
             Database::query("DELETE FROM specialties WHERE id = ?", [$id]);
 
             if (class_exists('App\Services\AuditLogger')) {
-                AuditLogger::log($_SESSION['user_id'] ?? null, 'SPECIALTY_DELETED', "Deleted specialty: {$spec['specialty_key']}");
+                AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, null, "Delete Specialty: {$spec['specialty_key']}", 'Administration', (string)$id);
             }
 
             echo json_encode([

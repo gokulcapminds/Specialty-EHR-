@@ -1,6 +1,12 @@
 // public/js/api.js - API Fetch Service Wrapper
 
 export class ApiService {
+    // Pages a signed-out visitor is allowed to be on: an "unauthenticated" answer there must not bounce them to the sign-in page.
+    static onPublicPage() {
+        const page = (window.location.hash.substring(1) || '').split('?')[0];
+        return ['login', 'forgot-password', 'reset-password'].includes(page);
+    }
+
     static getCsrfToken() {
         let token = window.sessionStorage.getItem('csrf_token');
         if (!token) {
@@ -60,7 +66,7 @@ export class ApiService {
             const response = await fetch(normalizedUrl, options);
             if (response.status === 401 && url.indexOf('api/login') === -1) {
                 // Session expired or unauthenticated
-                window.location.hash = '#login';
+                if (!this.onPublicPage()) window.location.hash = '#login';
                 return { status: 'error', message: 'Session expired.' };
             }
 
@@ -81,7 +87,7 @@ export class ApiService {
             }
 
             if (result.status === 'error' && result.authenticated === false && url.indexOf('api/login') === -1) {
-                window.location.hash = '#login';
+                if (!this.onPublicPage()) window.location.hash = '#login';
                 return { status: 'error', message: 'Session expired.' };
             }
             
@@ -117,7 +123,7 @@ export class ApiService {
             });
 
             if (response.status === 401 && url.indexOf('api/login') === -1) {
-                window.location.hash = '#login';
+                if (!this.onPublicPage()) window.location.hash = '#login';
                 return { status: 'error', message: 'Session expired.' };
             }
 

@@ -4,9 +4,12 @@ export class Router {
     constructor() {
         this.routes = {
             'login': 'modules/login.php',
+            'forgot-password': 'modules/forgot_password.php',
+            'reset-password': 'modules/reset_password.php',
             'dashboard': 'modules/dashboard.php',
             'calendar': 'modules/calendar.php',
             'patients': 'modules/patients.php',
+            'encounters': 'modules/encounters.php',
             'clinical': 'modules/clinical.php',
             'telehealth': 'modules/telehealth.php',
             'messaging': 'modules/messaging.php',
@@ -48,10 +51,12 @@ export class Router {
         let hash = hashParts[0];
         // Check if user is logged in (session check)
         const me = await ApiService.request('/api/me');
-        if (me.status === 'error' && hash !== 'login') {
+        // Pages a signed-out visitor may open
+        const publicPages = ['login', 'forgot-password', 'reset-password'];
+        if (me.status === 'error' && !publicPages.includes(hash)) {
             window.location.hash = '#login';
             return;
-        } else if (me.status === 'success' && hash === 'login') {
+        } else if (me.status === 'success' && publicPages.includes(hash)) {
             window.location.hash = '#dashboard';
             return;
         }

@@ -9,7 +9,7 @@
             <div style="display: flex; align-items: center; gap: 12px;">
                 <?php include __DIR__ . '/topbar.php'; ?>
                 <button class="btn btn-primary settings-save-btn" id="save-settings-btn">
-                    <i class="fas fa-save"></i> Save All Settings
+                    Save All Settings
                 </button>
             </div>
         </header>
@@ -28,19 +28,6 @@
                             <option value="classic">OpenEMR Classic</option>
                             <option value="high-contrast">High Contrast</option>
                         </select>
-                    </div>
-
-                    <h3 style="font-size: 0.92rem; font-weight: 800; color: #0f172a; margin: 18px 0 10px 0; text-transform: uppercase; letter-spacing: 0.5px;">System Preferences</h3>
-                    <div class="settings-pref-list">
-                        <label class="settings-pref-item">
-                            <input type="checkbox" checked class="custom-accent-checkbox" id="settings-field-8"> Enable Ambient Scribe Auto-Drafting
-                        </label>
-                        <label class="settings-pref-item">
-                            <input type="checkbox" checked class="custom-accent-checkbox" id="settings-field-9"> Auto-Save Notes (Every 60s)
-                        </label>
-                        <label class="settings-pref-item">
-                            <input type="checkbox" class="custom-accent-checkbox" id="settings-field-10"> Enable Email Session Reminders
-                        </label>
                     </div>
                 </div>
 
@@ -146,8 +133,8 @@
                     </div>
                     <div class="form-group" style="grid-column: 1 / -1;">
                         <label class="form-label settings-field-label">Public EHR Base URL (for Intake & Patient Links)</label>
-                        <input type="text" id="setting-app-base-url" class="form-control settings-field-input" placeholder="e.g. http://localhost/Specialty%20EHR or https://myclinic.com" value="">
-                        <small style="color: #64748b; font-size: 0.76rem; margin-top: 4px; display: block;">Leave blank for automatic detection of local server network IP, or enter your public domain/IP.</small>
+                        <input type="text" id="setting-app-base-url" class="form-control settings-field-input" placeholder="e.g. https://myclinic.com or http://192.168.1.20/Specialty_EHR" value="">
+                        <small style="color: #64748b; font-size: 0.76rem; margin-top: 4px; display: block;">The address patients and staff use to reach this EHR (the folder that contains <code>public</code>; do not add <code>/public</code>). Used in the links emailed for intake forms, telehealth visits and new-user logins. Leave blank to auto-detect - links then only work on the same network as this server.</small>
                     </div>
                 </div>
                 <div style="display: flex; align-items: center; gap: 12px; margin-top: 18px; padding-top: 16px; border-top: 1px solid #e2e8f0;">

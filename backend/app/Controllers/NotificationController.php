@@ -2,6 +2,7 @@
 namespace App\Controllers;
 
 use App\Models\Database;
+use App\Security\Roles;
 use App\Services\EncryptionService;
 
 class NotificationController {
@@ -30,8 +31,12 @@ class NotificationController {
         $referralUnread = 0;
         $messageUnread = 0;
 
+        // Intake forms and referrals carry patient names and clinical content: only the roles that handle them see these notices
+        // (billing staff still get message notices below).
+        $seesCareNotices = in_array($currentUserRole, Roles::CARE_COORDINATION, true);
+
         // 1. Intake & Signed Forms (ONLY Pending Review 'Submitted' - do NOT show 'Approved'/Reviewed forms)
-        try {
+        if ($seesCareNotices) try {
             $intakeForms = Database::fetchAll(
                 "SELECT pif.id, pif.patient_id, pif.submitted_at, pif.status,
                         p.first_name_encrypted, p.last_name_encrypted
@@ -63,7 +68,7 @@ class NotificationController {
         } catch (\Exception $e) {}
 
         // 2. Referrals — Only PENDING referrals show in notifications and count
-        try {
+        if ($seesCareNotices) try {
             $referrals = Database::fetchAll(
                 "SELECT r.*, p.first_name_encrypted, p.last_name_encrypted,
                         CONCAT(u.first_name, ' ', u.last_name) AS referring_user_name

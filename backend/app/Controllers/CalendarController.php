@@ -2,8 +2,10 @@
 namespace App\Controllers;
 
 use App\Models\Database;
+use App\Security\Roles;
 use App\Services\EncryptionService;
 use App\Services\AuditLogger;
+use App\Support\VisitTypes;
 
 class CalendarController {
     private function checkAccess(array $allowedRoles): void {
@@ -30,6 +32,15 @@ class CalendarController {
      * Returns the provider_time_blocks row that overlaps [$start, $end] on the appointment's day
      * (one-off block_date rows or weekly-recurring weekday rows), or null if the slot is free.
      */
+    private const AVAILABILITY_CATEGORIES = ['In Office', 'Out Of Office', 'Vacation', 'Lunch', 'Reserved'];
+
+    /**
+     * Availability check for [$start, $end]. Returns a conflicting row (or a synthetic row with a 'message'
+     * when the slot is outside the provider's In Office hours), or null if the slot is bookable.
+     * 1) Any non-'In Office' row (time off) overlapping the slot blocks it.
+     * 2) If the provider has set any 'In Office' hours, the slot must fall inside one window for that day
+     *    (date-specific windows override weekly ones). A provider with no In Office rows is unrestricted.
+     */
     private function blockedTimeConflict($providerId, string $start, string $end): ?array {
         $startTs = strtotime($start);
         $endTs = strtotime($end);
@@ -40,23 +51,45 @@ class CalendarController {
         $endClock = date('Y-m-d', $endTs) === $date ? date('H:i:s', $endTs) : '23:59:59';
         $row = Database::fetch(
             "SELECT * FROM provider_time_blocks
-             WHERE provider_id = ?
+             WHERE provider_id = ? AND category <> 'In Office'
                AND (block_date = ? OR (block_date IS NULL AND weekday = ?))
                AND start_time < ? AND end_time > ?
              LIMIT 1",
             [$providerId, $date, $weekday, $endClock, $startClock]
         );
-        return $row ?: null;
+        if ($row) return $row;
+
+        $hasHours = Database::fetch("SELECT 1 AS x FROM provider_time_blocks WHERE provider_id = ? AND category = 'In Office' LIMIT 1", [$providerId]);
+        if (!$hasHours) return null;
+
+        $windows = Database::fetchAll(
+            "SELECT start_time, end_time FROM provider_time_blocks WHERE provider_id = ? AND category = 'In Office' AND block_date = ? ORDER BY start_time",
+            [$providerId, $date]
+        );
+        if (!$windows) {
+            $windows = Database::fetchAll(
+                "SELECT start_time, end_time FROM provider_time_blocks WHERE provider_id = ? AND category = 'In Office' AND block_date IS NULL AND weekday = ? ORDER BY start_time",
+                [$providerId, $weekday]
+            );
+        }
+        foreach ($windows as $w) {
+            if ($w['start_time'] <= $startClock && $w['end_time'] >= $endClock) return null;
+        }
+        $shown = $windows
+            ? 'available ' . implode(', ', array_map(fn($w) => substr($w['start_time'], 0, 5) . '-' . substr($w['end_time'], 0, 5), $windows))
+            : 'not working that day';
+        return ['message' => 'Provider is not available on ' . $date . ' at ' . substr($startClock, 0, 5) . '-' . substr($endClock, 0, 5) . ' (' . $shown . ').'];
     }
 
     private function blockedMessage(array $block, string $start): string {
+        if (isset($block['message'])) return $block['message'];
         $reason = trim((string)($block['reason'] ?? '')) !== '' ? $block['reason'] : 'Blocked time';
         return 'Provider is unavailable on ' . date('Y-m-d', strtotime($start)) . ' from '
             . substr($block['start_time'], 0, 5) . ' to ' . substr($block['end_time'], 0, 5) . ' (' . $reason . ').';
     }
 
     public function doctorAppointmentsThisMonth(): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
+        $this->checkAccess(Roles::ALL_STAFF);
         header('Content-Type: application/json');
 
         try {
@@ -87,7 +120,7 @@ class CalendarController {
     }
 
     public function doctorAppointmentsMonthWise(): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
+        $this->checkAccess(Roles::ALL_STAFF);
         header('Content-Type: application/json');
 
         try {
@@ -119,7 +152,7 @@ class CalendarController {
     }
 
     public function index(): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
+        $this->checkAccess(Roles::ALL_STAFF);
         header('Content-Type: application/json');
 
         $sql = "SELECT a.*, p.first_name_encrypted, p.last_name_encrypted, u.first_name as doc_first, u.last_name as doc_last 
@@ -147,7 +180,7 @@ class CalendarController {
                 'specialty' => $a['specialty'] ?? 'Family Medicine (Internal Medicine)',
                 'facility' => $a['facility'] ?? 'raj',
                 'category' => $a['category'] ?? 'Appointment',
-                'visit_type' => $a['visit_type'] ?? 'Family Care',
+                'visit_type' => $a['visit_type'] ?? VisitTypes::DEFAULT,
                 'appointment_mode' => $a['appointment_mode'] ?? 'In Person',
                 'appointment_for' => $a['appointment_for'] ?? 'Single Date',
                 'period_frequency' => $a['period_frequency'] ?? null,
@@ -164,7 +197,7 @@ class CalendarController {
     }
 
     public function store(): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist']);
+        $this->checkAccess(Roles::CARE_COORDINATION);
         header('Content-Type: application/json');
 
         $input = json_decode(file_get_contents('php://input'), true);
@@ -177,7 +210,12 @@ class CalendarController {
         $specialty = $input['specialty'] ?? 'Family Medicine (Internal Medicine)';
         $facility = $input['facility'] ?? 'raj';
         $category = $input['category'] ?? 'Appointment';
-        $visitType = $input['visit_type'] ?? 'Family Care';
+        [$visitType, $visitTypeError] = VisitTypes::resolve($input['visit_type'] ?? null);
+        if ($visitTypeError) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => $visitTypeError]);
+            return;
+        }
         $appointmentMode = $input['appointment_mode'] ?? 'In Person';
         $appointmentFor = $input['appointment_for'] ?? 'Single Date';
         $periodFrequency = $input['period_frequency'] ?? null;
@@ -428,7 +466,7 @@ class CalendarController {
 
                 // If appointment mode or visit type is Telehealth, automatically generate Jitsi room and send email to patient
                 if (strtolower(trim($appointmentMode)) === 'telehealth' || strtolower(trim($visitType)) === 'telehealth') {
-                    $telehealthRes = \App\Controllers\TelehealthController::createAndSendForAppointment($newId, intval($patientId), intval($providerId), $oStart);
+                    $telehealthRes = \App\Controllers\TelehealthController::createAndSendForAppointment($newId, intval($patientId), intval($providerId), $oStart, $oEnd);
                 }
             }
         }
@@ -440,11 +478,11 @@ class CalendarController {
             $msg .= ' ' . ($telehealthRes['message'] ?? '');
         }
 
-        echo json_encode(['status' => 'success', 'message' => trim($msg), 'telehealth' => $telehealthRes ?? null]);
+        echo json_encode(['status' => 'success', 'message' => trim($msg), 'telehealth' => $telehealthRes ?? null, 'appointment_id' => $firstId ? (int)$firstId : null, 'created_count' => $createdCount]);
     }
 
     public function delete(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist']);
+        $this->checkAccess(Roles::CARE_COORDINATION);
         header('Content-Type: application/json');
 
         $id = $params['id'] ?? null;
@@ -467,7 +505,7 @@ class CalendarController {
     }
 
     public function update(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist']);
+        $this->checkAccess(Roles::CARE_COORDINATION);
         header('Content-Type: application/json');
 
         $id = $params['id'] ?? null;
@@ -493,7 +531,12 @@ class CalendarController {
         $status = $input['status'] ?? $existing['status'];
         $specialty = $input['specialty'] ?? $existing['specialty'];
         $category = $input['category'] ?? $existing['category'];
-        $visitType = $input['visit_type'] ?? $existing['visit_type'];
+        [$visitType, $visitTypeError] = VisitTypes::resolve($input['visit_type'] ?? null, $existing['visit_type'] ?? null);
+        if ($visitTypeError) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => $visitTypeError]);
+            return;
+        }
         $appointmentMode = $input['appointment_mode'] ?? $existing['appointment_mode'];
         $messageToPatient = $input['message_to_patient'] ?? $existing['message_to_patient'];
         // A waiting-list entry can be converted into a real booking by sending category = Appointment
@@ -553,7 +596,7 @@ class CalendarController {
         Database::query($sql, [$patientId, $providerId, $startTime, $endTime, $notes, $status, $appointmentMode, $visitType, $category, $waitingListData, $id]);
 
         if (strtolower(trim($appointmentMode)) === 'telehealth' || strtolower(trim($visitType)) === 'telehealth') {
-            $telehealthRes = \App\Controllers\TelehealthController::createAndSendForAppointment(intval($id), intval($patientId), intval($providerId), $startTime);
+            $telehealthRes = \App\Controllers\TelehealthController::createAndSendForAppointment(intval($id), intval($patientId), intval($providerId), $startTime, $endTime);
         }
 
         AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], $patientId, 'Update Appointment', 'Calendar', $id);
@@ -563,11 +606,11 @@ class CalendarController {
             $msg .= ' ' . ($telehealthRes['message'] ?? '');
         }
 
-        echo json_encode(['status' => 'success', 'message' => trim($msg), 'telehealth' => $telehealthRes ?? null]);
+        echo json_encode(['status' => 'success', 'message' => trim($msg), 'telehealth' => $telehealthRes ?? null, 'appointment_id' => (int)$id]);
     }
 
     public function updateStatus(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist']);
+        $this->checkAccess(Roles::CARE_COORDINATION);
         header('Content-Type: application/json');
 
         $id = $params['id'] ?? null;
@@ -606,11 +649,18 @@ class CalendarController {
 
     // ---- Provider blocked time (lunch / time off) ----
 
+    /** The cardiology visit types + default minutes that feed every visit-type dropdown (see App\Support\VisitTypes). */
+    public function visitTypes(): void {
+        $this->checkAccess(Roles::ALL_STAFF);
+        header('Content-Type: application/json');
+        echo json_encode(['status' => 'success', 'data' => VisitTypes::all()]);
+    }
+
     public function listBlocks(): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
+        $this->checkAccess(Roles::ALL_STAFF);
         header('Content-Type: application/json');
         $rows = Database::fetchAll(
-            "SELECT b.id, b.provider_id, b.block_date, b.weekday, b.start_time, b.end_time, b.reason,
+            "SELECT b.id, b.provider_id, b.block_date, b.weekday, b.category, b.facility_id, b.start_time, b.end_time, b.reason,
                     CONCAT(u.first_name, ' ', u.last_name) AS provider_name
              FROM provider_time_blocks b JOIN users u ON u.id = b.provider_id
              ORDER BY b.block_date IS NULL, b.block_date, b.weekday, b.start_time"
@@ -619,21 +669,35 @@ class CalendarController {
     }
 
     public function storeBlock(): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist']);
+        $this->checkAccess(Roles::CARE_COORDINATION);
         header('Content-Type: application/json');
         $input = json_decode(file_get_contents('php://input'), true) ?? [];
 
         $providerId = intval($input['provider_id'] ?? 0);
         $blockDate = !empty($input['block_date']) ? $input['block_date'] : null;
-        $weekday = (isset($input['weekday']) && $input['weekday'] !== '' && $input['weekday'] !== null) ? intval($input['weekday']) : null;
+        // Weekly rows: `weekdays` (list, one row each) or a single legacy `weekday`
+        $weekdays = [];
+        if (isset($input['weekdays']) && is_array($input['weekdays'])) {
+            foreach ($input['weekdays'] as $w) if ($w !== '' && $w !== null) $weekdays[] = intval($w);
+        } elseif (isset($input['weekday']) && $input['weekday'] !== '' && $input['weekday'] !== null) {
+            $weekdays[] = intval($input['weekday']);
+        }
+        $weekdays = array_values(array_unique($weekdays));
         $start = $input['start_time'] ?? '';
         $end = $input['end_time'] ?? '';
+        $category = $input['category'] ?? 'Out Of Office';
+        $facilityId = !empty($input['facility_id']) ? intval($input['facility_id']) : null;
         $reason = mb_substr(trim((string)($input['reason'] ?? '')), 0, 255);
 
         $validTime = function ($t) { return (bool)preg_match('/^([01]\d|2[0-3]):[0-5]\d(:[0-5]\d)?$/', $t); };
-        if (!$providerId || (($blockDate === null) === ($weekday === null)) || !$validTime($start) || !$validTime($end)) {
+        if (!$providerId || (($blockDate === null) === (count($weekdays) === 0)) || !$validTime($start) || !$validTime($end)) {
             http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'Provider, either a date or a weekday, and a valid start/end time are required.']);
+            echo json_encode(['status' => 'error', 'message' => 'Provider, either a date or at least one weekday, and a valid start/end time are required.']);
+            return;
+        }
+        if (!in_array($category, self::AVAILABILITY_CATEGORIES, true)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Invalid category.']);
             return;
         }
         if ($blockDate !== null && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $blockDate)) {
@@ -641,10 +705,12 @@ class CalendarController {
             echo json_encode(['status' => 'error', 'message' => 'Invalid block date.']);
             return;
         }
-        if ($weekday !== null && ($weekday < 0 || $weekday > 6)) {
-            http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'Invalid weekday.']);
-            return;
+        foreach ($weekdays as $w) {
+            if ($w < 0 || $w > 6) {
+                http_response_code(400);
+                echo json_encode(['status' => 'error', 'message' => 'Invalid weekday.']);
+                return;
+            }
         }
         if (strlen($start) === 5) $start .= ':00';
         if (strlen($end) === 5) $end .= ':00';
@@ -654,17 +720,22 @@ class CalendarController {
             return;
         }
 
-        Database::query(
-            "INSERT INTO provider_time_blocks (provider_id, block_date, weekday, start_time, end_time, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
-            [$providerId, $blockDate, $weekday, $start, $end, $reason !== '' ? $reason : null, $_SESSION['user_id']]
-        );
-        $newId = intval(Database::lastInsertId());
-        AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], null, 'Create Provider Time Block', 'Calendar', $newId);
-        echo json_encode(['status' => 'success', 'message' => 'Time blocked successfully.', 'id' => $newId]);
+        $reasonVal = $reason !== '' ? $reason : null;
+        $targets = $blockDate !== null ? [[$blockDate, null]] : array_map(fn($w) => [null, $w], $weekdays);
+        $newId = 0;
+        foreach ($targets as [$d, $w]) {
+            Database::query(
+                "INSERT INTO provider_time_blocks (provider_id, block_date, weekday, category, facility_id, start_time, end_time, reason, created_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                [$providerId, $d, $w, $category, $facilityId, $start, $end, $reasonVal, $_SESSION['user_id']]
+            );
+            $newId = intval(Database::lastInsertId());
+            AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], null, 'Create Provider Availability (' . $category . ')', 'Calendar', $newId);
+        }
+        echo json_encode(['status' => 'success', 'message' => 'Availability saved.', 'id' => $newId, 'count' => count($targets)]);
     }
 
     public function deleteBlock(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist']);
+        $this->checkAccess(Roles::CARE_COORDINATION);
         header('Content-Type: application/json');
         $id = intval($params['id'] ?? 0);
         if (!$id) {

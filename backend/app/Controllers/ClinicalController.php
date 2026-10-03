@@ -2,7 +2,9 @@
 namespace App\Controllers;
 
 use App\Models\Database;
+use App\Security\Roles;
 use App\Services\AuditLogger;
+use App\Support\VisitTypes;
 
 class ClinicalController {
     private function checkAccess(array $allowedRoles): void {
@@ -60,7 +62,7 @@ class ClinicalController {
     }
 
     public function store(): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse']);
+        $this->checkAccess(Roles::CLINICAL);
         header('Content-Type: application/json');
 
         $input = json_decode(file_get_contents('php://input'), true);
@@ -177,7 +179,13 @@ class ClinicalController {
 
         // Encounter metadata
         $appointmentId  = !empty($input['appointment_id'])  ? intval($input['appointment_id'])  : null;
-        $visitType      = $input['visit_type']      ?? null;
+        [$visitType, $visitTypeError] = VisitTypes::resolve($input['visit_type'] ?? null, null, '');
+        if ($visitTypeError) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => $visitTypeError]);
+            return;
+        }
+        $visitType = $visitType !== '' ? $visitType : null;      // an encounter may still be saved without a visit type
         $encounterMode  = $input['encounter_mode']  ?? 'In-Person';
         $encounterStatus = $input['encounter_status'] ?? 'in_progress';
         $allowedStatuses = ['draft','in_progress','ready_for_sign'];
@@ -243,7 +251,7 @@ class ClinicalController {
     }
 
     public function show(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Billing Staff']);
+        $this->checkAccess(Roles::CLINICAL);
         header('Content-Type: application/json');
 
         $patientId = $params['patient_id'] ?? null;
@@ -273,7 +281,7 @@ class ClinicalController {
     }
 
     public function update(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse']);
+        $this->checkAccess(Roles::CLINICAL);
         header('Content-Type: application/json');
 
         $id = $params['id'] ?? null;
@@ -465,6 +473,9 @@ class ClinicalController {
             $id
         ]);
 
+        $updatedNote = Database::fetch("SELECT patient_id FROM clinical_notes WHERE id = ?", [$id]);
+        AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, $updatedNote['patient_id'] ?? null, 'Update Clinical Note', 'Clinical Workspace', (string)$id);
+
         echo json_encode([
             'status' => 'success',
             'message' => 'Clinical encounter note updated successfully.'
@@ -472,7 +483,8 @@ class ClinicalController {
     }
 
     public function delete($params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse']);
+        // Deleting a clinical note is a provider decision (nurses can chart and edit, not remove).
+        $this->checkAccess(Roles::PROVIDER);
         header('Content-Type: application/json');
 
         $id = is_array($params) ? ($params['id'] ?? null) : $params;
@@ -521,7 +533,7 @@ class ClinicalController {
     }
 
     public function getSingleNote(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Billing Staff']);
+        $this->checkAccess(Roles::CLINICAL);
         header('Content-Type: application/json');
 
         $id = $params['id'] ?? null;
@@ -549,6 +561,8 @@ class ClinicalController {
             $note['immunizations_administered'] = json_decode($note['immunizations_administered'], true);
         }
 
+        AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, $note['patient_id'] ?? null, 'View Clinical Note', 'Clinical Workspace', (string)$id);
+
         echo json_encode(['status' => 'success', 'data' => $note]);
     }
 
@@ -558,7 +572,7 @@ class ClinicalController {
     // Only Doctors may call this endpoint.
     // ---------------------------------------------------------------
     public function signAndLock(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor']);
+        $this->checkAccess(Roles::PROVIDER);
         header('Content-Type: application/json');
 
         $id = $params['id'] ?? null;
@@ -587,7 +601,13 @@ class ClinicalController {
         // SIGN-002: Validate required clinical information
         $errors = [];
         if (empty($note['chief_complaint'])) $errors[] = 'Chief Complaint is required before signing.';
-        if (empty($note['icd10_codes']))     $errors[] = 'At least one ICD-10 Diagnosis code is required before signing.';
+        // Diagnoses are kept in patient_problems (Assessment tab); icd10_codes only carries the CPT lines.
+        // Either one satisfies the "at least one ICD-10 diagnosis" rule.
+        $hasIcd = !empty($note['icd10_codes']) || (bool)Database::fetch(
+            "SELECT 1 FROM patient_problems WHERE patient_id = ? AND status IN ('Active','Chronic') AND icd10_code <> '' LIMIT 1",
+            [$note['patient_id']]
+        );
+        if (!$hasIcd)                        $errors[] = 'At least one ICD-10 Diagnosis code is required before signing.';
         if (empty($note['provider_id']))     $errors[] = 'Provider must be assigned to this encounter.';
         if (!empty($errors)) {
             http_response_code(422);
@@ -618,6 +638,11 @@ class ClinicalController {
              $signedAt, $signedSignatureData, $id]
         );
 
+        // the visit is finished once the encounter is signed: close the linked appointment
+        if (!empty($note['appointment_id'])) {
+            Database::query("UPDATE appointments SET status = 'Completed' WHERE id = ? AND status NOT IN ('Cancelled', 'No Show')", [$note['appointment_id']]);
+        }
+
         AuditLogger::log(
             $_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'],
             $note['patient_id'],
@@ -639,7 +664,7 @@ class ClinicalController {
     // Original note content is preserved (SIGN-005, SIGN-006).
     // ---------------------------------------------------------------
     public function addAddendum(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor']);
+        $this->checkAccess(Roles::PROVIDER);
         header('Content-Type: application/json');
 
         $id = $params['id'] ?? null;
@@ -708,7 +733,7 @@ class ClinicalController {
     // Transitions to signed/locked are only via signAndLock().
     // ---------------------------------------------------------------
     public function updateStatus(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse']);
+        $this->checkAccess(Roles::CLINICAL);
         header('Content-Type: application/json');
 
         $id = $params['id'] ?? null;

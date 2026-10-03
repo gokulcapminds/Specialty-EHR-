@@ -85,14 +85,8 @@
                                 <div class="form-group">
                                     <label class="form-label" for="encounter-visit-type">Visit Type</label>
                                     <select id="encounter-visit-type" class="form-control">
+                                        <!-- options are filled by applyVisitTypeSelects() (app.js) from GET /api/visit-types -->
                                         <option value="">-- Select --</option>
-                                        <option value="New Patient">New Patient</option>
-                                        <option value="Follow-up">Follow-up</option>
-                                        <option value="Urgent Care">Urgent Care</option>
-                                        <option value="Annual Wellness">Annual Wellness</option>
-                                        <option value="Telehealth">Telehealth</option>
-                                        <option value="Procedure">Procedure</option>
-                                        <option value="Consultation">Consultation</option>
                                     </select>
                                 </div>
                                 <div class="form-group">

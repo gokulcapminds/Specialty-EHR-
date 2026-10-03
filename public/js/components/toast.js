@@ -10,7 +10,8 @@ export class Toast {
         }
 
         const toast = document.createElement('div');
-        toast.className = `toast toast-${type}`;
+        // Bootstrap's `.toast:not(.show) { display: none }` would hide this, so `show` is required.
+        toast.className = `toast show toast-${type}`;
         toast.role = 'alert';
         toast.textContent = message;
 

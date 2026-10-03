@@ -2,6 +2,8 @@
 namespace App\Controllers;
 
 use App\Models\Database;
+use App\Security\Roles;
+use App\Services\AppUrl;
 use App\Services\EncryptionService;
 use App\Services\AuditLogger;
 use App\Services\EmailService;
@@ -26,7 +28,14 @@ class TelehealthController {
         }
     }
 
+    /** Patients may join this many minutes before the scheduled start (enforced server-side by joinCheck). */
+    public const JOIN_EARLY_MINUTES = 5;
+
     private function ensureTableExists(): void {
+        self::ensureSchema();
+    }
+
+    private static function ensureSchema(): void {
         try {
             $sql = "CREATE TABLE IF NOT EXISTS telehealth_sessions (
                 id INT AUTO_INCREMENT PRIMARY KEY,
@@ -38,41 +47,26 @@ class TelehealthController {
                 join_url VARCHAR(255) NOT NULL,
                 jitsi_url VARCHAR(255) NOT NULL,
                 status ENUM('Active', 'Completed', 'Cancelled') DEFAULT 'Active',
+                scheduled_start DATETIME DEFAULT NULL,
+                scheduled_end DATETIME DEFAULT NULL,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE,
                 FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT
             ) ENGINE=InnoDB;";
             Database::query($sql);
         } catch (\Throwable $t) {
-            error_log("TelehealthController ensureTableExists error: " . $t->getMessage());
+            error_log("TelehealthController ensureSchema error: " . $t->getMessage());
         }
     }
 
     /**
      * Public helper to create telehealth link & dispatch email step-by-step for calendar appointments
      */
-    public static function createAndSendForAppointment(int $appointmentId, int $patientId, int $providerId, string $startTime): array {
+    public static function createAndSendForAppointment(int $appointmentId, int $patientId, int $providerId, string $startTime, ?string $endTime = null): array {
         $logPrefix = "[Calendar Telehealth Email - Appt #{$appointmentId}]";
         error_log("{$logPrefix} [Step 1/6]: Initiating telehealth link process for Patient #{$patientId} scheduled at {$startTime}.");
 
-        // Ensure Table Exists
-        try {
-            $sql = "CREATE TABLE IF NOT EXISTS telehealth_sessions (
-                id INT AUTO_INCREMENT PRIMARY KEY,
-                patient_id INT NOT NULL,
-                appointment_id INT DEFAULT NULL,
-                created_by INT NOT NULL,
-                room_name VARCHAR(120) NOT NULL UNIQUE,
-                patient_email VARCHAR(150) NOT NULL,
-                join_url VARCHAR(255) NOT NULL,
-                jitsi_url VARCHAR(255) NOT NULL,
-                status ENUM('Active', 'Completed', 'Cancelled') DEFAULT 'Active',
-                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE CASCADE,
-                FOREIGN KEY (created_by) REFERENCES users(id) ON DELETE RESTRICT
-            ) ENGINE=InnoDB;";
-            Database::query($sql);
-        } catch (\Throwable $t) {}
+        self::ensureSchema();
 
         // Step 2: Fetch Patient Record
         $patient = Database::fetch("SELECT * FROM patients WHERE id = ?", [$patientId]);
@@ -96,28 +90,41 @@ class TelehealthController {
 
         error_log("{$logPrefix} [Step 3/6 SUCCESS]: Valid email recipient confirmed: {$patientEmail}.");
 
-        // Step 4: Room & Domain Link Construction
-        $randomHash = strtoupper(bin2hex(random_bytes(4)));
-        $roomName = 'CareHealth_Telehealth_P' . $patientId . '_' . $randomHash;
-
+        // Step 4/5: reuse the appointment's open session (edits must not spawn new rooms/emails), else create one
         $instance = new self();
-        $joinUrl = $instance->buildJoinUrl($roomName);
-        $jitsiUrl = 'https://meet.jit.si/' . $roomName;
+        $endTime = $endTime ?: date('Y-m-d H:i:s', strtotime($startTime) + 1800);
+        $existing = Database::fetch("SELECT * FROM telehealth_sessions WHERE appointment_id = ? AND status = 'Active' ORDER BY id DESC LIMIT 1", [$appointmentId]);
 
-        error_log("{$logPrefix} [Step 4/6 SUCCESS]: Generated Room '{$roomName}'. Join Link: {$joinUrl}");
+        if ($existing) {
+            $timeChanged = strtotime($existing['scheduled_start'] ?? '') !== strtotime($startTime)
+                || strtotime($existing['scheduled_end'] ?? '') !== strtotime($endTime);
+            if (!$timeChanged) {
+                error_log("{$logPrefix} [Step 4/6]: Active session #{$existing['id']} already matches this time - no new email.");
+                return ['status' => 'success', 'message' => 'Telehealth link already sent for this appointment.'];
+            }
+            Database::query("UPDATE telehealth_sessions SET scheduled_start = ?, scheduled_end = ? WHERE id = ?", [$startTime, $endTime, $existing['id']]);
+            $roomName = $existing['room_name'];
+            $joinUrl = $existing['join_url'];
+            $rescheduled = true;
+            error_log("{$logPrefix} [Step 5/6 SUCCESS]: Session #{$existing['id']} rescheduled to {$startTime}.");
+        } else {
+            $randomHash = strtoupper(bin2hex(random_bytes(4)));
+            $roomName = 'CareHealth_Telehealth_P' . $patientId . '_' . $randomHash;
+            $joinUrl = $instance->buildJoinUrl($roomName);
+            $jitsiUrl = 'https://meet.jit.si/' . $roomName;
+            $rescheduled = false;
 
-        // Step 5: Save DB Record
-        $createdBy = $_SESSION['user_id'] ?? $providerId;
-        $sql = "INSERT INTO telehealth_sessions (patient_id, appointment_id, created_by, room_name, patient_email, join_url, jitsi_url, status) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'Active')";
-        Database::query($sql, [$patientId, $appointmentId, $createdBy, $roomName, $patientEmail, $joinUrl, $jitsiUrl]);
-        $sessionId = Database::lastInsertId();
-
-        error_log("{$logPrefix} [Step 5/6 SUCCESS]: Telehealth session #{$sessionId} stored in DB.");
+            $createdBy = $_SESSION['user_id'] ?? $providerId;
+            $sql = "INSERT INTO telehealth_sessions (patient_id, appointment_id, created_by, room_name, patient_email, join_url, jitsi_url, status, scheduled_start, scheduled_end) 
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'Active', ?, ?)";
+            Database::query($sql, [$patientId, $appointmentId, $createdBy, $roomName, $patientEmail, $joinUrl, $jitsiUrl, $startTime, $endTime]);
+            $sessionId = Database::lastInsertId();
+            error_log("{$logPrefix} [Step 5/6 SUCCESS]: Telehealth session #{$sessionId} stored in DB (room '{$roomName}').");
+        }
 
         // Step 6: Dispatch Email
         error_log("{$logPrefix} [Step 6/6]: Sending HTML telehealth invitation email to {$patientEmail}...");
-        $emailSent = $instance->sendTelehealthEmail($patientName, $patientEmail, $joinUrl, $roomName);
+        $emailSent = $instance->sendTelehealthEmail($patientName, $patientEmail, $joinUrl, $roomName, $startTime, $rescheduled);
 
         if ($emailSent) {
             error_log("{$logPrefix} [Step 6/6 SUCCESS]: Telehealth email delivered to {$patientEmail}.");
@@ -130,40 +137,12 @@ class TelehealthController {
     }
 
     private function buildJoinUrl(string $roomName): string {
-        $baseUrl = $this->getBaseUrl();
-        $baseUrl = rtrim($baseUrl, '/');
-
-        // Strip trailing /public or /public/ if present
-        $baseUrl = preg_replace('/\/public$/i', '', $baseUrl);
-
-        $scriptPath = $_SERVER['SCRIPT_NAME'] ?? '';
-        $baseDir = dirname(dirname($scriptPath));
-        if ($baseDir === '/' || $baseDir === '\\') $baseDir = '';
-
-        return $baseUrl . $baseDir . '/public/telehealth_join.php?room=' . urlencode($roomName);
-    }
-
-    private function getBaseUrl(): string {
-        // First check system settings for explicitly configured app base url or domain
-        try {
-            $row = Database::fetch("SELECT setting_value FROM system_settings WHERE setting_key IN ('app_base_url', 'app_domain') AND setting_value IS NOT NULL AND setting_value != '' LIMIT 1");
-            if ($row && !empty($row['setting_value'])) {
-                $val = trim($row['setting_value']);
-                if (!preg_match('/^https?:\/\//i', $val)) {
-                    $val = 'http://' . $val;
-                }
-                return rtrim($val, '/');
-            }
-        } catch (\Throwable $e) {}
-
-        // Fallback to current request HTTP host
-        $scheme = (isset($_SERVER['HTTPS']) && $_SERVER['HTTPS'] === 'on') || (isset($_SERVER['HTTP_X_FORWARDED_PROTO']) && $_SERVER['HTTP_X_FORWARDED_PROTO'] === 'https') ? 'https' : 'http';
-        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-        return $scheme . '://' . $host;
+        // Honours Settings > Public EHR Base URL (or auto-detects when blank) - see AppUrl.
+        return AppUrl::publicUrl('telehealth_join.php?room=' . urlencode($roomName));
     }
 
     public function index(): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff']);
+        $this->checkAccess(Roles::ALL_STAFF);
         $this->ensureTableExists();
         header('Content-Type: application/json');
 
@@ -191,6 +170,8 @@ class TelehealthController {
                 'join_url' => $r['join_url'],
                 'jitsi_url' => $r['jitsi_url'],
                 'status' => $r['status'],
+                'scheduled_start' => $r['scheduled_start'],
+                'scheduled_end' => $r['scheduled_end'],
                 'created_at' => $r['created_at']
             ];
         }
@@ -199,7 +180,7 @@ class TelehealthController {
     }
 
     public function store(): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist']);
+        $this->checkAccess(Roles::CARE_COORDINATION);
         $this->ensureTableExists();
         header('Content-Type: application/json');
 
@@ -271,7 +252,7 @@ class TelehealthController {
     }
 
     public function resendLink(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist']);
+        $this->checkAccess(Roles::CARE_COORDINATION);
         $this->ensureTableExists();
         header('Content-Type: application/json');
 
@@ -311,7 +292,7 @@ class TelehealthController {
     }
 
     public function updateStatus(array $params): void {
-        $this->checkAccess(['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist']);
+        $this->checkAccess(Roles::CARE_COORDINATION);
         $this->ensureTableExists();
         header('Content-Type: application/json');
 
@@ -336,11 +317,64 @@ class TelehealthController {
         echo json_encode(['status' => 'success', 'message' => 'Telehealth session marked as ' . $status . '.']);
     }
 
-    private function sendTelehealthEmail(string $patientName, string $patientEmail, string $joinUrl, string $roomName): bool {
-        $subject = "Specialty EHR Telehealth Consultation Link";
+    /**
+     * PUBLIC (no auth) - the patient join page asks this before loading video. Returns only timing state, no PHI.
+     * Time is judged server-side against MySQL NOW() (same local clock the appointment times were stored in), so a
+     * patient can't bypass the gate by changing their device clock. A logged-in staff session is never gated.
+     */
+    public function joinCheck(): void {
+        header('Content-Type: application/json');
+        header('Cache-Control: no-store');
+        $room = trim($_GET['room'] ?? '');
+        $session = $room !== '' ? Database::fetch(
+            "SELECT status, scheduled_start, scheduled_end, NOW() AS now_ts FROM telehealth_sessions WHERE room_name = ?", [$room]
+        ) : null;
+
+        if (!$session) {
+            echo json_encode(['status' => 'success', 'state' => 'invalid']);
+            return;
+        }
+
+        $staff = !empty($_SESSION['user_id']);
+        $now = strtotime($session['now_ts']);
+        $start = $session['scheduled_start'] ? strtotime($session['scheduled_start']) : null;
+        $end = $session['scheduled_end'] ? strtotime($session['scheduled_end']) : null;
+        $opensAt = $start ? $start - self::JOIN_EARLY_MINUTES * 60 : null;
+
+        if (in_array($session['status'], ['Completed', 'Cancelled'], true) && !$staff) {
+            $state = 'ended';
+        } elseif ($staff || $start === null) {
+            $state = 'open';
+        } elseif ($end !== null && $now > $end) {
+            $state = 'ended';
+        } elseif ($now < $opensAt) {
+            $state = 'too_early';
+        } else {
+            $state = 'open';
+        }
+
+        echo json_encode([
+            'status' => 'success',
+            'state' => $state,
+            'staff' => $staff,
+            'early_minutes' => self::JOIN_EARLY_MINUTES,
+            'starts_at' => $start ? date('Y-m-d H:i:s', $start) : null,
+            'opens_at' => $opensAt ? date('Y-m-d H:i:s', $opensAt) : null,
+            'seconds_until_open' => $opensAt ? max(0, $opensAt - $now) : 0,
+        ]);
+    }
+
+    private function sendTelehealthEmail(string $patientName, string $patientEmail, string $joinUrl, string $roomName, ?string $startTime = null, bool $rescheduled = false): bool {
+        $subject = $rescheduled ? "Updated: Specialty EHR Telehealth Consultation Time" : "Specialty EHR Telehealth Consultation Link";
         
-        // Always use direct public HTTPS Jitsi URL (https://meet.jit.si/$roomName) for Telehealth emails so video calls connect directly on all devices
-        $effectiveUrl = 'https://meet.jit.si/' . $roomName;
+        // Link to our join page (not meet.jit.si directly) so the 5-minute early-join gate is enforced
+        $effectiveUrl = $joinUrl;
+        $whenHtml = '';
+        if ($startTime) {
+            $when = date('l, F j, Y \a\t g:i A', strtotime($startTime));
+            $whenHtml = '<p style="margin: 4px 0; font-size: 14px; color: #334155;"><strong>Appointment:</strong> ' . htmlspecialchars($when, ENT_QUOTES, 'UTF-8') . '</p>'
+                . '<p style="margin: 4px 0; font-size: 14px; color: #334155;"><strong>Joining:</strong> The link opens ' . self::JOIN_EARLY_MINUTES . ' minutes before your appointment time.</p>';
+        }
 
         $escapedName = htmlspecialchars($patientName, ENT_QUOTES, 'UTF-8');
         $escapedUrl = htmlspecialchars($effectiveUrl, ENT_QUOTES, 'UTF-8');
@@ -370,7 +404,7 @@ class TelehealthController {
                 
                 <div style="background-color: #f0f9ff; border-left: 4px solid #0284c7; padding: 16px; border-radius: 4px; margin: 24px 0;">
                     <p style="margin: 0 0 8px 0; font-size: 14px; font-weight: bold; color: #0369a1;">Consultation Details:</p>
-                    <p style="margin: 4px 0; font-size: 14px; color: #334155;"><strong>Patient:</strong> ' . $escapedName . '</p>
+                    <p style="margin: 4px 0; font-size: 14px; color: #334155;"><strong>Patient:</strong> ' . $escapedName . '</p>' . $whenHtml . '
                     <p style="margin: 4px 0; font-size: 14px; color: #334155;"><strong>Security Status:</strong> Encrypted Peer-to-Peer Video</p>
                 </div>
 

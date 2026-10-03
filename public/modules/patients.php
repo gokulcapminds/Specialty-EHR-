@@ -6,7 +6,7 @@
 
     <main class="main-content">
         <header class="workspace-header" id="patients-workspace-header" style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px; margin-bottom: 20px; background: white; padding: 14px 24px; border-bottom: 1px solid #e2e8f0; border-radius: 8px;">
-            <h1 style="color: #0f172a; font-weight: 800; font-size: 1.5rem; margin: 0;">Patient Directory</h1>
+            <h1 id="patients-page-title" style="color: #0f172a; font-weight: 800; font-size: 1.5rem; margin: 0;">Patient Directory</h1>
             <?php include __DIR__ . '/topbar.php'; ?>
         </header>
 
@@ -38,15 +38,14 @@
                         <button class="btn btn-primary" id="search-btn" style="background: #007bb6; border-color: #007bb6; width: 110px; height: 38px; font-weight: 700; border-radius: 6px; font-size: 0.9rem; color: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; margin: 0; padding: 0;">Search</button>
                     </div>
                     <div>
-                        <button class="btn btn-primary" id="register-patient-btn" style="background: #007bb6; border-color: #007bb6; width: 110px; height: 38px; font-weight: 700; border-radius: 6px; font-size: 0.9rem; color: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; margin: 0; padding: 0;">Register</button>
+                        <button class="btn btn-primary" id="register-patient-btn" style="background: #007bb6; border-color: #007bb6; min-width: 110px; height: 38px; padding: 0 18px !important; font-weight: 700; border-radius: 6px; font-size: 0.9rem; color: #fff; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; box-sizing: border-box; margin: 0;">Create New Patient</button>
                     </div>
                 </div>
             </div>
 
             <!-- Patient Table Card -->
             <div class="card" style="background: white; border: 1px solid #e2e8f0; border-radius: 8px; padding: 20px; box-shadow: 0 1px 3px rgba(0,0,0,0.04);">
-                <div style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9;">
-                    <h2 style="margin: 0; font-size: 1.25rem; font-weight: 800; color: #0f172a;">Active Demographics</h2>
+                <div style="display: flex; align-items: center; justify-content: flex-end; margin-bottom: 16px; padding-bottom: 10px; border-bottom: 1px solid #f1f5f9;">
                     <!-- Table tools: they act on the list below, so they live with it (and disappear with it) -->
                     <div style="display: flex; align-items: center; flex-wrap: wrap; gap: 20px;">
                         <a href="javascript:void(0)" id="btn-select-columns" style="color: #0ea5e9; text-decoration: none; font-weight: 700; font-size: 0.9rem; cursor: pointer; display: inline-flex; align-items: center; gap: 6px;"><i class="fas fa-columns"></i> Select Columns</a>

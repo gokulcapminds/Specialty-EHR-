@@ -2,17 +2,14 @@
 namespace App\Controllers;
 
 use App\Models\Database;
+use App\Security\Roles;
 use App\Services\AuditLogger;
 use App\Services\EncryptionService;
 
 class AllergyController {
     private function checkAccess(): void {
-        if (empty($_SESSION['user_id'])) {
-            http_response_code(401);
-            header('Content-Type: application/json');
-            echo json_encode(['status' => 'error', 'message' => 'Unauthenticated session.', 'authenticated' => false]);
-            exit();
-        }
+        // Allergies are clinical data: clinical roles only (reception and billing never see them).
+        Roles::enforce(Roles::CLINICAL);
     }
 
     private function decoratePatientName(array &$row): void {

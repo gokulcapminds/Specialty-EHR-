@@ -2,17 +2,14 @@
 namespace App\Controllers;
 
 use App\Models\Database;
+use App\Security\Roles;
 use App\Services\AuditLogger;
 use App\Services\EncryptionService;
 
 class OrderController {
     private function checkAccess(): void {
-        if (empty($_SESSION['user_id'])) {
-            http_response_code(401);
-            header('Content-Type: application/json');
-            echo json_encode(['status' => 'error', 'message' => 'Unauthenticated session.', 'authenticated' => false]);
-            exit();
-        }
+        // Orders and results are clinical data: clinical roles only (placing/signing is narrowed to providers below).
+        Roles::enforce(Roles::CLINICAL);
     }
 
     private function decoratePatientName(array &$row): void {
@@ -32,7 +29,7 @@ class OrderController {
         $where = [];
         $params = [];
 
-        if (!in_array($userRole, ['Super Admin', 'Admin', 'Staff', 'Billing Staff', 'Receptionist'])) {
+        if (!in_array($userRole, Roles::ADMIN)) {
             $where[] = "(o.provider_id = ? OR o.provider_id IS NULL)";
             $params[] = $userId;
         }
@@ -99,6 +96,7 @@ class OrderController {
     // POST /api/orders — place a new order
     public function store(): void {
         $this->checkAccess();
+        Roles::enforce(Roles::PROVIDER);   // placing an order is a provider action (nurses can enter results)
         header('Content-Type: application/json');
 
         $input = json_decode(file_get_contents('php://input'), true) ?? [];
@@ -178,7 +176,7 @@ class OrderController {
         header('Content-Type: application/json');
 
         $userRole = $_SESSION['user_role'] ?? '';
-        if (!in_array($userRole, ['Doctor', 'Therapist', 'Super Admin'])) {
+        if (!in_array($userRole, Roles::PROVIDER, true)) {
             http_response_code(403);
             echo json_encode(['status' => 'error', 'message' => 'Only a provider can review and sign off on results.']);
             return;
@@ -227,6 +225,9 @@ class OrderController {
              ORDER BY r.created_at DESC, r.id DESC",
             [$orderId]
         );
+
+        $orderRow = Database::fetch("SELECT patient_id FROM orders WHERE id = ?", [$orderId]);
+        AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, $orderRow['patient_id'] ?? null, 'View Order Results', 'Orders', (string)$orderId);
 
         echo json_encode(['status' => 'success', 'data' => $results]);
     }

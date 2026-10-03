@@ -181,6 +181,55 @@
                 return;
             }
 
+            const card = (icon, color, title, body, extra = '') => `
+                <div class="status-card" style="border-color:${color};">
+                    <i class="fas ${icon}" style="font-size:2.6rem; color:${color}; margin-bottom:16px;"></i>
+                    <h2>${title}</h2>
+                    <p>${body}</p>${extra}
+                </div>`;
+
+            // Time gate: the server decides (patients may join only 5 min before the scheduled start)
+            const checkWindow = async () => {
+                const res = await fetch('api/telehealth/join-check?room=' + encodeURIComponent(roomName), { cache: 'no-store' });
+                return res.json();
+            };
+            const fmt = (d) => new Date(d.replace(' ', 'T')).toLocaleString([], { weekday: 'short', month: 'short', day: 'numeric', hour: 'numeric', minute: '2-digit' });
+
+            let gate;
+            try {
+                gate = await checkWindow();
+                while (gate.state === 'too_early') {
+                    const target = Date.now() + gate.seconds_until_open * 1000;
+                    container.innerHTML = card('fa-clock', '#f59e0b', 'Too early to join',
+                        `Your consultation is scheduled for <strong>${fmt(gate.starts_at)}</strong>.<br>You can join starting <strong>${gate.early_minutes} minutes</strong> before your appointment time (from ${fmt(gate.opens_at)}). Please keep this page open &mdash; it will connect automatically.`,
+                        `<p style="margin-top:16px; font-size:1.4rem; font-weight:800; color:#fbbf24;" id="join-countdown"></p>`);
+                    const cd = document.getElementById('join-countdown');
+                    await new Promise((resolve) => {
+                        const tick = () => {
+                            const left = Math.max(0, Math.ceil((target - Date.now()) / 1000));
+                            const h = Math.floor(left / 3600), m = Math.floor((left % 3600) / 60), sec = left % 60;
+                            cd.textContent = (h ? h + ':' + String(m).padStart(2, '0') : m) + ':' + String(sec).padStart(2, '0') + ' until you can join';
+                            if (left <= 0) { clearInterval(iv); resolve(); }
+                        };
+                        const iv = setInterval(tick, 1000);
+                        tick();
+                    });
+                    gate = await checkWindow();
+                }
+            } catch (e) {
+                container.innerHTML = card('fa-exclamation-circle', '#ef4444', 'Unable to verify your appointment', 'Please check your internet connection and refresh this page.');
+                return;
+            }
+
+            if (gate.state === 'invalid') {
+                container.innerHTML = card('fa-exclamation-triangle', '#ef4444', 'Invalid Consultation Link', 'This consultation link is not recognised. Please use the link from your most recent invitation email.');
+                return;
+            }
+            if (gate.state === 'ended') {
+                container.innerHTML = card('fa-calendar-check', '#94a3b8', 'This consultation has ended', 'The scheduled time for this video consultation has passed. Please contact the clinic if you need to reschedule.');
+                return;
+            }
+
             // Function to dynamically load Jitsi API
             const loadJitsiScript = () => {
                 return new Promise((resolve, reject) => {

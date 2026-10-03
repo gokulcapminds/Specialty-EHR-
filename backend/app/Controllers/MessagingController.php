@@ -315,13 +315,15 @@ class MessagingController {
         }
 
         $messages = Database::fetchAll(
-            "SELECT m.*, CONCAT(u.first_name, ' ', u.last_name) AS sender_name, u.role AS sender_role 
-             FROM secure_messages m 
-             LEFT JOIN users u ON m.sender_id = u.id 
-             WHERE m.patient_id = ? 
+            "SELECT m.*, CONCAT(u.first_name, ' ', u.last_name) AS sender_name, u.role AS sender_role
+             FROM secure_messages m
+             LEFT JOIN users u ON m.sender_id = u.id
+             WHERE m.patient_id = ?
              ORDER BY m.created_at DESC, m.id DESC",
             [$patientId]
         );
+
+        AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, $patientId, 'View Patient Messages', 'Messaging', null);
 
         foreach ($messages as &$msg) {
             $msg['body'] = EncryptionService::decrypt($msg['body_encrypted']);

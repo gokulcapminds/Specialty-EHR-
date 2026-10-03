@@ -137,7 +137,38 @@
     gap: 4px;
     overflow: hidden;
     flex: 1;
+    max-height: none; /* theme.css caps this at 60-70px, which squashed 3+ appointments into thin bars */
 }
+
+/* Never let flex shrink an appointment bar below its text height (this is what made overlapping bars) */
+.day-appointments > * {
+    flex-shrink: 0;
+}
+
+.cal-more-link {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: #ffffff;
+    cursor: pointer;
+    padding: 3px 6px;
+    border-radius: 4px;
+    background: #0284c7;
+    text-align: center;
+    line-height: 1.2;
+}
+
+.cal-more-link:hover {
+    background: #0369a1;
+}
+
+/* One-line month bars (the generic .appt-badge/.month-appt-block rules are too tall/loose for a small cell) */
+.day-appointments .month-appt-block {
+    margin: 0;
+    padding: 3px 6px;
+    font-size: 0.7rem;
+    line-height: 1.2;
+}
+
 
 .appt-badge {
     font-size: 0.75rem;
@@ -316,6 +347,7 @@
 /* Provider blocked time */
 .cal-blocked-slot { display: flex; align-items: center; gap: 6px; width: 100%; min-height: 36px; padding: 8px 12px; border-radius: 6px; background: repeating-linear-gradient(45deg, #f1f5f9, #f1f5f9 6px, #e2e8f0 6px, #e2e8f0 12px); color: #64748b; font-size: 0.8rem; font-weight: 600; box-sizing: border-box; }
 .cal-blocked-tag { font-size: 0.7rem; font-weight: 600; color: #64748b; margin-top: 4px; display: flex; align-items: center; gap: 4px; }
+.cal-hours-tag { font-size: 0.7rem; font-weight: 600; color: #15803d; margin-top: 4px; display: flex; align-items: center; gap: 4px; }
 
 /* Multi-provider day view (one column per provider) */
 .cal-multi-day { overflow-x: auto; }

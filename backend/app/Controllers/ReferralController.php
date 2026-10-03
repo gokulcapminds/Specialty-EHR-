@@ -2,16 +2,13 @@
 namespace App\Controllers;
 
 use App\Models\Database;
+use App\Security\Roles;
 use App\Services\AuditLogger;
 
 class ReferralController {
     private function checkAccess(): void {
-        if (empty($_SESSION['user_id'])) {
-            http_response_code(401);
-            header('Content-Type: application/json');
-            echo json_encode(['status' => 'error', 'message' => 'Unauthenticated session.', 'authenticated' => false]);
-            exit();
-        }
+        // Referrals are handled by clinical staff and the front desk; billing staff have no access.
+        Roles::enforce(Roles::CARE_COORDINATION);
     }
 
     public function all(): void {
@@ -65,6 +62,8 @@ class ReferralController {
              ORDER BY r.referral_date DESC, r.id DESC",
             [$patientId]
         );
+
+        AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, $patientId, 'View Patient Referrals', 'Referrals', null);
 
         echo json_encode(['status' => 'success', 'data' => $referrals]);
     }
@@ -361,6 +360,7 @@ class ReferralController {
     }
 
     public function downloadDocument(array $params): void {
+        $this->checkAccess();   // was missing: the route is now behind AuthenticationMiddleware too
         $id = $params['id'] ?? null;
         if (!$id) {
             http_response_code(404);
@@ -368,12 +368,14 @@ class ReferralController {
             return;
         }
 
-        $ref = Database::fetch("SELECT document_path, clinical_documentation FROM patient_referrals WHERE id = ?", [$id]);
+        $ref = Database::fetch("SELECT patient_id, document_path, clinical_documentation FROM patient_referrals WHERE id = ?", [$id]);
         if (!$ref) {
             http_response_code(404);
             echo "Referral record not found.";
             return;
         }
+
+        AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, $ref['patient_id'] ?? null, 'Download Referral Document', 'Referrals', (string)$id);
 
         $docPath = $ref['document_path'];
         $fileName = '';

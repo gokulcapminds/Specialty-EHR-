@@ -2,14 +2,17 @@
 namespace App\Controllers;
 
 use App\Models\Database;
+use App\Security\PasswordPolicy;
+use App\Security\Roles;
+use App\Services\AppUrl;
 use App\Services\AuditLogger;
 use App\Services\EmailService;
 
 class UserController {
     // Canonical role vocabulary = the users.role DB ENUM, minus 'Patient' (not staff-assignable here).
-    private const ASSIGNABLE_ROLES = ['Super Admin', 'Doctor', 'Therapist', 'Nurse', 'Receptionist', 'Billing Staff'];
+    private const ASSIGNABLE_ROLES = Roles::ALL_STAFF;
 
-    private const USER_COLUMNS = "id, username, first_name, last_name, email, role, user_type, title, middle_name, suffix, preferred_name, job_title, employment_type, employee_id, specialty, npi, license_number, license_expiry, dea_number, dea_expiry, credential_type, sub_specialty, taxonomy_code, phone, work_phone, address, facility_id, provider_locations, provider_schedule, provider_billing, provider_preferences, custom_permissions, is_active, last_login, created_at";
+    private const USER_COLUMNS = "id, username, first_name, last_name, email, role, user_type, title, middle_name, suffix, preferred_name, job_title, employment_type, employee_id, specialty, npi, license_number, license_expiry, dea_number, dea_expiry, credential_type, sub_specialty, taxonomy_code, phone, work_phone, address, facility_id, provider_locations, provider_schedule, provider_billing, provider_preferences, custom_role_id, is_active, last_login, created_at, failed_login_count, (locked_until IS NOT NULL AND locked_until > NOW()) AS is_locked";
 
     private function checkAdminAccess(): void {
         $role = $_SESSION['user_role'] ?? '';
@@ -19,6 +22,23 @@ class UserController {
             echo json_encode(['status' => 'error', 'message' => 'User Management permission required.']);
             exit();
         }
+    }
+
+    // A user must belong to a facility that exists and is active. The form already requires it; the API must too,
+    // otherwise the "specialty belongs to this facility" rule below would be skipped by leaving the facility out.
+    // A user may keep a facility that was deactivated later ($currentFacilityId), but cannot be moved INTO an inactive one.
+    private function facilityAssignmentError(?int $facilityId, ?int $currentFacilityId = null): ?string {
+        if (!$facilityId) {
+            return 'Assigned facility is required.';
+        }
+        $f = Database::fetch("SELECT is_active FROM facilities WHERE id = ?", [$facilityId]);
+        if (!$f) {
+            return 'The selected facility does not exist.';
+        }
+        if (!(int)$f['is_active'] && $facilityId !== (int)$currentFacilityId) {
+            return 'The selected facility is inactive. Choose an active facility.';
+        }
+        return null;
     }
 
     // A staff member's specialty must be one the assigned facility actually practices.
@@ -31,8 +51,19 @@ class UserController {
         return (bool)$allowed;
     }
 
+    // A user may be put on a custom role (custom_roles table): then users.role is that role's base role and
+    // users.custom_role_id points at it. Returns [customRoleId|null, errorMessage|null]; $role is overwritten with the base role.
+    private function applyCustomRole(array $input, string &$role): array {
+        $raw = $input['custom_role_id'] ?? null;
+        if ($raw === null || $raw === '' || $raw === 0 || $raw === '0') return [null, null];
+        $row = Database::fetch("SELECT id, base_role FROM custom_roles WHERE id = ?", [(int)$raw]);
+        if (!$row) return [null, 'The selected custom role no longer exists.'];
+        $role = $row['base_role'];
+        return [(int)$row['id'], null];
+    }
+
     // Resolves whatever the wizard submitted as "role" (a cosmetic Job Role like 'Physician (MD)',
-    // a saved custom_roles template name, or already a real security role) into one of
+    // or already a real security role) into one of
     // ASSIGNABLE_ROLES. Falls back by user_type so an unrecognized value still lands somewhere
     // sane instead of silently collapsing every unmatched role to 'Receptionist'.
     private function resolveAssignableRole(string $role, string $userType): string {
@@ -40,13 +71,7 @@ class UserController {
             return $role;
         }
 
-        $customRole = Database::fetch("SELECT base_role FROM custom_roles WHERE name = ?", [$role]);
-        if ($customRole && !empty($customRole['base_role'])) {
-            return $customRole['base_role'];
-        }
-
-        // Covers every Job Role option the Step-2 wizard actually offers (JOB_ROLES_BY_TYPE in app.js),
-        // plus the legacy template names from the Step-4 role-template cards.
+        // Covers every Job Role option the Step-2 wizard actually offers (JOB_ROLES_BY_TYPE in app.js).
         $roleMapping = [
             // Staff Member job roles
             'Medical Assistant' => 'Nurse',
@@ -66,8 +91,7 @@ class UserController {
             'Nurse Practitioner (NP)' => 'Doctor',
             'Physician Assistant (PA)' => 'Doctor',
             'Clinical Specialist' => 'Doctor',
-            'Psychologist' => 'Therapist',
-            'Physical Therapist' => 'Therapist',
+            'Physical Therapist' => 'Doctor',
             'Pharmacist (PharmD)' => 'Doctor',
             // Administrator job roles
             'Practice Administrator' => 'Super Admin',
@@ -148,7 +172,7 @@ class UserController {
         $first = trim($input['first_name'] ?? '');
         $last = trim($input['last_name'] ?? '');
         $role = $input['role'] ?? '';
-        $userType = trim($input['user_type'] ?? 'Staff');
+        $userType = trim($input['user_type'] ?? 'Staff Member');
         $specialty = trim($input['specialty'] ?? '');
         $email = trim($input['email'] ?? '');
         $password = (string)($input['password'] ?? '');
@@ -160,21 +184,28 @@ class UserController {
             return;
         }
 
-        if (strlen($password) < 8) {
+        if ($problem = PasswordPolicy::check($password, $username, $email)) {
             http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'Password must be at least 8 characters.']);
-            return;
-        }
-
-        if (empty($specialty)) {
-            http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'Primary Specialty is required.']);
+            echo json_encode(['status' => 'error', 'message' => $problem]);
             return;
         }
 
         // Map whatever the wizard submitted (a cosmetic Job Role, a saved template name, etc.)
         // to a real security role - see resolveAssignableRole() for the full mapping.
         $role = $this->resolveAssignableRole($role, $userType);
+        [$customRoleId, $customRoleError] = $this->applyCustomRole($input, $role);
+        if ($customRoleError) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => $customRoleError]);
+            return;
+        }
+
+        // Clinical roles must have a Primary Specialty; front desk, billing and administrators may leave it blank.
+        if (empty($specialty) && in_array($role, Roles::SPECIALTY_REQUIRED, true)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Primary Specialty is required for Doctors and Nurses.']);
+            return;
+        }
 
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             http_response_code(400);
@@ -208,7 +239,13 @@ class UserController {
         $facilityId    = isset($input['facility_id']) ? (int)$input['facility_id'] : null;
         $isActive      = isset($input['is_active']) ? intval($input['is_active']) : 1;
 
-        if ($facilityId && !$this->isSpecialtyAllowedForFacility($facilityId, $specialty)) {
+        if ($facilityError = $this->facilityAssignmentError($facilityId)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => $facilityError]);
+            return;
+        }
+
+        if ($facilityId && $specialty !== '' && !$this->isSpecialtyAllowedForFacility($facilityId, $specialty)) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => "The specialty '{$specialty}' is not enabled for the selected facility."]);
             return;
@@ -237,12 +274,11 @@ class UserController {
         $provider_schedule = isset($input['provider_schedule']) ? (is_string($input['provider_schedule']) ? $input['provider_schedule'] : json_encode($input['provider_schedule'])) : null;
         $provider_billing = isset($input['provider_billing']) ? (is_string($input['provider_billing']) ? $input['provider_billing'] : json_encode($input['provider_billing'])) : null;
         $provider_preferences = isset($input['provider_preferences']) ? (is_string($input['provider_preferences']) ? $input['provider_preferences'] : json_encode($input['provider_preferences'])) : null;
-        $custom_permissions = isset($input['custom_permissions']) ? (is_string($input['custom_permissions']) ? $input['custom_permissions'] : json_encode($input['custom_permissions'])) : null;
 
         // Admin sets the password directly. The user must change it on first login, and it
         // expires if they never log in with it, so a leaked/unread email can't be used indefinitely.
         $passwordHash = password_hash($password, PASSWORD_BCRYPT);
-        $tempPasswordExpires = $sendCredentials ? date('Y-m-d H:i:s', strtotime('+72 hours')) : null;
+        $tempPasswordExpires = ($isActive && $sendCredentials) ? date('Y-m-d H:i:s', strtotime('+72 hours')) : null;
 
         try {
             $sql = "INSERT INTO users (
@@ -251,7 +287,7 @@ class UserController {
                 specialty, npi, license_number, license_expiry, dea_number, dea_expiry,
                 credential_type, sub_specialty, taxonomy_code,
                 phone, work_phone, address, facility_id,
-                provider_locations, provider_schedule, provider_billing, provider_preferences, custom_permissions,
+                provider_locations, provider_schedule, provider_billing, provider_preferences, custom_role_id,
                 must_change_password, temp_password_expires, is_active, created_at
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, NOW())";
             Database::query($sql, [
@@ -260,7 +296,7 @@ class UserController {
                 $specialty, $npi, $license_number, $license_expiry, $dea_number, $dea_expiry,
                 $credential_type, $sub_specialty, $taxonomy_code,
                 $phone, $workPhone, $address, $facilityId,
-                $provider_locations, $provider_schedule, $provider_billing, $provider_preferences, $custom_permissions,
+                $provider_locations, $provider_schedule, $provider_billing, $provider_preferences, $customRoleId,
                 $tempPasswordExpires, $isActive
             ]);
         } catch (\Throwable $e) {
@@ -272,8 +308,10 @@ class UserController {
 
         $newId = Database::lastInsertId();
 
+        // Credentials are only emailed to an active account (an inactive user can't log in with them).
+        $emailAttempted = $sendCredentials && $isActive;
         $emailSent = false;
-        if ($sendCredentials) {
+        if ($emailAttempted) {
             $emailSent = $this->sendCredentialsEmail($email, $first, $username, $password);
         }
 
@@ -281,17 +319,18 @@ class UserController {
             $_SESSION['user_id'] ?? null,
             $_SESSION['username'] ?? 'Super Admin',
             $_SESSION['user_role'] ?? 'Super Admin',
-            $newId,
-            $sendCredentials ? 'Create User & Send Credentials: ' . $username : 'Create User (Draft, credentials not sent): ' . $username,
+            null, // not a patient: the new user's id goes in record_id only
+            $emailAttempted ? 'Create User & Send Credentials: ' . $username : 'Create User (Draft, credentials not sent): ' . $username,
             'Administration',
             $newId
         );
 
         echo json_encode([
             'status' => 'success',
-            'message' => $sendCredentials
-                ? ($emailSent ? "User created and login credentials were emailed to {$email}." : 'User created, but the credentials email could not be sent. You can resend it from the user list.')
-                : 'User saved as a draft. No credentials have been sent yet.',
+            'message' => $emailAttempted
+                ? ($emailSent ? "User created and login credentials were emailed to {$email}." : "User created, but the credentials email to {$email} could not be sent. Open the user, enter a new password and save to send it again.")
+                : ($sendCredentials ? 'User created as inactive. No credentials were emailed because the account is inactive.' : 'User saved. No credentials have been sent yet.'),
+            'email_failed' => $emailAttempted && !$emailSent,
             'id' => $newId
         ]);
     }
@@ -307,7 +346,7 @@ class UserController {
             return;
         }
 
-        $existingUser = Database::fetch("SELECT id FROM users WHERE id = ?", [$userId]);
+        $existingUser = Database::fetch("SELECT id, facility_id FROM users WHERE id = ?", [$userId]);
         if (!$existingUser) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'User not found.']);
@@ -319,7 +358,7 @@ class UserController {
         $first = trim($input['first_name'] ?? '');
         $last = trim($input['last_name'] ?? '');
         $role = $input['role'] ?? '';
-        $userType = trim($input['user_type'] ?? 'Staff');
+        $userType = trim($input['user_type'] ?? 'Staff Member');
         $specialty = trim($input['specialty'] ?? '');
         $email = trim($input['email'] ?? '');
         $isActive = isset($input['is_active']) ? intval($input['is_active']) : 1;
@@ -332,19 +371,26 @@ class UserController {
             return;
         }
 
-        if (!empty($newPassword) && strlen($newPassword) < 8) {
+        if (!empty($newPassword) && ($problem = PasswordPolicy::check($newPassword, $username, $email))) {
             http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'Password must be at least 8 characters.']);
-            return;
-        }
-
-        if (empty($specialty)) {
-            http_response_code(400);
-            echo json_encode(['status' => 'error', 'message' => 'Primary Specialty is required.']);
+            echo json_encode(['status' => 'error', 'message' => $problem]);
             return;
         }
 
         $role = $this->resolveAssignableRole($role, $userType);
+        [$customRoleId, $customRoleError] = $this->applyCustomRole($input, $role);
+        if ($customRoleError) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => $customRoleError]);
+            return;
+        }
+
+        // Clinical roles must have a Primary Specialty; front desk, billing and administrators may leave it blank.
+        if (empty($specialty) && in_array($role, Roles::SPECIALTY_REQUIRED, true)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Primary Specialty is required for Doctors and Nurses.']);
+            return;
+        }
 
         if (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             http_response_code(400);
@@ -377,7 +423,13 @@ class UserController {
         $workPhone     = trim($input['work_phone'] ?? '');
         $facilityId    = isset($input['facility_id']) ? (int)$input['facility_id'] : null;
 
-        if ($facilityId && !$this->isSpecialtyAllowedForFacility($facilityId, $specialty)) {
+        if ($facilityError = $this->facilityAssignmentError($facilityId, isset($existingUser['facility_id']) ? (int)$existingUser['facility_id'] : null)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => $facilityError]);
+            return;
+        }
+
+        if ($facilityId && $specialty !== '' && !$this->isSpecialtyAllowedForFacility($facilityId, $specialty)) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => "The specialty '{$specialty}' is not enabled for the selected facility."]);
             return;
@@ -403,7 +455,6 @@ class UserController {
         $provider_schedule = isset($input['provider_schedule']) ? (is_string($input['provider_schedule']) ? $input['provider_schedule'] : json_encode($input['provider_schedule'])) : null;
         $provider_billing = isset($input['provider_billing']) ? (is_string($input['provider_billing']) ? $input['provider_billing'] : json_encode($input['provider_billing'])) : null;
         $provider_preferences = isset($input['provider_preferences']) ? (is_string($input['provider_preferences']) ? $input['provider_preferences'] : json_encode($input['provider_preferences'])) : null;
-        $custom_permissions = isset($input['custom_permissions']) ? (is_string($input['custom_permissions']) ? $input['custom_permissions'] : json_encode($input['custom_permissions'])) : null;
 
         try {
             $commonFields = [
@@ -412,7 +463,7 @@ class UserController {
                 $specialty, $npi, $license_number, $license_expiry, $dea_number, $dea_expiry,
                 $credential_type, $sub_specialty, $taxonomy_code,
                 $phone, $workPhone, $address, $facilityId,
-                $provider_locations, $provider_schedule, $provider_billing, $provider_preferences, $custom_permissions,
+                $provider_locations, $provider_schedule, $provider_billing, $provider_preferences, $customRoleId,
                 $isActive
             ];
             if (!empty($newPassword)) {
@@ -425,8 +476,9 @@ class UserController {
                     specialty = ?, npi = ?, license_number = ?, license_expiry = ?, dea_number = ?, dea_expiry = ?,
                     credential_type = ?, sub_specialty = ?, taxonomy_code = ?,
                     phone = ?, work_phone = ?, address = ?, facility_id = ?,
-                    provider_locations = ?, provider_schedule = ?, provider_billing = ?, provider_preferences = ?, custom_permissions = ?,
-                    is_active = ?, password_hash = ?, must_change_password = 1, temp_password_expires = ?
+                    provider_locations = ?, provider_schedule = ?, provider_billing = ?, provider_preferences = ?, custom_role_id = ?,
+                    is_active = ?, password_hash = ?, must_change_password = 1, temp_password_expires = ?,
+                    password_changed_at = NOW(), failed_login_count = 0, locked_until = NULL
                     WHERE id = ?";
                 Database::query($sql, array_merge($commonFields, [$hash, $tempPasswordExpires, $userId]));
             } else {
@@ -436,7 +488,7 @@ class UserController {
                     specialty = ?, npi = ?, license_number = ?, license_expiry = ?, dea_number = ?, dea_expiry = ?,
                     credential_type = ?, sub_specialty = ?, taxonomy_code = ?,
                     phone = ?, work_phone = ?, address = ?, facility_id = ?,
-                    provider_locations = ?, provider_schedule = ?, provider_billing = ?, provider_preferences = ?, custom_permissions = ?,
+                    provider_locations = ?, provider_schedule = ?, provider_billing = ?, provider_preferences = ?, custom_role_id = ?,
                     is_active = ?
                     WHERE id = ?";
                 Database::query($sql, array_merge($commonFields, [$userId]));
@@ -454,17 +506,33 @@ class UserController {
         }
 
         AuditLogger::log(
-            $_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], $userId,
+            $_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], null, // not a patient: the edited user's id goes in record_id only
             !empty($newPassword) ? 'Update User & Reset Password: ' . $username : 'Update User ID: ' . $userId,
             'Administration', $userId
         );
 
         $message = 'User profile updated successfully.';
         if (!empty($newPassword) && $isActive && $sendCredentials) {
-            $message .= $emailSent ? ' New login credentials were emailed to the user.' : ' However, the credentials email could not be sent.';
+            $message .= $emailSent ? ' New login credentials were emailed to the user.' : ' However, the credentials email could not be sent. Save again to retry.';
         }
 
-        echo json_encode(['status' => 'success', 'message' => $message]);
+        echo json_encode(['status' => 'success', 'message' => $message, 'email_failed' => (!empty($newPassword) && $isActive && $sendCredentials && !$emailSent)]);
+    }
+
+    /** Clears a lockout (too many wrong passwords) so the user can try again straight away. Super Admin only, audited. */
+    public function unlock(array $params): void {
+        $this->checkAdminAccess();
+        header('Content-Type: application/json');
+        $userId = (int)($params['id'] ?? 0);
+        $user = $userId ? Database::fetch("SELECT id, username FROM users WHERE id = ?", [$userId]) : null;
+        if (!$user) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'User not found.']);
+            return;
+        }
+        Database::query("UPDATE users SET failed_login_count = 0, locked_until = NULL WHERE id = ?", [$userId]);
+        AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, null, 'Unlock User Account: ' . $user['username'], 'Administration', $userId);
+        echo json_encode(['status' => 'success', 'message' => 'Account unlocked. The user can sign in again.']);
     }
 
     public function delete(array $params): void {
@@ -486,7 +554,7 @@ class UserController {
 
         Database::query("DELETE FROM users WHERE id = ?", [$userId]);
 
-        AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], null, 'Delete User ID: ' . $userId, 'Administration');
+        AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], null, 'Delete User ID: ' . $userId, 'Administration', (string)$userId);
 
         echo json_encode(['status' => 'success', 'message' => 'User deleted successfully.']);
     }
@@ -498,12 +566,12 @@ class UserController {
      * rejects login if the credentials go unused past their window.
      */
     private function sendCredentialsEmail(string $email, string $firstName, string $username, string $plainPassword): bool {
-        $protocol = (!empty($_SERVER['HTTPS']) && $_SERVER['HTTPS'] !== 'off') ? 'https' : 'http';
-        $host = $_SERVER['HTTP_HOST'] ?? 'localhost';
-        $scriptPath = $_SERVER['SCRIPT_NAME'] ?? '/specialty_ehr/public/index.php';
-        $baseDir = dirname(dirname($scriptPath));
-        if ($baseDir === '/' || $baseDir === '\\') $baseDir = '';
-        $loginUrl = "{$protocol}://{$host}{$baseDir}/public/index.php#login";
+        // Honours Settings > Public EHR Base URL (or auto-detects when blank) - see AppUrl.
+        $loginUrl = htmlspecialchars(AppUrl::publicUrl('index.php') . '#login', ENT_QUOTES);
+        // Everything interpolated below is escaped: names/usernames are admin-typed and a password may contain < > & " '.
+        $firstName = htmlspecialchars($firstName, ENT_QUOTES);
+        $username = htmlspecialchars($username, ENT_QUOTES);
+        $plainPassword = htmlspecialchars($plainPassword, ENT_QUOTES);
 
         $subject = 'Your Specialty EHR account is ready';
         $htmlBody = "
@@ -527,7 +595,7 @@ class UserController {
                         <a href='{$loginUrl}' target='_blank' style='background-color: #4f46e5; color: #ffffff; padding: 14px 32px; text-decoration: none; font-weight: bold; border-radius: 8px; font-size: 1.05rem; display: inline-block;'>Log In</a>
                     </div>
                     <p style='font-size: 0.85rem; color: #64748b;'>You will be asked to choose your own password the first time you log in.</p>
-                    <p style='font-size: 0.8rem; color: #94a3b8;'>For your security, this temporary password expires in 72 hours if unused. If it expires, ask your administrator to resend your credentials.</p>
+                    <p style='font-size: 0.8rem; color: #94a3b8;'>For your security, this temporary password expires in 72 hours if unused. If it expires, ask your administrator to set a new password for you.</p>
                     <p style='font-size: 0.8rem; color: #b45309; background: #fffbeb; border: 1px solid #fde68a; border-radius: 6px; padding: 10px 12px; margin-top: 16px;'>Don't see this in your inbox next time? Check your Spam/Junk folder and mark this sender as \"Not Spam\" so future messages arrive normally.</p>
                 </div>
             </div>
