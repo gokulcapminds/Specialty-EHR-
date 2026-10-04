@@ -8,6 +8,7 @@ use App\Controllers\PatientController;
 use App\Controllers\CalendarController;
 use App\Controllers\ClinicalController;
 use App\Controllers\DocumentController;
+use App\Controllers\ImagingController;
 use App\Controllers\MessagingController;
 use App\Controllers\BillingController;
 use App\Controllers\ClaimController;
@@ -81,6 +82,9 @@ $router->get('/api/clinical/note-single/{id}', ClinicalController::class . '@get
 $router->put('/api/clinical/notes/{id}', ClinicalController::class . '@update', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->delete('/api/clinical/notes/{id}', ClinicalController::class . '@delete', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 $router->get('/api/clinical/icd10-search', ClinicalController::class . '@searchIcd10', [AuthenticationMiddleware::class]);
+// C04 Cardiac History (patient-level risk profile behind the cardiac risk scores). Under /api/clinical/ so RouteAreas maps it to `encounters`.
+$router->get('/api/clinical/cardiac-profile/{patient_id}', \App\Controllers\CardiacProfileController::class . '@show', [AuthenticationMiddleware::class]);
+$router->put('/api/clinical/cardiac-profile/{patient_id}', \App\Controllers\CardiacProfileController::class . '@update', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 // Phase 2 — Core Encounter lifecycle routes
 $router->get('/api/encounters/queue', EncounterController::class . '@queue', [AuthenticationMiddleware::class]);
 $router->post('/api/encounters/start', EncounterController::class . '@start', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
@@ -93,6 +97,13 @@ $router->post('/api/documents/upload', DocumentController::class . '@upload', [A
 $router->get('/api/documents/download/{id}', DocumentController::class . '@download', [AuthenticationMiddleware::class]);
 $router->get('/api/documents/{patient_id}', DocumentController::class . '@index', [AuthenticationMiddleware::class]);
 $router->delete('/api/documents/{id}', DocumentController::class . '@delete', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+
+// Imaging / DICOM Routes
+$router->get('/api/imaging/studies', ImagingController::class . '@studies', [AuthenticationMiddleware::class]);
+$router->get('/api/imaging/document/{id}', ImagingController::class . '@serveFile', [AuthenticationMiddleware::class]);
+$router->post('/api/imaging/update-meta', ImagingController::class . '@updateMeta', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->post('/api/imaging/analyze', ImagingController::class . '@analyze', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
+$router->post('/api/imaging/save-findings', ImagingController::class . '@saveFindings', [AuthenticationMiddleware::class, CSRFMiddleware::class]);
 
 // Referral Routes
 $router->get('/api/referrals', ReferralController::class . '@all', [AuthenticationMiddleware::class]);
@@ -250,3 +261,14 @@ $router->put('/api/telehealth/session/{id}/status', TelehealthController::class 
 $router->get('/api/reports/audit', \App\Controllers\AuditController::class . '@index', [AuthenticationMiddleware::class]);
 $router->get('/api/reports/audit/verify', \App\Controllers\AuditController::class . '@verify', [AuthenticationMiddleware::class]);
 $router->get('/api/reports/audit/export', \App\Controllers\AuditController::class . '@export', [AuthenticationMiddleware::class]);
+
+// EHR Practice Reports (RBAC checked inside ReportController)
+$router->get('/api/reports/summary', \App\Controllers\ReportController::class . '@summary', [AuthenticationMiddleware::class]);
+$router->get('/api/reports/financial', \App\Controllers\ReportController::class . '@financial', [AuthenticationMiddleware::class]);
+$router->get('/api/reports/clinical', \App\Controllers\ReportController::class . '@clinical', [AuthenticationMiddleware::class]);
+$router->get('/api/reports/operations', \App\Controllers\ReportController::class . '@operations', [AuthenticationMiddleware::class]);
+$router->get('/api/reports/users', \App\Controllers\ReportController::class . '@users', [AuthenticationMiddleware::class]);
+$router->get('/api/reports/specialties', \App\Controllers\ReportController::class . '@specialties', [AuthenticationMiddleware::class]);
+$router->get('/api/reports/export', \App\Controllers\ReportController::class . '@export', [AuthenticationMiddleware::class]);
+
+

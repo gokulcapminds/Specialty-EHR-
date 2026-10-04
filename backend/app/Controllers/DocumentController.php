@@ -85,22 +85,39 @@ class DocumentController {
 
         $destinationPath = $storageDir . '/' . $uuid;
 
+        $modality = $_POST['modality'] ?? null;
+        $studyDescription = $_POST['study_description'] ?? null;
+        $studyDate = $_POST['study_date'] ?? date('Y-m-d');
+
         if (move_uploaded_file($file['tmp_name'], $destinationPath)) {
             // Save to DB
-            $sql = "INSERT INTO patient_documents (patient_id, uploaded_by, original_filename, stored_filename, mime_type, file_size) VALUES (?, ?, ?, ?, ?, ?)";
+            $sql = "INSERT INTO patient_documents (patient_id, uploaded_by, original_filename, stored_filename, mime_type, file_size, modality, study_description, study_date) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)";
             Database::query($sql, [
                 $patientId,
                 $_SESSION['user_id'],
                 $originalFilename,
                 $uuid,
                 $mimeType,
-                $file['size']
+                $file['size'],
+                $modality,
+                $studyDescription,
+                $studyDate
             ]);
             $newId = Database::lastInsertId();
 
             AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], $patientId, 'Upload Document', 'Documents', $newId);
 
-            echo json_encode(['status' => 'success', 'message' => 'Document uploaded successfully.', 'document_id' => $newId]);
+            echo json_encode([
+                'status' => 'success',
+                'message' => 'Document uploaded successfully.',
+                'id' => (int)$newId,
+                'document_id' => (int)$newId,
+                'data' => [
+                    'id' => (int)$newId,
+                    'original_filename' => $originalFilename,
+                    'modality' => $modality
+                ]
+            ]);
         } else {
             http_response_code(500);
             echo json_encode(['status' => 'error', 'message' => 'Failed to store document file.']);

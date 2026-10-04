@@ -1938,6 +1938,11 @@ window.submitEncounter = async function (e) {
         hpi: document.getElementById('hpi')?.value || '',
         ros: document.getElementById('ros')?.value || '',
 
+        // C01 Visit Details. null (not '') when the input isn't on the page, so the server's IFNULL
+        // keeps the stored value instead of blanking it from a screen that doesn't render these.
+        referring_provider: document.getElementById('referring-provider')?.value ?? null,
+        referral_reason: document.getElementById('referral-reason')?.value ?? null,
+
         pe_general: document.getElementById('pe-general')?.value || '',
         pe_heent: document.getElementById('pe-heent')?.value || '',
         pe_cardio: document.getElementById('pe-cardio')?.value || '',
@@ -2720,10 +2725,16 @@ async function updateSidebarProfile() {
             adminNavItem.hidden = meRes.user.role !== 'Super Admin';
         }
 
-        // The audit log is Super Admin only (AuditController refuses everyone else), so don't offer the link either.
-        const reportsNav = document.getElementById('nav-reports');
-        if (reportsNav && reportsNav.closest('li')) {
-            reportsNav.closest('li').hidden = meRes.user.role !== 'Super Admin';
+        // Reports accordion is available to clinical, billing, and admin staff
+        const reportsGroup = document.getElementById('nav-group-reports');
+        if (reportsGroup) {
+            const role = meRes.user.role || '';
+            const allowedReportsRoles = ['Super Admin', 'Admin', 'Doctor', 'Billing Staff', 'Nurse', 'Medical Assistant', 'Front Desk'];
+            reportsGroup.hidden = !allowedReportsRoles.includes(role);
+        }
+        const auditSubLi = document.getElementById('nav-rep-audit-li');
+        if (auditSubLi) {
+            auditSubLi.hidden = meRes.user.role !== 'Super Admin';
         }
     }
 
@@ -2824,6 +2835,19 @@ function initSidebarGroups() {
     sidebar.querySelectorAll('.nav-subgroup').forEach(li => {
         if (remembered.includes('sub:' + li.dataset.subgroup)) setSidebarSubgroupOpen(li, true);
     });
+
+    // Highlight active sublink in reports group based on URL hash
+    const currentHash = window.location.hash || '';
+    if (currentHash.startsWith('#reports')) {
+        const typeMatch = currentHash.match(/type=([a-z-]+)/i);
+        const activeType = typeMatch ? typeMatch[1] : 'clinical';
+        const subReports = document.getElementById('submenu-reports');
+        if (subReports) {
+            subReports.querySelectorAll('.nav-sublink').forEach(a => a.classList.remove('active'));
+            const activeSub = document.getElementById(`nav-rep-${activeType}`);
+            if (activeSub) activeSub.classList.add('active');
+        }
+    }
 
     if (window.__sidebarGroupsBound) return;
     window.__sidebarGroupsBound = true;
@@ -3061,6 +3085,9 @@ async function setupModuleHandlers(moduleName) {
             break;
         case 'orders':
             await initOrdersWorkspace();
+            break;
+        case 'imaging':
+            await initImagingWorkspace();
             break;
         case 'medications':
             await initMedicationsWorkspace();
@@ -4524,15 +4551,881 @@ function setInfoTipText(el, text) {
 async function initReportsHandler() {
     const byId = (id) => document.getElementById(id);
     const main = byId('rep-main');
-    if (!main) return;
+    if (!byId('pane-clinical') && !byId('pane-users') && !byId('pane-appointments') && !main) return;
 
     const me = await ApiService.request('/api/me');
-    if (!(me.status === 'success' && me.user && me.user.role === 'Super Admin')) {
+    const isSuperAdmin = me.status === 'success' && me.user && me.user.role === 'Super Admin';
+
+    // Restrict Audit Log tab for non-Super Admins
+    const auditTabBtn = byId('rep-tab-audit-btn');
+    if (auditTabBtn && !isSuperAdmin) {
+        auditTabBtn.style.display = 'none';
+    }
+    if (main && !isSuperAdmin) {
         main.hidden = true;
         const restricted = byId('rep-restricted');
         if (restricted) restricted.hidden = false;
-        return;
     }
+
+    // Default dates: start of current month to today
+    const now = new Date();
+    const curYear = now.getFullYear();
+    const curMonth = String(now.getMonth() + 1).padStart(2, '0');
+    const curDay = String(now.getDate()).padStart(2, '0');
+    const defaultFrom = `${curYear}-${curMonth}-01`;
+    const defaultTo = `${curYear}-${curMonth}-${curDay}`;
+
+    const fromInput = byId('rep-global-from');
+    const toInput = byId('rep-global-to');
+    if (fromInput && !fromInput.value) fromInput.value = defaultFrom;
+    if (toInput && !toInput.value) toInput.value = defaultTo;
+
+    // Determine active tab from URL query param (e.g. #reports?type=clinical)
+    const getRequestedType = () => {
+        const hash = window.location.hash || '';
+        const match = hash.match(/type=([a-z-]+)/i);
+        return match ? match[1] : 'clinical';
+    };
+
+    let activeTab = getRequestedType();
+    const validTabs = ['clinical', 'appointments', 'users', 'specialties', 'invoices', 'audit'];
+    if (!validTabs.includes(activeTab)) activeTab = 'clinical';
+
+    const reportTitles = {
+        'clinical': 'Clinical Reports',
+        'appointments': 'Appointment Reports',
+        'users': 'User Reports',
+        'specialties': 'Specialty Reports',
+        'invoices': 'Invoices Report',
+        'audit': 'Security Audit Log'
+    };
+
+    // Set initial active tab classes & dynamic page title
+    const activateTab = (tabName) => {
+        activeTab = tabName;
+        document.querySelectorAll('.rep-tab-pane').forEach(p => p.classList.remove('active'));
+
+        const targetPane = byId(`pane-${tabName}`);
+        if (targetPane) targetPane.classList.add('active');
+
+        const titleEl = byId('rep-page-title');
+        if (titleEl && reportTitles[tabName]) {
+            titleEl.innerHTML = reportTitles[tabName];
+        }
+
+        // Highlight active sublink in the sidebar submenu
+        const subReports = document.getElementById('submenu-reports');
+        if (subReports) {
+            subReports.querySelectorAll('.nav-sublink').forEach(a => a.classList.remove('active'));
+            const activeSub = document.getElementById(`nav-rep-${tabName}`);
+            if (activeSub) activeSub.classList.add('active');
+        }
+
+        loadCurrentTab();
+    };
+
+    // Listen for hashchange to dynamically switch report when sidebar links are clicked
+    if (!window._reportsHashListenerRegistered) {
+        window.addEventListener('hashchange', () => {
+            const fullHash = window.location.hash.substring(1) || '';
+            if (fullHash.startsWith('reports')) {
+                const newType = getRequestedType();
+                activateTab(newType);
+            }
+        });
+        window._reportsHashListenerRegistered = true;
+    }
+
+    const getFilterParams = () => {
+        const from = fromInput ? fromInput.value : defaultFrom;
+        const to = toInput ? toInput.value : defaultTo;
+        return new URLSearchParams({ from, to });
+    };
+
+    // 1. Clinical Reports Loader (Enhanced UI)
+    let clinSubTab = 'encounters';
+    // Pagination state – Clinical
+    let clinPage = 1;
+    let clinPageSize = 10;
+    let clinAllEncounters = [];
+
+    const renderClinicalPage = () => {
+        const encEl = byId('rep-encounters-list');
+        if (!encEl) return;
+        const total = clinAllEncounters.length;
+        const start = (clinPage - 1) * clinPageSize;
+        const slice = clinAllEncounters.slice(start, start + clinPageSize);
+
+        if (!total) {
+            encEl.innerHTML = `
+                <tr>
+                    <td colspan="6" style="padding: 0;">
+                        <div class="user-rep-empty-state">
+                            <svg class="user-rep-empty-icon" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <circle cx="80" cy="80" r="64" fill="#EEF2FF" />
+                                <rect x="52" y="44" width="46" height="66" rx="4" fill="#FFFFFF" stroke="#3B82F6" stroke-width="2.5" />
+                                <rect x="68" y="52" width="50" height="70" rx="4" fill="#FFFFFF" stroke="#2563EB" stroke-width="2.5" />
+                                <line x1="78" y1="68" x2="106" y2="68" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" />
+                                <line x1="78" y1="76" x2="106" y2="76" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" />
+                                <line x1="78" y1="84" x2="102" y2="84" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" />
+                                <line x1="78" y1="92" x2="96" y2="92" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" />
+                                <line x1="60" y1="58" x2="88" y2="58" stroke="#93C5FD" stroke-width="2" stroke-linecap="round" />
+                                <line x1="60" y1="66" x2="74" y2="66" stroke="#93C5FD" stroke-width="2" stroke-linecap="round" />
+                            </svg>
+                            <p style="color: #64748b; font-size: 0.95rem; margin: 0;">No encounter documentation found matching filters.</p>
+                        </div>
+                    </td>
+                </tr>`;
+            renderPaginationControls({ containerId: 'clin-pagination', currentPage: 1, totalItems: 0, pageSize: clinPageSize, onPageChange: () => {}, onPageSizeChange: () => {} });
+            return;
+        }
+
+        encEl.innerHTML = slice.map(e => `
+            <tr>
+                <td><strong>${calEscape(e.note_date)}</strong></td>
+                <td><span style="font-weight:600; color:#1e293b;">${calEscape(e.patient_name || 'Patient #' + e.patient_id)}</span></td>
+                <td>${calEscape(e.provider)}</td>
+                <td><span class="rep-tag">${calEscape(e.encounter_type)}</span></td>
+                <td><span class="rep-tag ${e.lock_state === 1 ? 'rep-pill-ok' : 'rep-pill-warn'}">${calEscape(e.status)}</span></td>
+                <td>${calEscape(e.chief_complaint || '\u2014')}</td>
+            </tr>
+        `).join('');
+
+        renderPaginationControls({
+            containerId: 'clin-pagination',
+            currentPage: clinPage,
+            totalItems: total,
+            pageSize: clinPageSize,
+            onPageChange: (pg) => { clinPage = pg; renderClinicalPage(); },
+            onPageSizeChange: (sz) => { clinPageSize = sz; clinPage = 1; renderClinicalPage(); }
+        });
+    };
+
+    const switchClinSubTab = (tab) => {
+        clinSubTab = tab;
+        const clinTabEnc = byId('clin-tab-encounters');
+        const clinTabDiag = byId('clin-tab-diagnoses');
+        const clinPaneEnc = byId('clin-subpane-encounters');
+        const clinPaneDiag = byId('clin-subpane-diagnoses');
+        if (tab === 'encounters') {
+            if (clinTabEnc) clinTabEnc.classList.add('active');
+            if (clinTabDiag) clinTabDiag.classList.remove('active');
+            if (clinPaneEnc) clinPaneEnc.style.display = 'block';
+            if (clinPaneDiag) clinPaneDiag.style.display = 'none';
+        } else {
+            if (clinTabDiag) clinTabDiag.classList.add('active');
+            if (clinTabEnc) clinTabEnc.classList.remove('active');
+            if (clinPaneDiag) clinPaneDiag.style.display = 'block';
+            if (clinPaneEnc) clinPaneEnc.style.display = 'none';
+        }
+    };
+
+    const clinTabEncBtn = byId('clin-tab-encounters');
+    const clinTabDiagBtn = byId('clin-tab-diagnoses');
+    if (clinTabEncBtn) clinTabEncBtn.onclick = () => switchClinSubTab('encounters');
+    if (clinTabDiagBtn) clinTabDiagBtn.onclick = () => switchClinSubTab('diagnoses');
+
+    const loadClinical = async () => {
+        try {
+            const p = getFilterParams();
+            const provEl = byId('clin-filter-provider');
+            const statusEl = byId('clin-filter-status');
+            const typeEl = byId('clin-filter-type');
+            const searchEl = byId('clin-search-input');
+
+            if (provEl && provEl.value && provEl.value !== '0') p.set('provider_id', provEl.value);
+            if (statusEl && statusEl.value) p.set('status', statusEl.value);
+            if (typeEl && typeEl.value) p.set('encounter_type', typeEl.value);
+            if (searchEl && searchEl.value.trim()) p.set('q', searchEl.value.trim());
+
+            const encEl = byId('rep-encounters-list');
+            if (encEl) {
+                encEl.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:30px; color:#64748b;"><i class="fas fa-spinner fa-spin"></i> Loading encounters...</td></tr>';
+            }
+
+            const res = await ApiService.request('/api/reports/clinical?' + p.toString());
+            if (res.status === 'success') {
+                // Populate providers dropdown
+                const currentProvEl = byId('clin-filter-provider');
+                if (currentProvEl && res.providers_list && (currentProvEl.options.length <= 1 || !currentProvEl.dataset.loaded)) {
+                    const curVal = currentProvEl.value;
+                    currentProvEl.innerHTML = '<option value="0">All Providers</option>' + 
+                        res.providers_list.map(pr => `<option value="${pr.id}">${calEscape(pr.name)}</option>`).join('');
+                    if (curVal && curVal !== '0') currentProvEl.value = curVal;
+                    currentProvEl.dataset.loaded = 'true';
+                }
+
+                // 4 KPIs
+                const metrics = res.metrics || {};
+                const totalEnc = metrics.total_encounters ?? (res.encounters || []).length;
+                const signedNotes = metrics.signed_count ?? (res.encounters || []).filter(e => e.lock_state === 1).length;
+                const draftNotes = metrics.draft_count ?? (totalEnc - signedNotes);
+                const completionPct = metrics.documentation_rate ?? (totalEnc > 0 ? Math.round((signedNotes / totalEnc) * 100) : 0);
+
+                if (byId('kpi-clin-encounters')) byId('kpi-clin-encounters').textContent = totalEnc;
+                if (byId('kpi-clin-signed')) byId('kpi-clin-signed').textContent = signedNotes;
+                if (byId('kpi-clin-draft')) byId('kpi-clin-draft').textContent = draftNotes;
+                if (byId('kpi-clin-completion')) byId('kpi-clin-completion').textContent = `${completionPct}%`;
+
+                if (byId('clin-enc-count')) {
+                    byId('clin-enc-count').textContent = `${totalEnc} record${totalEnc === 1 ? '' : 's'}`;
+                }
+
+                // Top Diagnoses
+                const diagEl = byId('rep-diagnoses-list');
+                if (diagEl) {
+                    if (!res.top_diagnoses || !res.top_diagnoses.length) {
+                        diagEl.innerHTML = `
+                            <tr>
+                                <td colspan="3" style="padding: 0;">
+                                    <div class="user-rep-empty-state">
+                                        <p style="color: #64748b; font-size: 0.95rem; margin: 0;">No diagnoses recorded for this period.</p>
+                                    </div>
+                                </td>
+                            </tr>`;
+                    } else {
+                        diagEl.innerHTML = res.top_diagnoses.map(d => `
+                            <tr>
+                                <td><strong><span class="rep-tag" style="background:#e0f2fe; color:#0284c7; font-weight:700;">${calEscape(d.code)}</span></strong></td>
+                                <td><span style="font-weight:600; color:#1e293b;">${calEscape(d.description)}</span></td>
+                                <td style="text-align: right;"><span class="badge bg-primary" style="font-size:0.85rem; padding: 4px 10px;">${d.count} encounter${d.count === 1 ? '' : 's'}</span></td>
+                            </tr>
+                        `).join('');
+                    }
+                }
+
+                // Encounters – paginated
+                clinAllEncounters = res.encounters || [];
+                clinPage = 1;
+                renderClinicalPage();
+            }
+        } catch (err) {
+            console.error('Error loading clinical reports:', err);
+        }
+    };
+
+    // Attach clinical filter event listeners
+    const wireClinicalFilters = () => {
+        const applyBtn = byId('clin-filter-apply-btn');
+        const resetBtn = byId('clin-filter-reset-btn');
+        const provEl = byId('clin-filter-provider');
+        const statusEl = byId('clin-filter-status');
+        const typeEl = byId('clin-filter-type');
+        const searchEl = byId('clin-search-input');
+
+        if (applyBtn) applyBtn.onclick = () => loadClinical();
+        if (provEl) provEl.onchange = () => loadClinical();
+        if (statusEl) statusEl.onchange = () => loadClinical();
+        if (typeEl) typeEl.onchange = () => loadClinical();
+        if (searchEl) {
+            searchEl.onkeyup = (e) => {
+                if (e.key === 'Enter') loadClinical();
+            };
+        }
+        if (resetBtn) {
+            resetBtn.onclick = () => {
+                if (searchEl) searchEl.value = '';
+                if (provEl) provEl.value = '0';
+                if (statusEl) statusEl.value = '';
+                if (typeEl) typeEl.value = '';
+                loadClinical();
+            };
+        }
+    };
+    wireClinicalFilters();
+
+    // 2. Appointment Reports Loader (Enhanced UI)
+    let apptSubTab = 'log';
+    const switchApptSubTab = (tab) => {
+        apptSubTab = tab;
+        const apptTabLog = byId('appt-tab-log');
+        const apptTabUtil = byId('appt-tab-util');
+        const apptPaneLog = byId('appt-subpane-log');
+        const apptPaneUtil = byId('appt-subpane-util');
+        if (tab === 'log') {
+            if (apptTabLog) apptTabLog.classList.add('active');
+            if (apptTabUtil) apptTabUtil.classList.remove('active');
+            if (apptPaneLog) apptPaneLog.style.display = 'block';
+            if (apptPaneUtil) apptPaneUtil.style.display = 'none';
+        } else {
+            if (apptTabUtil) apptTabUtil.classList.add('active');
+            if (apptTabLog) apptTabLog.classList.remove('active');
+            if (apptPaneUtil) apptPaneUtil.style.display = 'block';
+            if (apptPaneLog) apptPaneLog.style.display = 'none';
+        }
+    };
+
+    const apptTabLogBtn = byId('appt-tab-log');
+    const apptTabUtilBtn = byId('appt-tab-util');
+    if (apptTabLogBtn) apptTabLogBtn.onclick = () => switchApptSubTab('log');
+    if (apptTabUtilBtn) apptTabUtilBtn.onclick = () => switchApptSubTab('util');
+
+    // Pagination state – Appointments
+    let apptPage = 1;
+    let apptPageSize = 10;
+    let apptAllData = [];
+
+    const renderApptPage = () => {
+        const apptEl = byId('rep-appts-list');
+        if (!apptEl) return;
+        const total = apptAllData.length;
+        const start = (apptPage - 1) * apptPageSize;
+        const slice = apptAllData.slice(start, start + apptPageSize);
+
+        if (!total) {
+            apptEl.innerHTML = `
+                <tr>
+                    <td colspan="6" style="padding: 0;">
+                        <div class="user-rep-empty-state">
+                            <svg class="user-rep-empty-icon" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <circle cx="80" cy="80" r="64" fill="#EEF2FF" />
+                                <rect x="52" y="44" width="46" height="66" rx="4" fill="#FFFFFF" stroke="#3B82F6" stroke-width="2.5" />
+                                <rect x="68" y="52" width="50" height="70" rx="4" fill="#FFFFFF" stroke="#2563EB" stroke-width="2.5" />
+                                <line x1="78" y1="68" x2="106" y2="68" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" />
+                                <line x1="78" y1="76" x2="106" y2="76" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" />
+                                <line x1="78" y1="84" x2="102" y2="84" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" />
+                                <line x1="78" y1="92" x2="96" y2="92" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" />
+                                <line x1="60" y1="58" x2="88" y2="58" stroke="#93C5FD" stroke-width="2" stroke-linecap="round" />
+                                <line x1="60" y1="66" x2="74" y2="66" stroke="#93C5FD" stroke-width="2" stroke-linecap="round" />
+                            </svg>
+                            <p style="color: #64748b; font-size: 0.95rem; margin: 0;">No appointments found matching filters.</p>
+                        </div>
+                    </td>
+                </tr>`;
+            renderPaginationControls({ containerId: 'appt-log-pagination', currentPage: 1, totalItems: 0, pageSize: apptPageSize, onPageChange: () => {}, onPageSizeChange: () => {} });
+            return;
+        }
+
+        apptEl.innerHTML = slice.map(a => {
+            let pillClass = 'rep-pill-idle';
+            const s = (a.status || '').toLowerCase();
+            if (s === 'completed' || s === 'checked-in') pillClass = 'rep-pill-ok';
+            else if (s === 'no show') pillClass = 'rep-pill-bad';
+            else if (s === 'scheduled') pillClass = 'rep-pill-warn';
+            return `
+                <tr>
+                    <td><strong>${calEscape(a.start_time)}</strong></td>
+                    <td><span style="font-weight:600; color:#1e293b;">${calEscape(a.patient_name || 'Patient #' + a.patient_id)}</span></td>
+                    <td>${calEscape(a.provider)}</td>
+                    <td><span class="rep-tag">${calEscape(a.visit_type)}</span></td>
+                    <td><span class="rep-tag ${pillClass}">${calEscape(a.status)}</span></td>
+                    <td>${calEscape(a.reason || '\u2014')}</td>
+                </tr>
+            `;
+        }).join('');
+
+        renderPaginationControls({
+            containerId: 'appt-log-pagination',
+            currentPage: apptPage,
+            totalItems: total,
+            pageSize: apptPageSize,
+            onPageChange: (pg) => { apptPage = pg; renderApptPage(); },
+            onPageSizeChange: (sz) => { apptPageSize = sz; apptPage = 1; renderApptPage(); }
+        });
+    };
+
+    const loadAppointments = async () => {
+        try {
+            const p = getFilterParams();
+            const provEl = byId('appt-filter-provider');
+            const statusEl = byId('appt-filter-status');
+            const typeEl = byId('appt-filter-type');
+            const searchEl = byId('appt-search-input');
+
+            if (provEl && provEl.value && provEl.value !== '0') p.set('provider_id', provEl.value);
+            if (statusEl && statusEl.value) p.set('status', statusEl.value);
+            if (typeEl && typeEl.value) p.set('visit_type', typeEl.value);
+            if (searchEl && searchEl.value.trim()) p.set('q', searchEl.value.trim());
+
+            const apptEl = byId('rep-appts-list');
+            if (apptEl) {
+                apptEl.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:30px; color:#64748b;"><i class="fas fa-spinner fa-spin"></i> Loading appointments...</td></tr>';
+            }
+
+            const res = await ApiService.request('/api/reports/operations?' + p.toString());
+            if (res.status === 'success') {
+                // Populate providers dropdown
+                const currentProvEl = byId('appt-filter-provider');
+                if (currentProvEl && res.providers_list && (currentProvEl.options.length <= 1 || !currentProvEl.dataset.loaded)) {
+                    const curVal = currentProvEl.value;
+                    currentProvEl.innerHTML = '<option value="0">All Providers</option>' + 
+                        res.providers_list.map(pr => `<option value="${pr.id}">${calEscape(pr.name)}</option>`).join('');
+                    if (curVal && curVal !== '0') currentProvEl.value = curVal;
+                    currentProvEl.dataset.loaded = 'true';
+                }
+
+                // 4 KPIs
+                const metrics = res.metrics || {};
+                const totalAppts = metrics.total_booked ?? (res.appointments || []).length;
+                const completedCount = metrics.completed ?? 0;
+                const noShowCount = metrics.no_shows ?? 0;
+                const cancelledCount = metrics.cancelled ?? 0;
+
+                if (byId('kpi-appt-total')) byId('kpi-appt-total').textContent = totalAppts;
+                if (byId('kpi-appt-completed')) byId('kpi-appt-completed').textContent = completedCount;
+                if (byId('kpi-appt-noshow')) byId('kpi-appt-noshow').textContent = noShowCount;
+                if (byId('kpi-appt-cancelled')) byId('kpi-appt-cancelled').textContent = cancelledCount;
+
+                if (byId('appt-count-badge')) {
+                    byId('appt-count-badge').textContent = `${totalAppts} record${totalAppts === 1 ? '' : 's'}`;
+                }
+
+                // 1. Provider Utilization Table
+                const provTableEl = byId('rep-providers-util-list');
+                if (provTableEl) {
+                    if (!res.doctor_utilization || !res.doctor_utilization.length) {
+                        provTableEl.innerHTML = `
+                            <tr>
+                                <td colspan="5" style="padding: 0;">
+                                    <div class="user-rep-empty-state">
+                                        <p style="color: #64748b; font-size: 0.95rem; margin: 0;">No provider scheduling activity found.</p>
+                                    </div>
+                                </td>
+                            </tr>`;
+                    } else {
+                        provTableEl.innerHTML = res.doctor_utilization.map(doc => `
+                            <tr>
+                                <td><strong style="color:#1e293b;">Dr. ${calEscape(doc.first_name)} ${calEscape(doc.last_name)}</strong></td>
+                                <td><span style="font-weight:700; color:#1e293b; font-size:0.95rem;">${doc.total_appointments}</span></td>
+                                <td><span style="color:#16a34a; font-weight:700;">${doc.completed}</span></td>
+                                <td><span style="color:#b91c1c; font-weight:700;">${doc.no_shows}</span></td>
+                                <td><span style="color:#64748b; font-weight:600;">${doc.cancelled}</span></td>
+                            </tr>
+                        `).join('');
+                    }
+                }
+
+                // 2. Appointments Log – paginated
+                apptAllData = res.appointments || [];
+                apptPage = 1;
+                renderApptPage();
+            }
+        } catch (err) {
+            console.error('Error loading appointment reports:', err);
+        }
+    };
+
+    // Attach appointment filter event listeners
+    const wireApptFilters = () => {
+        const applyBtn = byId('appt-filter-apply-btn');
+        const resetBtn = byId('appt-filter-reset-btn');
+        const provEl = byId('appt-filter-provider');
+        const statusEl = byId('appt-filter-status');
+        const typeEl = byId('appt-filter-type');
+        const searchEl = byId('appt-search-input');
+
+        if (applyBtn) applyBtn.onclick = () => loadAppointments();
+        if (provEl) provEl.onchange = () => loadAppointments();
+        if (statusEl) statusEl.onchange = () => loadAppointments();
+        if (typeEl) typeEl.onchange = () => loadAppointments();
+        if (searchEl) {
+            searchEl.onkeyup = (e) => {
+                if (e.key === 'Enter') loadAppointments();
+            };
+        }
+        if (resetBtn) {
+            resetBtn.onclick = () => {
+                if (searchEl) searchEl.value = '';
+                if (provEl) provEl.value = '0';
+                if (statusEl) statusEl.value = '';
+                if (typeEl) typeEl.value = '';
+                loadAppointments();
+            };
+        }
+    };
+    wireApptFilters();
+
+    // 3. User Reports Loader (Matching Reference UI)
+    let activeUserCat = 'staff';
+    const repUsersSearchInput = byId('user-rep-search-input');
+    const repUsersSearchBtn = byId('user-rep-search-btn');
+    const tabProviders = byId('user-tab-providers');
+    const tabStaff = byId('user-tab-staff');
+    const cardTitle = byId('user-rep-card-title');
+
+    const emptyStateSvg = `
+        <tr>
+            <td colspan="4" style="padding: 0;">
+                <div class="user-rep-empty-state">
+                    <svg class="user-rep-empty-icon" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+                        <circle cx="80" cy="80" r="64" fill="#EEF2FF" />
+                        <rect x="52" y="44" width="46" height="66" rx="4" fill="#FFFFFF" stroke="#3B82F6" stroke-width="2.5" />
+                        <rect x="68" y="52" width="50" height="70" rx="4" fill="#FFFFFF" stroke="#2563EB" stroke-width="2.5" />
+                        <line x1="78" y1="68" x2="106" y2="68" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" />
+                        <line x1="78" y1="76" x2="106" y2="76" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" />
+                        <line x1="78" y1="84" x2="102" y2="84" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" />
+                        <line x1="78" y1="92" x2="96" y2="92" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" />
+                        <line x1="60" y1="58" x2="88" y2="58" stroke="#93C5FD" stroke-width="2" stroke-linecap="round" />
+                        <line x1="60" y1="66" x2="74" y2="66" stroke="#93C5FD" stroke-width="2" stroke-linecap="round" />
+                    </svg>
+                    <p style="color: #64748b; font-size: 0.95rem; margin: 0;">No records found.</p>
+                </div>
+            </td>
+        </tr>`;
+
+    // Pagination state – Users
+    let usersPage = 1;
+    let usersPageSize = 10;
+    let usersAllData = [];
+
+    const renderUsersPage = () => {
+        const listEl = byId('rep-users-list');
+        if (!listEl) return;
+        const total = usersAllData.length;
+        const start = (usersPage - 1) * usersPageSize;
+        const slice = usersAllData.slice(start, start + usersPageSize);
+
+        if (!total) {
+            listEl.innerHTML = emptyStateSvg;
+            renderPaginationControls({ containerId: 'users-pagination', currentPage: 1, totalItems: 0, pageSize: usersPageSize, onPageChange: () => {}, onPageSizeChange: () => {} });
+            return;
+        }
+
+        listEl.innerHTML = slice.map(u => {
+            const fullName = [u.first_name, u.last_name].filter(Boolean).join(' ') || u.username;
+            const isActive = (u.is_active == 1);
+            return `
+                <tr>
+                    <td><strong style="color: #1e293b;">${calEscape(fullName)}</strong></td>
+                    <td>${calEscape(u.username)}</td>
+                    <td>${calEscape(u.email || '\u2014')}</td>
+                    <td>
+                        <span class="rep-tag ${isActive ? 'rep-pill-ok' : 'rep-pill-bad'}">
+                            ${isActive ? 'Active' : 'Inactive'}
+                        </span>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        renderPaginationControls({
+            containerId: 'users-pagination',
+            currentPage: usersPage,
+            totalItems: total,
+            pageSize: usersPageSize,
+            onPageChange: (pg) => { usersPage = pg; renderUsersPage(); },
+            onPageSizeChange: (sz) => { usersPageSize = sz; usersPage = 1; renderUsersPage(); }
+        });
+    };
+
+    const loadUsers = async () => {
+        try {
+            const listEl = byId('rep-users-list');
+            if (listEl) {
+                listEl.innerHTML = '<tr><td colspan="4" style="text-align:center; padding:30px; color:#64748b;"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>';
+            }
+
+            const q = repUsersSearchInput ? repUsersSearchInput.value.trim() : '';
+            const p = new URLSearchParams({ category: activeUserCat });
+            if (q) p.set('q', q);
+
+            const res = await ApiService.request('/api/reports/users?' + p.toString());
+            if (res.status === 'success') {
+                usersAllData = res.users || [];
+                usersPage = 1;
+                renderUsersPage();
+            }
+        } catch (err) {
+            console.error('Error loading users report:', err);
+            const listEl = byId('rep-users-list');
+            if (listEl) listEl.innerHTML = emptyStateSvg;
+        }
+    };
+
+    const setUserCategory = (cat) => {
+        activeUserCat = cat;
+        if (cat === 'providers') {
+            if (tabProviders) tabProviders.classList.add('active');
+            if (tabStaff) tabStaff.classList.remove('active');
+            if (cardTitle) cardTitle.textContent = 'Providers List';
+            if (repUsersSearchInput) repUsersSearchInput.placeholder = 'Search Providers';
+        } else {
+            if (tabStaff) tabStaff.classList.add('active');
+            if (tabProviders) tabProviders.classList.remove('active');
+            if (cardTitle) cardTitle.textContent = 'Staff List';
+            if (repUsersSearchInput) repUsersSearchInput.placeholder = 'Search Staff';
+        }
+        loadUsers();
+    };
+
+    if (tabProviders) tabProviders.onclick = () => setUserCategory('providers');
+    if (tabStaff) tabStaff.onclick = () => setUserCategory('staff');
+    if (repUsersSearchBtn) repUsersSearchBtn.onclick = () => loadUsers();
+    if (repUsersSearchInput) {
+        repUsersSearchInput.onkeyup = (e) => {
+            if (e.key === 'Enter') loadUsers();
+        };
+    }
+
+    // 4. Specialty Reports Loader (Redesigned)
+    let rawSpecialtiesData = [];
+
+    const getSpecialtyIcon = (specName) => {
+        const s = (specName || '').toLowerCase();
+        if (s.includes('cardio') || s.includes('heart') || s.includes('vascular')) return 'fa-heart-pulse';
+        if (s.includes('derma') || s.includes('skin')) return 'fa-hand-dots';
+        if (s.includes('neuro') || s.includes('brain')) return 'fa-brain';
+        if (s.includes('onco') || s.includes('cancer')) return 'fa-ribbon';
+        if (s.includes('ophthal') || s.includes('eye')) return 'fa-eye';
+        if (s.includes('ortho') || s.includes('bone')) return 'fa-bone';
+        if (s.includes('therap') || s.includes('pt') || s.includes('physical')) return 'fa-person-walking';
+        if (s.includes('pediatric')) return 'fa-baby';
+        return 'fa-stethoscope';
+    };
+
+    // Pagination state – Specialties
+    let specPage = 1;
+    let specPageSize = 10;
+    let specFilteredData = [];
+
+    const renderSpecialtiesTable = (items) => {
+        const listEl = byId('rep-specialties-list');
+        const badgeEl = byId('spec-count-badge');
+        if (badgeEl) {
+            badgeEl.textContent = `${items.length} specialt${items.length === 1 ? 'y' : 'ies'}`;
+        }
+        specFilteredData = items;
+        specPage = 1; // reset to first page on new filter
+        if (!listEl) return;
+
+        if (!items || !items.length) {
+            listEl.innerHTML = `
+                <tr>
+                    <td colspan="6" style="padding: 0;">
+                        <div class="user-rep-empty-state">
+                            <svg class="user-rep-empty-icon" viewBox="0 0 160 160" fill="none" xmlns="http://www.w3.org/2000/svg">
+                                <circle cx="80" cy="80" r="64" fill="#EEF2FF" />
+                                <rect x="52" y="44" width="46" height="66" rx="4" fill="#FFFFFF" stroke="#3B82F6" stroke-width="2.5" />
+                                <rect x="68" y="52" width="50" height="70" rx="4" fill="#FFFFFF" stroke="#2563EB" stroke-width="2.5" />
+                                <line x1="78" y1="68" x2="106" y2="68" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" />
+                                <line x1="78" y1="76" x2="106" y2="76" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" />
+                                <line x1="78" y1="84" x2="102" y2="84" stroke="#3B82F6" stroke-width="2" stroke-linecap="round" />
+                            </svg>
+                            <p style="color: #64748b; font-size: 0.95rem; margin: 0;">No matching specialties found.</p>
+                        </div>
+                    </td>
+                </tr>`;
+            return;
+        }
+
+        const totalOverallEncounters = rawSpecialtiesData.reduce((acc, curr) => acc + (parseInt(curr.total_encounters, 10) || 0), 0);
+
+        const renderSpecPage = () => {
+            const start = (specPage - 1) * specPageSize;
+            const slice = specFilteredData.slice(start, start + specPageSize);
+            listEl.innerHTML = slice.map(s => {
+                const iconClass = getSpecialtyIcon(s.specialty);
+                const encCount = parseInt(s.total_encounters, 10) || 0;
+                const signedCount = parseInt(s.signed_encounters, 10) || 0;
+                const provCount = parseInt(s.provider_count, 10) || 0;
+                const patientCount = parseInt(s.unique_patients, 10) || 0;
+                const pctShare = totalOverallEncounters > 0 ? Math.round((encCount / totalOverallEncounters) * 100) : 0;
+                const completionPct = encCount > 0 ? Math.round((signedCount / encCount) * 100) : 0;
+                return `
+                    <tr>
+                        <td>
+                            <div style="display:flex; align-items:center; gap:0.65rem;">
+                                <div style="width:34px; height:34px; border-radius:8px; background:#eff6ff; color:#2563eb; display:flex; align-items:center; justify-content:center; font-size:0.95rem; flex-shrink:0;">
+                                    <i class="fas ${iconClass}"></i>
+                                </div>
+                                <div>
+                                    <strong style="color:#0f172a; font-size:0.92rem;">${calEscape(s.specialty)}</strong>
+                                </div>
+                            </div>
+                        </td>
+                        <td><span style="font-weight:600; color:#334155;">${provCount}</span></td>
+                        <td><strong style="color:var(--primary-color); font-size:0.95rem;">${encCount}</strong></td>
+                        <td><span style="color:#475569; font-weight:500;">${patientCount}</span></td>
+                        <td>
+                            <span style="color:#16a34a; font-weight:600; display:inline-flex; align-items:center; gap:0.25rem;">
+                                <i class="fas fa-check" style="font-size:0.75rem;"></i> ${signedCount}
+                                <small style="color:#94a3b8; font-weight:400; margin-left:2px;">(${completionPct}%)</small>
+                            </span>
+                        </td>
+                        <td>
+                            <div style="display:flex; align-items:center; gap:0.6rem; min-width:110px;">
+                                <div style="flex:1; height:6px; background:#f1f5f9; border-radius:999px; overflow:hidden;">
+                                    <div style="width:${pctShare}%; height:100%; background:linear-gradient(90deg, #38bdf8, #2563eb); border-radius:999px;"></div>
+                                </div>
+                                <span style="font-size:0.8rem; font-weight:600; color:#64748b; width:34px; text-align:right;">${pctShare}%</span>
+                            </div>
+                        </td>
+                    </tr>
+                `;
+            }).join('');
+
+            renderPaginationControls({
+                containerId: 'spec-pagination',
+                currentPage: specPage,
+                totalItems: specFilteredData.length,
+                pageSize: specPageSize,
+                onPageChange: (pg) => { specPage = pg; renderSpecPage(); },
+                onPageSizeChange: (sz) => { specPageSize = sz; specPage = 1; renderSpecPage(); }
+            });
+        };
+
+        renderSpecPage();
+    };
+
+    const filterSpecialties = () => {
+        const searchInput = byId('spec-search-input');
+        const activitySelect = byId('spec-filter-activity');
+        const query = searchInput ? searchInput.value.toLowerCase().trim() : '';
+        const activityFilter = activitySelect ? activitySelect.value : 'all';
+
+        let filtered = rawSpecialtiesData.filter(s => {
+            const matchesQuery = !query || (s.specialty && s.specialty.toLowerCase().includes(query));
+            if (!matchesQuery) return false;
+
+            const encCount = parseInt(s.total_encounters, 10) || 0;
+            const provCount = parseInt(s.provider_count, 10) || 0;
+
+            if (activityFilter === 'active' && encCount <= 0) return false;
+            if (activityFilter === 'has_providers' && provCount <= 0) return false;
+            return true;
+        });
+
+        renderSpecialtiesTable(filtered);
+    };
+
+    const wireSpecialtiesControls = () => {
+        const searchInput = byId('spec-search-input');
+        const activitySelect = byId('spec-filter-activity');
+        const resetBtn = byId('spec-filter-reset-btn');
+
+        if (searchInput) {
+            searchInput.oninput = () => filterSpecialties();
+            searchInput.onkeyup = (e) => {
+                if (e.key === 'Enter') filterSpecialties();
+            };
+        }
+        if (activitySelect) {
+            activitySelect.onchange = () => filterSpecialties();
+        }
+        if (resetBtn) {
+            resetBtn.onclick = () => {
+                if (searchInput) searchInput.value = '';
+                if (activitySelect) activitySelect.value = 'all';
+                filterSpecialties();
+            };
+        }
+    };
+    wireSpecialtiesControls();
+
+    const loadSpecialties = async () => {
+        try {
+            const p = getFilterParams();
+            const listEl = byId('rep-specialties-list');
+            if (listEl) {
+                listEl.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:30px; color:#64748b;"><i class="fas fa-spinner fa-spin"></i> Loading specialty reports...</td></tr>';
+            }
+
+            const res = await ApiService.request('/api/reports/specialties?' + p.toString());
+            if (res.status === 'success') {
+                rawSpecialtiesData = res.specialty_breakdown || [];
+
+                // Calculate KPIs across all specialties
+                const totalSpecs = rawSpecialtiesData.length;
+                const totalEnc = rawSpecialtiesData.reduce((acc, curr) => acc + (parseInt(curr.total_encounters, 10) || 0), 0);
+                const totalUniquePatients = rawSpecialtiesData.reduce((acc, curr) => acc + (parseInt(curr.unique_patients, 10) || 0), 0);
+                const totalSigned = rawSpecialtiesData.reduce((acc, curr) => acc + (parseInt(curr.signed_encounters, 10) || 0), 0);
+                const docRate = totalEnc > 0 ? Math.round((totalSigned / totalEnc) * 100) : 0;
+
+                if (byId('kpi-spec-count')) byId('kpi-spec-count').textContent = totalSpecs;
+                if (byId('kpi-spec-encounters')) byId('kpi-spec-encounters').textContent = totalEnc;
+                if (byId('kpi-spec-patients')) byId('kpi-spec-patients').textContent = totalUniquePatients;
+                if (byId('kpi-spec-rate')) byId('kpi-spec-rate').textContent = `${docRate}%`;
+
+                // Render with current search/filter criteria
+                filterSpecialties();
+            }
+        } catch (err) {
+            console.error('Error loading specialty reports:', err);
+        }
+    };
+
+    // 5. Invoices Loader
+    // Pagination state – Invoices
+    let invoicesPage = 1;
+    let invoicesPageSize = 10;
+    let invoicesAllData = [];
+
+    const renderInvoicesPage = () => {
+        const listEl = byId('rep-financial-list');
+        if (!listEl) return;
+        const total = invoicesAllData.length;
+        const start = (invoicesPage - 1) * invoicesPageSize;
+        const slice = invoicesAllData.slice(start, start + invoicesPageSize);
+
+        if (!total) {
+            listEl.innerHTML = '<tr><td colspan="7" class="rep-empty">No invoices found for this date range.</td></tr>';
+            renderPaginationControls({ containerId: 'invoices-pagination', currentPage: 1, totalItems: 0, pageSize: invoicesPageSize, onPageChange: () => {}, onPageSizeChange: () => {} });
+            return;
+        }
+
+        listEl.innerHTML = slice.map(inv => `
+            <tr>
+                <td><strong>${calEscape(inv.invoice_number)}</strong></td>
+                <td>${calEscape(inv.invoice_date)}</td>
+                <td>${calEscape(inv.patient_name || 'Patient #' + inv.patient_id)}</td>
+                <td>$${Number(inv.total_amount).toFixed(2)}</td>
+                <td>$${Number(inv.paid_amount).toFixed(2)}</td>
+                <td style="font-weight:600; color:${inv.balance_due > 0 ? '#b91c1c' : '#16a34a'};">$${Number(inv.balance_due).toFixed(2)}</td>
+                <td><span class="rep-tag">${calEscape(inv.status)}</span></td>
+            </tr>
+        `).join('');
+
+        renderPaginationControls({
+            containerId: 'invoices-pagination',
+            currentPage: invoicesPage,
+            totalItems: total,
+            pageSize: invoicesPageSize,
+            onPageChange: (pg) => { invoicesPage = pg; renderInvoicesPage(); },
+            onPageSizeChange: (sz) => { invoicesPageSize = sz; invoicesPage = 1; renderInvoicesPage(); }
+        });
+    };
+
+    const loadInvoices = async () => {
+        try {
+            const p = getFilterParams();
+            const res = await ApiService.request('/api/reports/financial?' + p.toString());
+            if (res.status === 'success') {
+                invoicesAllData = res.invoices || [];
+                invoicesPage = 1;
+                renderInvoicesPage();
+            }
+        } catch (err) {
+            console.error('Error loading invoices report:', err);
+        }
+    };
+
+    const loadCurrentTab = () => {
+        if (activeTab === 'clinical') loadClinical();
+        else if (activeTab === 'appointments') loadAppointments();
+        else if (activeTab === 'users') loadUsers();
+        else if (activeTab === 'specialties') loadSpecialties();
+        else if (activeTab === 'invoices') loadInvoices();
+    };
+
+    // Refresh & Export Toolbar handlers
+    const refreshBtn = byId('rep-refresh-btn');
+    if (refreshBtn) refreshBtn.onclick = () => loadCurrentTab();
+
+    const globalExportBtn = byId('rep-global-export-btn');
+    if (globalExportBtn) {
+        globalExportBtn.onclick = () => {
+            const p = getFilterParams();
+            let expType = activeTab;
+            if (expType === 'invoices') expType = 'financial';
+            window.location.href = ApiService.getBaseUrl() + `api/reports/export?type=${expType}&` + p.toString();
+        };
+    }
+
+    // Initialize requested or default tab
+    activateTab(activeTab);
+
+    // If not super admin or no audit elements, don't execute audit log handlers
+    if (!isSuperAdmin || !main) return;
 
     initInfoTips(main);
 
@@ -4603,19 +5496,26 @@ async function initReportsHandler() {
         fillFacets(res.facets);
         state.page = res.page;
 
+        if (byId('kpi-audit-total')) byId('kpi-audit-total').textContent = Number(res.total || 0).toLocaleString();
+        if (byId('kpi-audit-page')) byId('kpi-audit-page').textContent = `${res.page} of ${pages}`;
+        if (byId('rep-audit-count-badge')) byId('rep-audit-count-badge').textContent = `${Number(res.total || 0).toLocaleString()} events`;
+        if (res.facets && res.facets.modules && byId('kpi-audit-modules')) {
+            byId('kpi-audit-modules').textContent = res.facets.modules.length;
+        }
+
         if (!res.data.length) {
             setMessageRow(hasFilters() ? 'No audit entries match these filters.' : 'The audit log is empty.');
         } else {
             tbody.innerHTML = res.data.map((r) => `
                 <tr>
                     <td class="rep-time">${fmtTime(r.timestamp)}</td>
-                    <td>${calEscape(r.username || 'System')}</td>
+                    <td><strong style="color:#1e293b;">${calEscape(r.username || 'System')}</strong></td>
                     <td>${r.user_role ? `<span class="rep-tag">${calEscape(r.user_role)}</span>` : '<span class="rep-muted">&mdash;</span>'}</td>
                     <td>${patientCell(r)}</td>
                     <td>${calEscape(r.action_type)}</td>
-                    <td>${calEscape(r.target_module)}</td>
+                    <td><span class="rep-tag" style="background:#f0fdf4; color:#166534; border:1px solid #bbf7d0;">${calEscape(r.target_module)}</span></td>
                     <td class="rep-mono">${calEscape(r.ip_address)}</td>
-                    <td class="rep-mono" title="${calEscape(r.log_hash)}">${calEscape((r.log_hash || '').substring(0, 12))}&hellip;</td>
+                    <td class="rep-mono" title="${calEscape(r.log_hash)}"><span style="background:#f8fafc; padding:2px 6px; border-radius:4px; border:1px solid #e2e8f0;">${calEscape((r.log_hash || '').substring(0, 12))}&hellip;</span></td>
                 </tr>`).join('');
         }
 
@@ -4632,8 +5532,26 @@ async function initReportsHandler() {
     // ---- integrity check ----
     const setPill = (kind, text) => {
         const el = byId('rep-integrity');
-        el.className = `rep-pill rep-pill-${kind}`;
-        el.textContent = text;
+        if (el) {
+            el.className = `rep-pill rep-pill-${kind}`;
+            el.textContent = text;
+        }
+        const statusKpi = byId('kpi-audit-status');
+        if (statusKpi) {
+            if (kind === 'ok') {
+                statusKpi.textContent = 'Intact & Valid';
+                statusKpi.style.color = '#16a34a';
+            } else if (kind === 'bad') {
+                statusKpi.textContent = 'Issue Detected';
+                statusKpi.style.color = '#dc2626';
+            } else if (kind === 'warn') {
+                statusKpi.textContent = 'Warning';
+                statusKpi.style.color = '#d97706';
+            } else {
+                statusKpi.textContent = 'Verifying...';
+                statusKpi.style.color = 'var(--text-primary)';
+            }
+        }
     };
     const verifyBtn = byId('rep-verify-btn');
     const verify = async () => {
@@ -7186,7 +8104,7 @@ async function initPatientsHandler() {
             showDenyButton: true,
             confirmButtonText: 'Save',
             denyButtonText: 'Save and fill more details',
-            denyButtonColor: '#0d6efd',
+            denyButtonColor: '#0284c7',
             focusConfirm: false,
             didOpen: () => {
                 [['cp-email', 'cp-email-warn'], ['cp-phone', 'cp-phone-warn']].forEach(([i, w]) => {
@@ -12059,11 +12977,39 @@ async function initPatientsHandler() {
                                                                         ${doc.last_name || ""}`.trim()
                                             : "System Admin";
 
+                                    // Determine if this file is openable in the imaging viewer
+                                    const ext = (doc.original_filename || '').split('.').pop().toLowerCase();
+                                    const isImaging = ['dcm', 'dicom', 'jpg', 'jpeg', 'png'].includes(ext)
+                                        || ['application/dicom', 'application/octet-stream', 'image/jpeg', 'image/png'].includes(doc.mime_type || '');
+
+                                    // Modality badge
+                                    const modality = doc.modality || '';
+                                    const modalityBadgeMap = {
+                                        'X-RAY': 'xray', 'MRI': 'mri', 'CT': 'ct',
+                                        'ULTRASOUND': 'us', 'ECG': 'ecg', 'OTHER': 'other'
+                                    };
+                                    const badgeClass = modality ? (modalityBadgeMap[modality] || 'other') : (isImaging ? 'other' : '');
+                                    const aiDone = doc.ai_analysis_status === 'completed';
+                                    const modalityBadgeHtml = badgeClass
+                                        ? `<span class="imv-modality-badge ${aiDone ? 'ai-done' : badgeClass}" style="margin-left:6px">${aiDone ? '🧠 AI Done' : (modality || 'IMG')}</span>`
+                                        : '';
+
+                                    // Open Viewer button (only for imaging files)
+                                    const viewerBtnHtml = isImaging
+                                        ? `<button type="button"
+                                              class="btn btn-sm"
+                                              onclick="ImagingViewer.open(${doc.id}, ${p.id}, ${JSON.stringify(doc.original_filename)})"
+                                              style="padding:6px 14px; background:linear-gradient(135deg,#4f46e5,#7c3aed); border:none; color:#fff; font-weight:700; font-size:0.82rem; border-radius:6px; display:inline-flex; align-items:center; gap:5px; cursor:pointer;"
+                                              title="Open in DICOM/Medical Image Viewer">
+                                              <i class="fas fa-eye-dropper"></i> Open Viewer
+                                           </button>`
+                                        : '';
+
                                     return `
                                                                         <tr style="border-bottom: 1px solid #f1f5f9;">
                                                                             <td
                                                                                 style="padding: 14px 16px; font-weight: 700; color: #1e293b; font-size: 0.9rem;">
-                                                                                ${doc.original_filename}</td>
+                                                                                ${doc.original_filename}${modalityBadgeHtml}</td>
                                                                             <td
                                                                                 style="padding: 14px 16px; color: #64748b; font-size: 0.88rem;">
                                                                                 ${fileSizeFormatted}</td>
@@ -12075,7 +13021,8 @@ async function initPatientsHandler() {
                                                                                 ${uploaderName}</td>
                                                                             <td style="padding: 14px 16px;">
                                                                                 <div
-                                                                                    style="display: flex; gap: 8px; align-items: center;">
+                                                                                    style="display: flex; gap: 8px; align-items: center; flex-wrap:wrap;">
+                                                                                    ${viewerBtnHtml}
                                                                                     <a href="${ApiService.getBaseUrl()}api/documents/download/${doc.id}"
                                                                                         target="_blank"
                                                                                         class="btn btn-primary btn-sm"
@@ -17841,10 +18788,13 @@ function printEncounterReport(note, patient) {
 // for the other.
 function toggleCardioWorkflow() {
     const workflowSelect = document.getElementById('cardio-workflow-select');
-    const cardioForm = document.getElementById('cardio-form');
-    if (!workflowSelect || !cardioForm) return;
+    if (!workflowSelect) return;
     const workflow = workflowSelect.value;
-    cardioForm.querySelectorAll('[data-workflow]').forEach(block => {
+    // Scoped from `document`, not `cardioForm`: the mega cardio-form's sections (cardio-sec-*, each still a
+    // [data-workflow] block) are now relocated across several different tab panes (C03/C06/C07/C08/C11/C12 -
+    // see CARDIO_RELOCATION in clinical-tabs.js), so they are no longer descendants of #cardio-form when this
+    // runs. A `cardioForm.querySelectorAll` scope would silently find none of them.
+    document.querySelectorAll('[data-workflow]').forEach(block => {
         const workflows = block.getAttribute('data-workflow').split(/\s+/);
         block.style.display = workflows.includes(workflow) ? '' : 'none';
     });
@@ -28433,6 +29383,268 @@ async function initRecallsWorkspace() {
     await loadWorkspaceRecalls();
 }
 
+// ==========================================
+// MEDICAL IMAGING & DICOM WORKSPACE HANDLER
+// ==========================================
+async function initImagingWorkspace() {
+    const tbody = document.getElementById('imaging-studies-tbody');
+    if (!tbody) return;
+
+    let allStudies = [];
+    const searchInput = document.getElementById('imaging-filter-search');
+    const modalitySelect = document.getElementById('imaging-filter-modality');
+    const aiSelect = document.getElementById('imaging-filter-ai');
+    const resetBtn = document.getElementById('btn-imaging-reset-filters');
+    const countEl = document.getElementById('imaging-studies-count');
+
+    const statTotalEl = document.getElementById('imaging-stat-total');
+    const statAiEl = document.getElementById('imaging-stat-ai');
+    const statCardioEl = document.getElementById('imaging-stat-cardio');
+
+    const renderStudies = () => {
+        const query = (searchInput ? searchInput.value : '').trim().toLowerCase();
+        const selModality = modalitySelect ? modalitySelect.value : '';
+        const selAi = aiSelect ? aiSelect.value : '';
+
+        const filtered = allStudies.filter(s => {
+            if (selModality && (s.modality || '').toUpperCase() !== selModality.toUpperCase()) return false;
+            if (selAi) {
+                const status = (s.ai_analysis_status || 'pending').toLowerCase();
+                if (selAi === 'completed' && status !== 'completed') return false;
+                if (selAi === 'pending' && status === 'completed') return false;
+            }
+            if (query) {
+                const patName = `${s.patient_first_name || ''} ${s.patient_last_name || ''}`.toLowerCase();
+                const fn = (s.original_filename || '').toLowerCase();
+                const desc = (s.study_description || '').toLowerCase();
+                if (!patName.includes(query) && !fn.includes(query) && !desc.includes(query)) return false;
+            }
+            return true;
+        });
+
+        if (countEl) countEl.textContent = `${filtered.length} stud${filtered.length === 1 ? 'y' : 'ies'} found`;
+
+        if (filtered.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="6" style="text-align: center; padding: 40px; color: #94a3b8;">
+                        <i class="fas fa-folder-open" style="font-size: 2.2rem; margin-bottom: 10px; color: #cbd5e1; display: block;"></i>
+                        <p style="margin: 0; font-weight: 600; font-size: 0.95rem; color: #64748b;">No imaging records found matching criteria.</p>
+                        <p style="margin: 4px 0 0 0; font-size: 0.8rem; color: #94a3b8;">Click <strong>Upload Study / DICOM</strong> to upload new scans.</p>
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        const modalityBadgeMap = {
+            'X-RAY': 'xray', 'CT': 'ct', 'MRI': 'mri',
+            'ULTRASOUND': 'us', 'ECG': 'ecg', 'OTHER': 'other'
+        };
+
+        tbody.innerHTML = filtered.map(s => {
+            const patName = (s.patient_first_name && s.patient_last_name) 
+                ? `${s.patient_first_name} ${s.patient_last_name}` 
+                : `Patient #${s.patient_id}`;
+            const mod = s.modality || 'X-RAY';
+            const badgeCls = modalityBadgeMap[mod] || 'other';
+            const aiDone = s.ai_analysis_status === 'completed';
+            const sizeFmt = s.file_size ? `${(s.file_size / 1024).toFixed(1)} KB` : '—';
+            const studyDate = s.study_date || s.uploaded_at ? (s.study_date || s.uploaded_at.slice(0, 10)) : '—';
+
+            return `
+                <tr style="border-bottom: 1px solid #f1f5f9; transition: background 0.15s;">
+                    <td style="padding: 14px 16px;">
+                        <div style="font-weight: 700; color: #0f172a; font-size: 0.9rem; display: flex; align-items: center; gap: 8px;">
+                            <i class="fas fa-file-medical-alt" style="color: #0284c7;"></i>
+                            <span>${s.original_filename}</span>
+                        </div>
+                        <div style="font-size: 0.78rem; color: #64748b; margin-top: 2px;">
+                            ${s.study_description ? s.study_description + ' • ' : ''}${sizeFmt}
+                        </div>
+                    </td>
+                    <td style="padding: 14px 16px;">
+                        <a href="javascript:void(0)" class="open-pat-chart-btn" data-id="${s.patient_id}" style="font-weight: 700; color: #0284c7; text-decoration: none; font-size: 0.88rem;">
+                            ${patName}
+                        </a>
+                        <div style="font-size: 0.75rem; color: #94a3b8;">ID: #${s.patient_id}</div>
+                    </td>
+                    <td style="padding: 14px 16px;">
+                        <span class="imv-modality-badge ${badgeCls}">${mod}</span>
+                    </td>
+                    <td style="padding: 14px 16px; font-size: 0.86rem; color: #475569;">
+                        ${studyDate}
+                    </td>
+                    <td style="padding: 14px 16px;">
+                        ${aiDone ? `
+                            <span class="imv-modality-badge ai-done">
+                                <i class="fas fa-brain" style="margin-right: 3px;"></i> AI Completed
+                            </span>
+                        ` : `
+                            <span style="font-size: 0.76rem; font-weight: 600; color: #64748b; background: #f1f5f9; padding: 2px 8px; border-radius: 6px;">
+                                Ready for AI
+                            </span>
+                        `}
+                    </td>
+                    <td style="padding: 14px 16px; text-align: right;">
+                        <button type="button" class="btn btn-sm btn-open-viewer" data-docid="${s.id}" data-pid="${s.patient_id}" data-fn="${encodeURIComponent(s.original_filename)}"
+                            style="background: linear-gradient(135deg,#0284c7,#0369a1); border: none; color: #ffffff; font-weight: 700; font-size: 0.82rem; border-radius: 6px; padding: 6px 14px; display: inline-flex; align-items: center; gap: 6px; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.1);">
+                            <i class="fas fa-eye"></i> Open Viewer
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        // Wire Open Viewer buttons
+        tbody.querySelectorAll('.btn-open-viewer').forEach(btn => {
+            btn.onclick = () => {
+                const docId = btn.getAttribute('data-docid');
+                const pId = btn.getAttribute('data-pid');
+                const fn = decodeURIComponent(btn.getAttribute('data-fn') || 'scan.dcm');
+                if (window.ImagingViewer && typeof window.ImagingViewer.open === 'function') {
+                    window.ImagingViewer.open(docId, pId, fn);
+                } else {
+                    Toast.show('Imaging viewer loading...', 'info');
+                }
+            };
+        });
+
+        // Wire patient links
+        tbody.querySelectorAll('.open-pat-chart-btn').forEach(btn => {
+            btn.onclick = async () => {
+                const pId = btn.getAttribute('data-id');
+                try {
+                    const res = await ApiService.request(`/api/patients/${pId}`);
+                    if (res.status === 'success' && res.data) {
+                        openPatientChart(res.data);
+                    }
+                } catch (e) { }
+            };
+        });
+    };
+
+    const loadStudies = async () => {
+        try {
+            const res = await ApiService.request('/api/imaging/studies');
+            if (res.status === 'success' && Array.isArray(res.data)) {
+                allStudies = res.data;
+            } else {
+                allStudies = [];
+            }
+        } catch (e) {
+            allStudies = [];
+        }
+
+        // Stats calculation
+        if (statTotalEl) statTotalEl.textContent = allStudies.length;
+        if (statAiEl) statAiEl.textContent = allStudies.filter(s => s.ai_analysis_status === 'completed').length;
+        if (statCardioEl) statCardioEl.textContent = allStudies.filter(s => ['X-RAY', 'ECG', 'ULTRASOUND'].includes((s.modality || '').toUpperCase())).length;
+
+        renderStudies();
+    };
+
+    // Filters
+    if (searchInput) searchInput.oninput = renderStudies;
+    if (modalitySelect) modalitySelect.onchange = renderStudies;
+    if (aiSelect) aiSelect.onchange = renderStudies;
+    if (resetBtn) {
+        resetBtn.onclick = () => {
+            if (searchInput) searchInput.value = '';
+            if (modalitySelect) modalitySelect.value = '';
+            if (aiSelect) aiSelect.value = '';
+            renderStudies();
+        };
+    }
+
+    // Modal & Upload Logic
+    const uploadModalEl = document.getElementById('modal-upload-imaging');
+    const openUploadBtn = document.getElementById('btn-imaging-upload-modal');
+    const patSelect = document.getElementById('upload-imaging-patient');
+    const dropzone = document.getElementById('imaging-dropzone');
+    const fileInput = document.getElementById('upload-imaging-file');
+    const chosenName = document.getElementById('upload-file-chosen-name');
+    const formUpload = document.getElementById('form-upload-imaging');
+
+    // Populate Patients in Upload Modal
+    const populatePatientsSelect = async () => {
+        if (!patSelect || patSelect.options.length > 1) return;
+        try {
+            const patRes = await ApiService.request('/api/patients');
+            if (patRes.status === 'success' && Array.isArray(patRes.data)) {
+                patSelect.innerHTML = '<option value="">-- Choose Patient --</option>' + 
+                    patRes.data.map(p => `<option value="${p.id}">${p.first_name} ${p.last_name} (#${p.id})</option>`).join('');
+            }
+        } catch (e) { }
+    };
+
+    if (openUploadBtn && uploadModalEl) {
+        openUploadBtn.onclick = () => {
+            populatePatientsSelect();
+            if (formUpload) formUpload.reset();
+            if (chosenName) { chosenName.style.display = 'none'; chosenName.textContent = ''; }
+            const m = bootstrap.Modal.getOrCreateInstance(uploadModalEl);
+            m.show();
+        };
+    }
+
+    if (dropzone && fileInput) {
+        dropzone.onclick = () => fileInput.click();
+        fileInput.onchange = () => {
+            if (fileInput.files && fileInput.files[0]) {
+                const f = fileInput.files[0];
+                if (chosenName) {
+                    chosenName.textContent = `Selected: ${f.name} (${(f.size / 1024).toFixed(1)} KB)`;
+                    chosenName.style.display = 'block';
+                }
+            }
+        };
+    }
+
+    if (formUpload) {
+        formUpload.onsubmit = async (e) => {
+            e.preventDefault();
+            const pId = patSelect ? patSelect.value : '';
+            const mod = document.getElementById('upload-imaging-modality')?.value || 'X-RAY';
+            const desc = document.getElementById('upload-imaging-desc')?.value || '';
+            const file = fileInput?.files?.[0];
+
+            if (!pId) { Toast.show('Please select a patient.', 'error'); return; }
+            if (!file) { Toast.show('Please select an imaging or DICOM file.', 'error'); return; }
+
+            const submitBtn = document.getElementById('btn-submit-upload-imaging');
+            if (submitBtn) { submitBtn.disabled = true; submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Uploading...'; }
+
+            try {
+                const formData = new FormData();
+                formData.append('patient_id', pId);
+                formData.append('document', file);
+                formData.append('modality', mod);
+                formData.append('study_description', desc);
+
+                const res = await ApiService.upload('/api/documents/upload', formData);
+                const docId = res.id || res.document_id || res.data?.id;
+                if (res.status === 'success' || docId) {
+                    Toast.show('Imaging study uploaded successfully!', 'success');
+                    const m = bootstrap.Modal.getInstance(uploadModalEl);
+                    if (m) m.hide();
+                    await loadStudies();
+                    if (docId && window.ImagingViewer) {
+                        window.ImagingViewer.open(docId, pId, file.name);
+                    }
+                } else {
+                    Toast.show(res.message || 'Upload failed.', 'error');
+                }
+            } catch (err) {
+                Toast.show('Error uploading imaging file: ' + err.message, 'error');
+            } finally {
+                if (submitBtn) { submitBtn.disabled = false; submitBtn.innerHTML = '<i class="fas fa-upload"></i> Upload &amp; Open'; }
+            }
+        };
+    }
+
+    await loadStudies();
+}
 
 // ==========================================
 // WAITING LIST WORKSPACE HANDLER & VIEWS

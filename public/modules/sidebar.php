@@ -15,7 +15,8 @@ if (!isset($activeNav)) {
 // Which $activeNav values belong to which group (used to open the group and highlight its parent).
 $navGroups = [
     'schedule' => ['calendar', 'telehealth'],
-    'patient'  => ['patients', 'encounters', 'diagnoses', 'medications', 'orders', 'referrals', 'recalls'],
+    'patient'  => ['patients', 'encounters', 'imaging', 'diagnoses', 'medications', 'orders', 'referrals', 'recalls'],
+    'reports'  => ['reports'],
     'settings' => ['settings', 'administration'],
 ];
 $groupHasActive = function (string $group) use ($navGroups, $activeNav): bool {
@@ -98,6 +99,7 @@ $groupParent = function (string $group, string $icon, string $label) use ($group
                 <li data-module="encounters" id="nav-item-encounters">
                     <a href="#encounters" class="nav-sublink<?= ($activeNav === 'encounters') ? ' active' : '' ?>" id="nav-encounters" data-module="encounters"><span class="nav-text">Encounters</span></a>
                 </li>
+                <?= $subLink('imaging', 'Imaging &amp; DICOM') ?>
                 <?= $subLink('diagnoses', 'Diagnoses &amp; Allergies') ?>
                 <?= $subLink('medications', 'Medications') ?>
                 <?= $subLink('orders', 'Orders &amp; Labs') ?>
@@ -108,7 +110,19 @@ $groupParent = function (string $group, string $icon, string $label) use ($group
 
         <?php $topLink('messaging', 'far fa-comments', 'Messages'); ?>
         <?php $topLink('billing', 'far fa-credit-card', 'Billing'); ?>
-        <?php $topLink('reports', 'far fa-file-lines', 'Audit &amp; Reports'); ?>
+        <li class="nav-item-has-submenu <?= $groupHasActive('reports') ? 'submenu-open' : '' ?>" id="nav-group-reports" data-group="reports">
+            <?php $groupParent('reports', 'fas fa-file-invoice-dollar', 'Reports'); ?>
+            <ul class="nav-submenu" id="submenu-reports">
+                <?= $subLink('reports', 'Clinical Reports', 'nav-rep-clinical', '#reports?type=clinical') ?>
+                <?= $subLink('reports', 'Appointment Reports', 'nav-rep-appointments', '#reports?type=appointments') ?>
+                <?= $subLink('reports', 'User Reports', 'nav-rep-users', '#reports?type=users') ?>
+                <?= $subLink('reports', 'Specialty Reports', 'nav-rep-specialties', '#reports?type=specialties') ?>
+                <?= $subLink('reports', 'Invoices', 'nav-rep-invoices', '#reports?type=invoices') ?>
+                <li data-module="audit" id="nav-rep-audit-li">
+                    <a href="#reports?type=audit" class="nav-sublink" id="nav-rep-audit" data-module="audit"><span class="nav-text">Security Audit Log</span></a>
+                </li>
+            </ul>
+        </li>
 
         <li class="nav-item-has-submenu <?= $groupHasActive('settings') ? 'submenu-open' : '' ?>" id="nav-group-settings" data-group="settings">
             <?php $groupParent('settings', 'fas fa-gear', 'Settings'); ?>

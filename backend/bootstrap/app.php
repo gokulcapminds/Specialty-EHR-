@@ -29,7 +29,7 @@ spl_autoload_register(function ($class) {
 $securityConfig = require __DIR__ . '/../config/security.php';
 
 // Set secure headers
-header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://meet.jit.si https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data:; frame-src 'self' https://meet.jit.si; connect-src 'self' https://meet.jit.si wss://meet.jit.si https://cdn.jsdelivr.net; frame-ancestors 'none';");
+header("Content-Security-Policy: default-src 'self'; script-src 'self' 'unsafe-inline' 'unsafe-eval' https://meet.jit.si https://cdn.jsdelivr.net https://cdnjs.cloudflare.com; style-src 'self' https://fonts.googleapis.com https://cdnjs.cloudflare.com https://cdn.jsdelivr.net 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com https://cdnjs.cloudflare.com; img-src 'self' data: blob:; frame-src 'self' https://meet.jit.si; connect-src 'self' https://meet.jit.si wss://meet.jit.si https://cdn.jsdelivr.net blob:; frame-ancestors 'none';");
 header("X-Frame-Options: DENY");
 header("X-XSS-Protection: 1; mode=block");
 header("Referrer-Policy: strict-origin-when-cross-origin");
@@ -113,6 +113,56 @@ try {
     }
 
     $cols = $db->query("SHOW COLUMNS FROM clinical_notes")->fetchAll(\PDO::FETCH_COLUMN);
+    // Cardiology encounter workflow: C01 Visit Details (referring provider / reason) and C05 medication-reconciliation stamp.
+    foreach ([
+        'referring_provider' => "VARCHAR(150) NULL DEFAULT NULL",
+        'referral_reason'    => "VARCHAR(255) NULL DEFAULT NULL",
+        'med_rec_done_at'    => "DATETIME NULL DEFAULT NULL",
+    ] as $cName => $cDef) {
+        if (!in_array($cName, $cols)) {
+            $db->exec("ALTER TABLE clinical_notes ADD COLUMN `{$cName}` {$cDef}");
+        }
+    }
+    // C04 Cardiac History: one row per patient, holding the inputs every cardiac risk score needs
+    // (ASCVD, CHA2DS2-VASc, HAS-BLED). Created, never seeded.
+    $db->exec("CREATE TABLE IF NOT EXISTS patient_cardiac_profile (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        patient_id INT NOT NULL,
+        hypertension TINYINT(1) NOT NULL DEFAULT 0,
+        diabetes TINYINT(1) NOT NULL DEFAULT 0,
+        dyslipidemia TINYINT(1) NOT NULL DEFAULT 0,
+        smoking_status ENUM('Never','Former','Current') NOT NULL DEFAULT 'Never',
+        pack_years DECIMAL(5,1) NULL DEFAULT NULL,
+        obesity TINYINT(1) NOT NULL DEFAULT 0,
+        ckd TINYINT(1) NOT NULL DEFAULT 0,
+        sleep_apnea TINYINT(1) NOT NULL DEFAULT 0,
+        family_premature_cad TINYINT(1) NOT NULL DEFAULT 0,
+        cad TINYINT(1) NOT NULL DEFAULT 0,
+        prior_mi TINYINT(1) NOT NULL DEFAULT 0,
+        prior_mi_date DATE NULL DEFAULT NULL,
+        prior_pci TINYINT(1) NOT NULL DEFAULT 0,
+        prior_pci_date DATE NULL DEFAULT NULL,
+        prior_cabg TINYINT(1) NOT NULL DEFAULT 0,
+        prior_cabg_date DATE NULL DEFAULT NULL,
+        heart_failure TINYINT(1) NOT NULL DEFAULT 0,
+        hf_type ENUM('HFrEF','HFmrEF','HFpEF') NULL DEFAULT NULL,
+        atrial_fibrillation TINYINT(1) NOT NULL DEFAULT 0,
+        valve_disease TINYINT(1) NOT NULL DEFAULT 0,
+        cardiomyopathy TINYINT(1) NOT NULL DEFAULT 0,
+        pad TINYINT(1) NOT NULL DEFAULT 0,
+        stroke_tia TINYINT(1) NOT NULL DEFAULT 0,
+        device_type VARCHAR(60) NULL DEFAULT NULL,
+        device_implant_date DATE NULL DEFAULT NULL,
+        prior_bleeding TINYINT(1) NOT NULL DEFAULT 0,
+        labile_inr TINYINT(1) NOT NULL DEFAULT 0,
+        alcohol_excess TINYINT(1) NOT NULL DEFAULT 0,
+        notes TEXT NULL DEFAULT NULL,
+        last_reviewed_at DATETIME NULL DEFAULT NULL,
+        last_reviewed_by INT NULL DEFAULT NULL,
+        created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+        UNIQUE KEY uniq_patient_cardiac (patient_id)
+    ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4");
     if (!in_array('allergies', $cols)) {
         $db->exec("ALTER TABLE clinical_notes ADD COLUMN allergies TEXT DEFAULT NULL AFTER vital_bmi");
     }

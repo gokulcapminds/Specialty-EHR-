@@ -2506,6 +2506,19 @@ th {
     color: var(--text-secondary);
 }
 
+.bsalert-deny-btn {
+    background-color: var(--primary-color) !important;
+    border-color: var(--primary-color) !important;
+    color: #ffffff !important;
+    box-shadow: 0 2px 4px rgba(2, 132, 199, 0.2);
+}
+
+.bsalert-deny-btn:hover {
+    background-color: var(--accent-hover) !important;
+    border-color: var(--accent-hover) !important;
+    box-shadow: 0 4px 8px rgba(2, 132, 199, 0.3);
+}
+
 .bg-tertiary {
     background-color: var(--bg-tertiary);
 }

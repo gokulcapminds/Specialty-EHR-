@@ -16,6 +16,7 @@ export class Router {
             'billing': 'modules/billing.php',
             'referrals': 'modules/referrals.php',
             'orders': 'modules/orders.php',
+            'imaging': 'modules/imaging.php',
             'medications': 'modules/medications.php',
             'diagnoses': 'modules/diagnoses.php',
             'recalls': 'modules/recalls.php',

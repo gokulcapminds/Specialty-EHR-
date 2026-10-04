@@ -25,6 +25,7 @@ class RouteAreas {
         ['#^clinical/#', 'encounters', null],
         ['#^encounters/#', 'encounters', null],
         ['#^documents(/|$)#', 'documents', null],
+        ['#^imaging(/|$)#', 'documents', null],
         ['#^referrals/\d+(/(accept|reject))?$#', 'referrals', 'POST:edit'],
         ['#^referrals(/|$)#', 'referrals', null],
         ['#^recalls/\d+(/.*)?$#', 'recalls', 'POST:edit'],
@@ -47,6 +48,7 @@ class RouteAreas {
         ['#^settings(/|$)#', 'settings', null],
         ['#^roles(/|$)#', 'admin_roles', null],
         ['#^reports/audit#', 'audit', 'view'],
+        ['#^reports/(summary|financial|clinical|operations|users|specialties|export)#', self::NEUTRAL, null],
     ];
 
     private static function defaultAction(string $method): string {

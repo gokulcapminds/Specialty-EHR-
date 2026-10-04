@@ -186,6 +186,10 @@ class ClinicalController {
             return;
         }
         $visitType = $visitType !== '' ? $visitType : null;      // an encounter may still be saved without a visit type
+        // C01 Visit Details. Null (not '') when the field was not sent at all, so an UPDATE from a screen that
+        // doesn't render these inputs leaves the stored value alone instead of blanking it.
+        $referringProvider = isset($input['referring_provider']) ? mb_substr(trim((string)$input['referring_provider']), 0, 150) : null;
+        $referralReason    = isset($input['referral_reason'])    ? mb_substr(trim((string)$input['referral_reason']), 0, 255)    : null;
         $encounterMode  = $input['encounter_mode']  ?? 'In-Person';
         $encounterStatus = $input['encounter_status'] ?? 'in_progress';
         $allowedStatuses = ['draft','in_progress','ready_for_sign'];
@@ -217,8 +221,9 @@ class ClinicalController {
                  obgyn_fundal_height, obgyn_fetal_heart_rate,
                  pediatric_data, obgyn_data,
                  ortho_data, derma_data, neuro_data, onco_data, ophthal_data, pt_data, cardio_data,
-                 clinical_summary, signed_by_name, signed_by_credentials, signed_at, signed_signature_data) 
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                 clinical_summary, signed_by_name, signed_by_credentials, signed_at, signed_signature_data,
+                 referring_provider, referral_reason)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         
         Database::query($sql, [
             $patientId, $appointmentId, $visitType, $encounterMode,
@@ -238,7 +243,8 @@ class ClinicalController {
             $obgynFundalHeight, $obgynFetalHeartRate,
             $pediatricData, $obgynData,
             $orthoData, $dermaData, $neuroData, $oncoData, $ophthalData, $ptData, $cardioData,
-            $summary, $signedByName, $signedByCredentials, $signedAt, $signedSignatureData
+            $summary, $signedByName, $signedByCredentials, $signedAt, $signedSignatureData,
+            $referringProvider, $referralReason
         ]);
         $newId = Database::lastInsertId();
 
@@ -298,6 +304,9 @@ class ClinicalController {
         $encounterType = $input['encounter_type'] ?? 'General';
         $providerId = $input['provider_id'] ?? null;
         $noteDate = !empty($input['note_date']) ? date('Y-m-d H:i:s', strtotime($input['note_date'])) : null;
+        // C01 Visit Details - null when not sent, so the SQL's IFNULL keeps whatever is already stored.
+        $referringProvider = isset($input['referring_provider']) ? mb_substr(trim((string)$input['referring_provider']), 0, 150) : null;
+        $referralReason    = isset($input['referral_reason'])    ? mb_substr(trim((string)$input['referral_reason']), 0, 255)    : null;
         
         // Vitals
         $vitalTemp = $input['vital_temp'] ?? null;
@@ -400,7 +409,8 @@ class ClinicalController {
                 immunizations_administered = ?, obgyn_lmp = ?, obgyn_edd = ?, obgyn_gravida = ?, obgyn_para = ?, 
                 obgyn_abortions = ?, obgyn_living = ?, obgyn_fundal_height = ?, obgyn_fetal_heart_rate = ?, pediatric_data = ?, obgyn_data = ?, 
                 ortho_data = ?, derma_data = ?, neuro_data = ?, onco_data = ?, ophthal_data = ?, pt_data = ?, cardio_data = ?,
-                clinical_summary = ?, signed_by_name = ?, signed_by_credentials = ?, signed_at = ?, signed_signature_data = ? 
+                clinical_summary = ?, signed_by_name = ?, signed_by_credentials = ?, signed_at = ?, signed_signature_data = ?,
+                referring_provider = IFNULL(?, referring_provider), referral_reason = IFNULL(?, referral_reason)
                 WHERE id = ?";
         
         Database::query($sql, [
@@ -470,6 +480,7 @@ class ClinicalController {
             $signedByCredentials,
             $signedAt,
             $signedSignatureData,
+            $referringProvider, $referralReason,
             $id
         ]);
 

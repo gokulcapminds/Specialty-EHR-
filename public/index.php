@@ -44,6 +44,7 @@ if ($apiPos !== false) {
     <link rel="stylesheet" href="css/modules/billing.css?v=<?= time() ?>">
     <link rel="stylesheet" href="css/modules/clinical.css?v=<?= time() ?>">
     <link rel="stylesheet" href="css/modules/patients.css?v=<?= time() ?>">
+    <link rel="stylesheet" href="css/modules/imaging.css?v=<?= time() ?>">
     <!-- Chart.js Library -->
     <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <!-- Bootstrap 5 bundled JS (includes Popper) -->
@@ -75,6 +76,8 @@ if ($apiPos !== false) {
     <script type="module" src="js/api.js?v=<?= time() ?>"></script>
     <script type="module" src="js/router.js?v=<?= time() ?>"></script>
     <script src="js/modules/clinical-tabs.js?v=<?= time() ?>"></script>
+    <!-- Imaging/DICOM Viewer component (non-module, exposes ImagingViewer on window) -->
+    <script src="js/components/imaging-viewer.js?v=<?= time() ?>"></script>
     <script type="module" src="js/app.js?v=<?= time() ?>"></script>
     <!-- Phase 2: Core Clinical Encounter lifecycle (Sign/Lock/Addendum/BMI/Status) -->
     <script type="module" src="js/encounter_lifecycle.js?v=<?= time() ?>"></script>

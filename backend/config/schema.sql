@@ -753,3 +753,49 @@ UPDATE appointments SET visit_type = 'Cardiology Consultation' WHERE visit_type 
 UPDATE clinical_notes SET visit_type = 'New Patient Consultation' WHERE visit_type = 'New Patient';
 UPDATE clinical_notes SET visit_type = 'Follow-Up Visit' WHERE visit_type IN ('Follow Up', 'Follow-up');
 UPDATE clinical_notes SET visit_type = 'Cardiology Consultation' WHERE visit_type = 'Cardiology Consult';
+
+-- ===== Cardiology encounter workflow C01-C14 (Oct 2026), Phase 1 =====
+-- C01 Visit Details: referring provider + reason for referral. C05: medication-reconciliation stamp.
+ALTER TABLE clinical_notes ADD COLUMN referring_provider VARCHAR(150) NULL DEFAULT NULL;
+ALTER TABLE clinical_notes ADD COLUMN referral_reason VARCHAR(255) NULL DEFAULT NULL;
+ALTER TABLE clinical_notes ADD COLUMN med_rec_done_at DATETIME NULL DEFAULT NULL;
+-- C04 Cardiac History: one row per patient. Holds the inputs the cardiac risk scores need
+-- (ASCVD, CHA2DS2-VASc, HAS-BLED) so they are reviewed each visit, never retyped.
+CREATE TABLE IF NOT EXISTS patient_cardiac_profile (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    patient_id INT NOT NULL,
+    hypertension TINYINT(1) NOT NULL DEFAULT 0,
+    diabetes TINYINT(1) NOT NULL DEFAULT 0,
+    dyslipidemia TINYINT(1) NOT NULL DEFAULT 0,
+    smoking_status ENUM('Never','Former','Current') NOT NULL DEFAULT 'Never',
+    pack_years DECIMAL(5,1) NULL DEFAULT NULL,
+    obesity TINYINT(1) NOT NULL DEFAULT 0,
+    ckd TINYINT(1) NOT NULL DEFAULT 0,
+    sleep_apnea TINYINT(1) NOT NULL DEFAULT 0,
+    family_premature_cad TINYINT(1) NOT NULL DEFAULT 0,
+    cad TINYINT(1) NOT NULL DEFAULT 0,
+    prior_mi TINYINT(1) NOT NULL DEFAULT 0,
+    prior_mi_date DATE NULL DEFAULT NULL,
+    prior_pci TINYINT(1) NOT NULL DEFAULT 0,
+    prior_pci_date DATE NULL DEFAULT NULL,
+    prior_cabg TINYINT(1) NOT NULL DEFAULT 0,
+    prior_cabg_date DATE NULL DEFAULT NULL,
+    heart_failure TINYINT(1) NOT NULL DEFAULT 0,
+    hf_type ENUM('HFrEF','HFmrEF','HFpEF') NULL DEFAULT NULL,
+    atrial_fibrillation TINYINT(1) NOT NULL DEFAULT 0,
+    valve_disease TINYINT(1) NOT NULL DEFAULT 0,
+    cardiomyopathy TINYINT(1) NOT NULL DEFAULT 0,
+    pad TINYINT(1) NOT NULL DEFAULT 0,
+    stroke_tia TINYINT(1) NOT NULL DEFAULT 0,
+    device_type VARCHAR(60) NULL DEFAULT NULL,
+    device_implant_date DATE NULL DEFAULT NULL,
+    prior_bleeding TINYINT(1) NOT NULL DEFAULT 0,
+    labile_inr TINYINT(1) NOT NULL DEFAULT 0,
+    alcohol_excess TINYINT(1) NOT NULL DEFAULT 0,
+    notes TEXT NULL DEFAULT NULL,
+    last_reviewed_at DATETIME NULL DEFAULT NULL,
+    last_reviewed_by INT NULL DEFAULT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    UNIQUE KEY uniq_patient_cardiac (patient_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;

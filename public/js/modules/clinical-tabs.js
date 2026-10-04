@@ -120,31 +120,36 @@ initClinicalTabs();
     .cp-sugg-item:hover{background:#e0f2fe;}
     .cp-sugg-item:last-child{border-bottom:none;}
     .cp-diag-inp-wrap{position:relative;}
+    .cp-ro{padding:6px 9px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:5px;font-size:0.85rem;color:#0f172a;min-height:33px;box-sizing:border-box;}
+    .cp-note{font-size:0.78rem;color:#64748b;margin:8px 0 0;}
     `;
     document.head.appendChild(s);
 })();
 
 /* ══════ PANE BUILDERS ══════════════════════════════════════════════ */
 
+// C02 Chief Complaint (& Cardiac Symptoms for cardiology). The detailed narrative history (OPQRST,
+// CCS/NYHA staging) is C03 Cardiac HPI's job, not this screen's - for a cardiology encounter this pane
+// only captures WHICH cardiac symptoms are present (quick triage flags) plus the plain-text chief
+// complaint; it deliberately does not duplicate C03's "Detailed Description" textarea. Non-cardiology
+// encounters (no C03 of their own) keep the original generic symptom list + free-text HPI unchanged.
 function cpB_CC(note) {
+    const isCardio = (note?.encounter_type || '').toLowerCase().includes('cardio');
     const d = document.createElement('div'); d.id = 'cpP0'; d.className = 'cp-wrap';
-    d.innerHTML = `
-    <div class="cp-hdr"><h2>Chief Complaint</h2><p>Document the patient's chief complaint and reason for the visit.</p></div>
+    const symptomCard = isCardio ? `
     <div class="cp-card">
-        <div class="cp-card-title">Chief Complaint</div>
-        <div class="cp-fg">
-            <label class="cp-label">Chief Complaint <span class="cp-req">*</span></label>
-            <textarea id="cpCC" class="cp-textarea" rows="3" maxlength="500" placeholder="e.g. Persistent headache and elevated blood pressure for the past 3 days."></textarea>
-            <div class="cp-char"><span id="cpCC-c">0</span>/500</div>
+        <div class="cp-card-title">Cardiac Symptoms</div>
+        <p class="cp-note" style="margin:0 0 9px;">Quick triage flags. Document the full history (onset, quality, radiation, severity, CCS/NYHA staging) on the Cardiac HPI screen.</p>
+        <div class="cp-fg"><label class="cp-label">Present Symptoms</label>
+            <div class="cp-check-g" id="cpSymG">
+                ${['Chest Pain', 'Dyspnea', 'Palpitations', 'Syncope', 'Edema', 'Fatigue', 'Dizziness', 'Orthopnea', 'Other'].map(s => `<label><input type="checkbox" class="cpSym" value="${s}"> ${s}</label>`).join('')}
+            </div>
         </div>
-        <div class="cp-g2">
-            <div class="cp-fg"><label class="cp-label">Onset</label><input type="date" id="cpOnset" class="cp-input"></div>
-            <div class="cp-fg"><label class="cp-label">Duration</label>
-                <select id="cpDuration" class="cp-select"><option value="">Select...</option>
-                    <option>1 day</option><option>2 days</option><option>3 days</option><option>1 week</option>
-                    <option>2 weeks</option><option>1 month</option><option>3 months</option><option>Chronic</option></select></div>
+        <div class="cp-fg" id="cpOtherW" style="display:none;">
+            <label class="cp-label">Other symptoms</label>
+            <input type="text" id="cpOtherT" class="cp-input" placeholder="Describe other symptoms...">
         </div>
-    </div>
+    </div>` : `
     <div class="cp-card">
         <div class="cp-card-title">History of Present Illness</div>
         <div class="cp-fg"><label class="cp-label">Associated Symptoms</label>
@@ -161,8 +166,29 @@ function cpB_CC(note) {
             <textarea id="cpHPI" class="cp-textarea" rows="4" maxlength="2000" placeholder="Describe the history of present illness..."></textarea>
             <div class="cp-char"><span id="cpHPI-c">0</span>/2000</div>
         </div>
+    </div>`;
+    d.innerHTML = `
+    <div class="cp-hdr"><h2>Chief Complaint${isCardio ? ' &amp; Cardiac Symptoms' : ''}</h2><p>Document the patient's chief complaint and reason for the visit.</p></div>
+    <div class="cp-card">
+        <div class="cp-card-title">Chief Complaint</div>
+        <div class="cp-fg">
+            <label class="cp-label">Chief Complaint <span class="cp-req">*</span></label>
+            <textarea id="cpCC" class="cp-textarea" rows="3" maxlength="500" placeholder="e.g. Persistent headache and elevated blood pressure for the past 3 days."></textarea>
+            <div class="cp-char"><span id="cpCC-c">0</span>/500</div>
+        </div>
+        <div class="cp-g2">
+            <div class="cp-fg"><label class="cp-label">Onset</label><input type="date" id="cpOnset" class="cp-input"></div>
+            <div class="cp-fg"><label class="cp-label">Duration</label>
+                <select id="cpDuration" class="cp-select"><option value="">Select...</option>
+                    <option>1 day</option><option>2 days</option><option>3 days</option><option>1 week</option>
+                    <option>2 weeks</option><option>1 month</option><option>3 months</option><option>Chronic</option></select></div>
+        </div>
     </div>
-    <div class="cp-nav"><div></div><button type="button" class="cp-btn" id="cpN0">Next: Medication Review &rarr;</button></div>`;
+    ${symptomCard}
+    <div class="cp-nav">
+        <button type="button" class="cp-btn-sec" id="cpPr0">&larr; Previous</button>
+        <button type="button" class="cp-btn" id="cpN0">Next &rarr;</button>
+    </div>`;
     return d;
 }
 
@@ -170,10 +196,13 @@ function cpB_CC(note) {
 // medications / patient_allergies tables (same endpoints the standalone Medications/Allergies
 // workspaces use), not a client-only list — data entered here is real, persisted, and visible
 // everywhere else in the app immediately, unlike this file's old cpMedBody table (see cpB_Plan).
-function cpB_MedicationReview(note) {
+// C05 Medications & Allergies - one screen, two cards. Ids unchanged from the two panes this replaces
+// (cpAddMedReal/cpMedRealBody/cpAddAlgReal/cpAlgRealBody) - wireAll() and load*ReviewList() find them
+// by id regardless of which pane they live in, so no wiring changes were needed for this merge.
+function cpB_MedsAllergies(note) {
     const d = document.createElement('div'); d.id = 'cpP9'; d.className = 'cp-wrap';
     d.innerHTML = `
-    <div class="cp-hdr"><h2>Medication Review</h2><p>Review this patient's active medications and add any new prescriptions for this encounter.</p></div>
+    <div class="cp-hdr"><h2>Medications &amp; Allergies</h2><p>Review this patient's active medications and known allergies; add anything new for this encounter.</p></div>
     <div class="cp-card">
         <div class="cp-card-title">
             Active Medications
@@ -184,17 +213,6 @@ function cpB_MedicationReview(note) {
             <tbody id="cpMedRealBody"><tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:14px;">Loading...</td></tr></tbody>
         </table>
     </div>
-    <div class="cp-nav">
-        <button type="button" class="cp-btn-sec" id="cpPrM">&larr; Previous</button>
-        <button type="button" class="cp-btn" id="cpNxM">Next: Allergy Review &rarr;</button>
-    </div>`;
-    return d;
-}
-
-function cpB_AllergyReview(note) {
-    const d = document.createElement('div'); d.id = 'cpP10'; d.className = 'cp-wrap';
-    d.innerHTML = `
-    <div class="cp-hdr"><h2>Allergy Review</h2><p>Review this patient's known allergies and add any newly reported ones.</p></div>
     <div class="cp-card">
         <div class="cp-card-title">
             Known Allergies
@@ -206,10 +224,244 @@ function cpB_AllergyReview(note) {
         </table>
     </div>
     <div class="cp-nav">
-        <button type="button" class="cp-btn-sec" id="cpPrA">&larr; Previous</button>
-        <button type="button" class="cp-btn" id="cpNxA">Next: Vitals &rarr;</button>
+        <button type="button" class="cp-btn-sec" id="cpPrM">&larr; Previous</button>
+        <button type="button" class="cp-btn" id="cpNxM">Next &rarr;</button>
     </div>`;
     return d;
+}
+
+/* ── C01 Visit Details ─────────────────────────────────────────────────
+   Identifies the visit. Everything except the two referral fields is already decided by the appointment
+   the encounter was started from, so it is shown read-only rather than offered for re-typing. The two
+   editable fields write to the hidden #referring-provider / #referral-reason inputs in clinical_modal.php,
+   which is what submitEncounter actually reads (it reads by id and silently drops anything missing). */
+function cpB_VisitDetails(note) {
+    const d = document.createElement('div'); d.id = 'cpP12'; d.className = 'cp-wrap';
+    const esc = cpEsc;
+    const encNum = 'ENC-' + String(note.id || '').padStart(5, '0');
+    const when = (note.note_date || '').replace('T', ' ').slice(0, 16) || '—';
+    const providerName = note.provider_name || (note.first_name && note.last_name ? `Dr. ${note.first_name} ${note.last_name}` : '—');
+    const row = (label, value) => `<div class="cp-fg"><label class="cp-label">${esc(label)}</label><div class="cp-ro">${esc(value || '—')}</div></div>`;
+    d.innerHTML = `
+    <div class="cp-hdr"><h2>Visit Details</h2><p>Who this visit is for, what kind of visit it is, and who sent the patient.</p></div>
+    <div class="cp-card">
+        <div class="cp-card-title">This Encounter</div>
+        <div class="cp-g3">
+            ${row('Encounter', encNum)}
+            ${row('Date &amp; time', when)}
+            ${row('Visit type', note.visit_type)}
+        </div>
+        <div class="cp-g3">
+            ${row('Mode', note.encounter_mode)}
+            ${row('Provider', providerName)}
+            ${row('Specialty', note.encounter_type)}
+        </div>
+        <p class="cp-note">${note.appointment_id
+            ? 'Started from a scheduled appointment, so these details come from the booking.'
+            : 'Walk-in encounter &mdash; no linked appointment.'}</p>
+    </div>
+    <div class="cp-card">
+        <div class="cp-card-title">Referral</div>
+        <div class="cp-g2">
+            <div class="cp-fg">
+                <label class="cp-label">Referring provider</label>
+                <input type="text" id="cpVisitRefProv" class="cp-input" maxlength="150" placeholder="e.g. Dr. A. Mehta, Internal Medicine">
+            </div>
+            <div class="cp-fg">
+                <label class="cp-label">Reason for referral</label>
+                <input type="text" id="cpVisitRefReason" class="cp-input" maxlength="255" placeholder="e.g. Exertional chest pain for cardiology opinion">
+            </div>
+        </div>
+    </div>
+    <div class="cp-nav"><div></div><button type="button" class="cp-btn" id="cpNx12">Next &rarr;</button></div>`;
+    return d;
+}
+
+/* ── C04 Cardiac History ───────────────────────────────────────────────
+   Patient-level, not encounter-level: this is REVIEWED each visit, not retyped. It is the single place the
+   cardiac risk scores read their inputs from (ASCVD, CHA2DS2-VASc, HAS-BLED), which is why the risk factors
+   are structured checkboxes rather than prose. Saved through its own endpoint, not the encounter save. */
+const CP_CARDIAC_CONDITIONS = [
+    ['cad', 'Coronary artery disease'], ['prior_mi', 'Prior myocardial infarction'],
+    ['prior_pci', 'Prior PCI / stent'], ['prior_cabg', 'Prior CABG'],
+    ['heart_failure', 'Heart failure'], ['atrial_fibrillation', 'Atrial fibrillation / flutter'],
+    ['valve_disease', 'Valve disease'], ['cardiomyopathy', 'Cardiomyopathy'],
+    ['pad', 'Peripheral artery disease'], ['stroke_tia', 'Stroke / TIA'],
+];
+const CP_CARDIAC_RISK = [
+    ['hypertension', 'Hypertension'], ['diabetes', 'Diabetes'], ['dyslipidemia', 'Dyslipidemia'],
+    ['obesity', 'Obesity'], ['ckd', 'Chronic kidney disease'], ['sleep_apnea', 'Sleep apnea'],
+    ['family_premature_cad', 'Family history of premature CAD'],
+];
+const CP_BLEEDING_RISK = [
+    ['prior_bleeding', 'Prior major bleeding'], ['labile_inr', 'Labile INR'], ['alcohol_excess', 'Alcohol excess'],
+];
+const CP_CARDIAC_DATES = ['prior_mi_date', 'prior_pci_date', 'prior_cabg_date', 'device_implant_date'];
+
+function cpEsc(s) {
+    return String(s === null || s === undefined ? '' : s)
+        .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+}
+
+function cpB_CardiacHistory(note) {
+    const d = document.createElement('div'); d.id = 'cpP13'; d.className = 'cp-wrap';
+    const boxes = list => list.map(([k, label]) =>
+        `<label><input type="checkbox" class="cpCHbox" id="cpCH_${k}" data-f="${k}"> ${cpEsc(label)}</label>`).join('');
+    d.innerHTML = `
+    <div class="cp-hdr"><h2>Cardiac History</h2><p>Reviewed at every visit, not retyped. These answers are what the risk scores are calculated from.</p></div>
+    <div class="cp-card">
+        <div class="cp-card-title">Cardiac Conditions</div>
+        <div class="cp-check-g">${boxes(CP_CARDIAC_CONDITIONS)}</div>
+        <div class="cp-g4" style="margin-top:10px;">
+            <div class="cp-fg"><label class="cp-label">Date of MI</label><input type="date" id="cpCH_prior_mi_date" class="cp-input"></div>
+            <div class="cp-fg"><label class="cp-label">Date of PCI</label><input type="date" id="cpCH_prior_pci_date" class="cp-input"></div>
+            <div class="cp-fg"><label class="cp-label">Date of CABG</label><input type="date" id="cpCH_prior_cabg_date" class="cp-input"></div>
+            <div class="cp-fg"><label class="cp-label">Heart failure type</label>
+                <select id="cpCH_hf_type" class="cp-select"><option value="">Select...</option>
+                    <option value="HFrEF">HFrEF (reduced EF)</option><option value="HFmrEF">HFmrEF (mildly reduced)</option><option value="HFpEF">HFpEF (preserved EF)</option></select></div>
+        </div>
+    </div>
+    <div class="cp-card">
+        <div class="cp-card-title">Risk Factors</div>
+        <div class="cp-check-g">${boxes(CP_CARDIAC_RISK)}</div>
+        <div class="cp-g2" style="margin-top:10px;">
+            <div class="cp-fg"><label class="cp-label">Smoking</label>
+                <select id="cpCH_smoking_status" class="cp-select"><option value="Never">Never</option><option value="Former">Former</option><option value="Current">Current</option></select></div>
+            <div class="cp-fg"><label class="cp-label">Pack-years</label><input type="number" min="0" max="999" step="0.5" id="cpCH_pack_years" class="cp-input" placeholder="e.g. 22.5"></div>
+        </div>
+    </div>
+    <div class="cp-card">
+        <div class="cp-card-title">Device</div>
+        <div class="cp-g2">
+            <div class="cp-fg"><label class="cp-label">Implanted device</label>
+                <select id="cpCH_device_type" class="cp-select"><option value="">None</option>
+                    <option>Dual Chamber Pacemaker (PPM)</option><option>Single Chamber Pacemaker</option>
+                    <option>Implantable Cardioverter Defibrillator (ICD)</option><option>Biventricular ICD (CRT-D)</option>
+                    <option>Implantable Loop Recorder (ILR)</option></select></div>
+            <div class="cp-fg"><label class="cp-label">Implant date</label><input type="date" id="cpCH_device_implant_date" class="cp-input"></div>
+        </div>
+    </div>
+    <div class="cp-card">
+        <div class="cp-card-title">Bleeding Risk <span class="cp-badge cp-badge-yellow">for HAS-BLED</span></div>
+        <div class="cp-check-g">${boxes(CP_BLEEDING_RISK)}</div>
+        <div class="cp-fg" style="margin-top:10px;"><label class="cp-label">Notes</label>
+            <textarea id="cpCH_notes" class="cp-textarea" rows="2" maxlength="5000" placeholder="Anything about the cardiac history that doesn't fit above..."></textarea></div>
+    </div>
+    <div class="cp-card" style="display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;">
+        <span id="cpCHReviewed" class="cp-note">Loading cardiac history&hellip;</span>
+        <button type="button" class="cp-btn" id="cpCHSave">Save cardiac history</button>
+    </div>
+    <div class="cp-nav">
+        <button type="button" class="cp-btn-sec" id="cpPr13">&larr; Previous</button>
+        <button type="button" class="cp-btn" id="cpNx13">Next &rarr;</button>
+    </div>`;
+    return d;
+}
+
+/** Fills the C04 pane from GET /api/clinical/cardiac-profile/{id}. */
+function loadCardiacProfile(patientId) {
+    const stamp = document.getElementById('cpCHReviewed');
+    if (!patientId) return;
+    ApiService.request(`/api/clinical/cardiac-profile/${patientId}`).then(res => {
+        if (!res || res.status !== 'success' || !res.data) {
+            if (stamp) stamp.textContent = 'Could not load the cardiac history.';
+            return;
+        }
+        const p = res.data;
+        [...CP_CARDIAC_CONDITIONS, ...CP_CARDIAC_RISK, ...CP_BLEEDING_RISK].forEach(([k]) => {
+            const el = document.getElementById(`cpCH_${k}`);
+            if (el) el.checked = p[k] === true;
+        });
+        CP_CARDIAC_DATES.forEach(k => { const el = document.getElementById(`cpCH_${k}`); if (el) el.value = p[k] || ''; });
+        ['hf_type', 'smoking_status', 'device_type', 'pack_years', 'notes'].forEach(k => {
+            const el = document.getElementById(`cpCH_${k}`);
+            if (el) el.value = p[k] === null || p[k] === undefined ? '' : p[k];
+        });
+        if (stamp) {
+            stamp.textContent = p.exists && p.last_reviewed_at
+                ? `Last reviewed ${String(p.last_reviewed_at).slice(0, 16)}${p.last_reviewed_by_name ? ' by ' + p.last_reviewed_by_name : ''}.`
+                : 'No cardiac history recorded for this patient yet.';
+        }
+    }).catch(() => { if (stamp) stamp.textContent = 'Could not load the cardiac history.'; });
+}
+
+/** Saves the C04 pane. Patient-level, so it has its own Save rather than riding on the encounter save. */
+function saveCardiacProfile(patientId) {
+    const btn = document.getElementById('cpCHSave');
+    const stamp = document.getElementById('cpCHReviewed');
+    if (!patientId) return;
+    const body = {};
+    [...CP_CARDIAC_CONDITIONS, ...CP_CARDIAC_RISK, ...CP_BLEEDING_RISK].forEach(([k]) => {
+        const el = document.getElementById(`cpCH_${k}`);
+        if (el) body[k] = el.checked;
+    });
+    CP_CARDIAC_DATES.concat(['hf_type', 'smoking_status', 'device_type', 'pack_years', 'notes']).forEach(k => {
+        const el = document.getElementById(`cpCH_${k}`);
+        if (el) body[k] = el.value;
+    });
+    if (btn) { btn.disabled = true; btn.textContent = 'Saving...'; }
+    ApiService.request(`/api/clinical/cardiac-profile/${patientId}`, 'PUT', body).then(res => {
+        const ok = res && res.status === 'success';
+        if (typeof Toast !== 'undefined') Toast.show(ok ? 'Cardiac history saved.' : (res && res.message) || 'Could not save the cardiac history.', ok ? 'success' : 'error');
+        if (ok) loadCardiacProfile(patientId);
+        else if (stamp) stamp.textContent = (res && res.message) || 'Could not save the cardiac history.';
+    }).catch(() => {
+        if (typeof Toast !== 'undefined') Toast.show('Could not save the cardiac history.', 'error');
+    }).finally(() => { if (btn) { btn.disabled = false; btn.textContent = 'Save cardiac history'; } });
+}
+
+/**
+ * Makes the Back / Next buttons follow the CURRENT tab order instead of the neighbour id each pane was
+ * written with. Without this, adding a screen leaves the chain pointing past it (or at a pane that is no
+ * longer rendered), which is how Medication Review and the Cardiology pane became reachable only by Next.
+ * Only buttons labelled "Next..." or "...Previous" are touched - Save Draft / Clear / View Results are left alone.
+ */
+function wireWorkflowNav(panes, tabLis, labels) {
+    panes.forEach((pane, i) => {
+        pane.querySelectorAll('.cp-nav button').forEach(btn => {
+            const txt = (btn.textContent || '').trim().toLowerCase();
+            if (txt.startsWith('next')) {
+                if (i < panes.length - 1) {
+                    btn.onclick = () => tabLis[i + 1].onclick();
+                    btn.innerHTML = `Next: ${cpEsc(labels[i + 1])} &rarr;`;
+                    btn.style.display = '';
+                } else {
+                    btn.style.display = 'none';          // last screen has nowhere to go
+                }
+            } else if (txt.includes('previous')) {
+                if (i > 0) {
+                    btn.onclick = () => tabLis[i - 1].onclick();
+                    btn.style.display = '';
+                } else {
+                    btn.style.display = 'none';
+                }
+            }
+        });
+    });
+}
+
+/** Wiring for the screens added by the cardiology workflow (C01 Visit Details, C04 Cardiac History). Null-safe:
+ *  C04 only renders for cardiology encounters, so every lookup here has to tolerate a missing pane. */
+function wireNewEncounterPanes(note) {
+    // C01 - the visible inputs mirror into the hidden #referring-provider / #referral-reason that submitEncounter reads.
+    [['cpVisitRefProv', 'referring-provider', 'referring_provider'], ['cpVisitRefReason', 'referral-reason', 'referral_reason']]
+        .forEach(([visibleId, hiddenId, noteKey]) => {
+            const visible = document.getElementById(visibleId);
+            const hidden = document.getElementById(hiddenId);
+            if (!visible) return;
+            visible.value = note[noteKey] || (hidden ? hidden.value : '') || '';
+            if (hidden) {
+                hidden.value = visible.value;
+                visible.addEventListener('input', () => { hidden.value = visible.value; });
+            }
+        });
+
+    // C04 - patient-level, saved through its own endpoint rather than the encounter save.
+    const chSave = document.getElementById('cpCHSave');
+    if (chSave) {
+        chSave.onclick = () => saveCardiacProfile(note.patient_id);
+        loadCardiacProfile(note.patient_id);
+    }
 }
 
 function loadMedicationReviewList(patientId) {
@@ -282,9 +534,10 @@ function cpB_Vitals(note) {
         </div>
         <p style="font-size:0.75rem;color:#94a3b8;margin:4px 0 0;"><span style="color:#ef4444;">*</span> Required field</p>
     </div>
+    <div id="cpVitalsCardioMount"></div>
     <div class="cp-nav">
         <button type="button" class="cp-btn-sec" id="cpPr1">&larr; Previous</button>
-        <button type="button" class="cp-btn" id="cpNx1">Next: Examination &rarr;</button>
+        <button type="button" class="cp-btn" id="cpNx1">Next &rarr;</button>
     </div>`;
     return d;
 }
@@ -313,9 +566,10 @@ function cpB_Exam(note) {
                 <textarea class="cp-textarea" rows="2" maxlength="500" placeholder="${sys.t} notes..." style="min-height:44px;"></textarea></div>
         </div>`).join('')}
     </div>
+    <div id="cpExamCardioMount"></div>
     <div class="cp-nav">
         <button type="button" class="cp-btn-sec" id="cpPr2">&larr; Previous</button>
-        <button type="button" class="cp-btn" id="cpNx2">Next: Assessment &rarr;</button>
+        <button type="button" class="cp-btn" id="cpNx2">Next &rarr;</button>
     </div>`;
     return d;
 }
@@ -334,16 +588,7 @@ function cpB_Assessment(note) {
                     <div class="cp-char"><span id="cpAS-c">0</span>/1000</div>
                 </div>
             </div>
-            <div class="cp-card">
-                <div class="cp-card-title">
-                    Differential Diagnosis
-                    <button type="button" class="cp-btn cp-btn-sm" id="cpAddDiagReal">+ Add Diagnosis</button>
-                </div>
-                <table class="cp-tbl">
-                    <thead><tr><th>Diagnosis</th><th>ICD-10</th><th>Chronicity</th><th>Status</th></tr></thead>
-                    <tbody id="cpDiagRealBody"><tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:14px;">Loading...</td></tr></tbody>
-                </table>
-            </div>
+            <div id="cpAssessCardioMount"></div>
             <div class="cp-card">
                 <div class="cp-card-title">Clinical Reasoning</div>
                 <textarea id="cpReason" class="cp-textarea" rows="3" maxlength="1000" placeholder="Elevated BP with history of diabetes increases cardiovascular risk..."></textarea>
@@ -383,13 +628,37 @@ function cpB_Assessment(note) {
     </div>
     <div class="cp-nav">
         <button type="button" class="cp-btn-sec" id="cpPr3">&larr; Previous</button>
-        <button type="button" class="cp-btn" id="cpNx3">Next: Plan &rarr;</button>
+        <button type="button" class="cp-btn" id="cpNx3">Next &rarr;</button>
+    </div>`;
+    return d;
+}
+
+// C09 Diagnosis / Problem List - split out of Assessment so it is its own screen, per the owner's C01-C14 order.
+// Same real patient_problems table + ids (cpAddDiagReal/cpDiagRealBody) as before the split - wireAll() and
+// loadAssessmentDiagnosisList() find them by id regardless of which pane they live in; no wiring changes needed.
+function cpB_DiagnosisList(note) {
+    const d = document.createElement('div'); d.id = 'cpP10'; d.className = 'cp-wrap';
+    d.innerHTML = `
+    <div class="cp-hdr"><h2>Diagnosis / Problem List</h2><p>Diagnoses for this encounter, added to the patient's problem list.</p></div>
+    <div class="cp-card">
+        <div class="cp-card-title">
+            Diagnoses
+            <button type="button" class="cp-btn cp-btn-sm" id="cpAddDiagReal">+ Add Diagnosis</button>
+        </div>
+        <table class="cp-tbl">
+            <thead><tr><th>Diagnosis</th><th>ICD-10</th><th>Chronicity</th><th>Status</th></tr></thead>
+            <tbody id="cpDiagRealBody"><tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:14px;">Loading...</td></tr></tbody>
+        </table>
+    </div>
+    <div class="cp-nav">
+        <button type="button" class="cp-btn-sec" id="cpPr9b">&larr; Previous</button>
+        <button type="button" class="cp-btn" id="cpNx9b">Next &rarr;</button>
     </div>`;
     return d;
 }
 
 // Diagnosis list — backed by the real patient_problems table (same endpoint the Diagnoses
-// workspace and Assessment's own "+ Add Diagnosis" use). window._currentAssessmentDiagnoses
+// workspace and C09's own "+ Add Diagnosis" use). window._currentAssessmentDiagnoses
 // is also read by the Billing tab's _refreshCptDxDropdown for its Dx Pointer options.
 function loadAssessmentDiagnosisList(patientId) {
     const tbody = document.getElementById('cpDiagRealBody');
@@ -426,9 +695,10 @@ function cpB_Plan(note) {
         <div class="cp-card-title">Follow-up Instructions</div>
         <textarea id="cpFollowup" class="cp-textarea" rows="2" maxlength="500" placeholder="Return in 2 weeks for BP check. Call if symptoms worsen."></textarea>
     </div>
+    <div id="cpPlanCardioMount"></div>
     <div class="cp-nav">
         <button type="button" class="cp-btn-sec" id="cpPr4">&larr; Previous</button>
-        <button type="button" class="cp-btn" id="cpNx4">Next: Lab Orders &rarr;</button>
+        <button type="button" class="cp-btn" id="cpNx4">Next &rarr;</button>
     </div>`;
     return d;
 }
@@ -440,7 +710,7 @@ function cpB_Plan(note) {
 function cpB_LabOrders(note) {
     const d = document.createElement('div'); d.id = 'cpP5'; d.className = 'cp-wrap';
     d.innerHTML = `
-    <div class="cp-hdr"><h2>Orders &amp; Results Review</h2><p>Place orders for this encounter and review results as they come back.</p></div>
+    <div class="cp-hdr"><h2>Cardiac Diagnostics / Orders</h2><p>Place orders for this encounter. Findings are recorded on the Results Review screen.</p></div>
     <div class="cp-card">
         <div class="cp-card-title">
             Orders for This Encounter
@@ -453,7 +723,7 @@ function cpB_LabOrders(note) {
     </div>
     <div class="cp-nav">
         <button type="button" class="cp-btn-sec" id="cpPr5">&larr; Previous</button>
-        <button type="button" class="cp-btn" id="cpNx5">Next: Billing &rarr;</button>
+        <button type="button" class="cp-btn" id="cpNx5">Next &rarr;</button>
     </div>`;
     return d;
 }
@@ -521,31 +791,82 @@ function cpB_Sign(note) {
     return d;
 }
 
-// Cardiology-only 9th pane: reuses the real, complete #cardio-form (built in clinical_modal.php,
-// with its own workflow selector + 5 sub-workflow cards) by moving it here rather than duplicating
-// ~30 fields in this file's own cp-* style. The move is undone/redone safely on every re-render —
-// see the rescue step in the "MAIN OVERRIDE" function above.
-function cpB_Cardiology(note) {
+// The mega #cardio-form (clinical_modal.php) was split into 12 independently-relocatable sections
+// (id="cardio-sec-*"), each still serialized into cardio_data via an explicit form="cardio-form"
+// attribute on every control inside it (moving a control out of its <form> ancestor drops it from
+// FormData() unless it carries that attribute - see the plan note in CLAUDE.md). This table is the
+// ONLY place that says which section goes to which screen's mount point; add a row here, not a new
+// ad-hoc appendChild, if a section ever needs to move again.
+const CARDIO_RELOCATION = [
+    ['cardio-sec-top', 'cpHpiMount'],              // workflow pathway + routine follow-up summary -> C03 (top)
+    ['cardio-sec-hpi', 'cpHpiMount'],               // cardiac symptoms / CCS / NYHA / orthopnea     -> C03
+    ['cardio-sec-orthostatic', 'cpVitalsCardioMount'], // sitting/standing BP + HR & rhythm           -> C06 Vitals
+    ['cardio-sec-exam', 'cpExamCardioMount'],       // JVP/carotid/heart sounds/murmur/pulses/edema  -> C07 Examination
+    ['cardio-sec-ascvd', 'cpAssessCardioMount'],    // 10-year ASCVD risk score + Calc button        -> C08 Assessment
+    ['cardio-sec-assessment', 'cpAssessCardioMount'], // ICD-10 quick-picks + assessment/GDMT note   -> C08 Assessment
+    ['cardio-sec-ecg', 'cpResultsMount'],           // 12-lead ECG findings                          -> C11 Results Review
+    ['cardio-sec-echo', 'cpResultsMount'],          // echocardiogram findings                       -> C11 Results Review
+    ['cardio-sec-device', 'cpResultsMount'],        // device interrogation + cath/PCI findings      -> C11 Results Review
+    ['cardio-sec-holter', 'cpResultsMount'],        // Holter/ambulatory monitor findings            -> C11 Results Review
+    ['cardio-sec-labs', 'cpResultsMount'],          // cardiac & metabolic labs                      -> C11 Results Review
+    ['cardio-sec-htnplan', 'cpPlanCardioMount'],    // HTN medication/lifestyle plan                 -> C12 Treatment & Plan
+];
+const CARDIO_SECTION_IDS = CARDIO_RELOCATION.map(([id]) => id);
+
+// Moves every cardio-sec-* into its target pane's mount point, in CARDIO_RELOCATION order (so sections that
+// share a mount, e.g. cardio-sec-top then cardio-sec-hpi both into #cpHpiMount, land in the right order).
+// Only called for a cardiology encounter; a non-cardiology encounter leaves every section parked inside the
+// rescued #cardio-form (see the rescue step in the "MAIN OVERRIDE" function, just above where this is called).
+function relocateCardioSections() {
+    CARDIO_RELOCATION.forEach(([secId, mountId]) => {
+        const sec = document.getElementById(secId), mount = document.getElementById(mountId);
+        if (sec && mount) mount.appendChild(sec);
+    });
+    if (typeof window.toggleCardioWorkflow === 'function') window.toggleCardioWorkflow();
+}
+
+// C03 Cardiac HPI (cardiology only). Mounts cardio-sec-top (workflow pathway + follow-up summary) and
+// cardio-sec-hpi (symptom history / CCS / NYHA / orthopnea) - see CARDIO_RELOCATION above.
+function cpB_CardiacHPI(note) {
     const d = document.createElement('div'); d.id = 'cpP8'; d.className = 'cp-wrap';
     d.innerHTML = `
-    <div class="cp-hdr"><h2>Cardiology Assessment</h2><p>Complete the cardiology visit workflow below.</p></div>
-    <div id="cpCardioMount"></div>`;
-    const cardioForm = document.getElementById('cardio-form');
-    if (cardioForm) {
-        d.querySelector('#cpCardioMount').appendChild(cardioForm);
-        if (typeof window.toggleCardioWorkflow === 'function') window.toggleCardioWorkflow();
-    }
+    <div class="cp-hdr"><h2>Cardiac HPI</h2><p>History of present illness: onset, quality, radiation, severity, and functional staging.</p></div>
+    <div id="cpHpiMount"></div>
+    <div class="cp-nav">
+        <button type="button" class="cp-btn-sec" id="cpPr8">&larr; Previous</button>
+        <button type="button" class="cp-btn" id="cpNx8">Next &rarr;</button>
+    </div>`;
     return d;
 }
 
-// Orthopedics-only pane: same reuse-not-duplicate approach as cpB_Cardiology above, moving the
-// real #ortho-form (5-pathway engine, built in clinical_modal.php) into view instead of rebuilding
-// its ~50 fields here. Rescued back to its accordion home on every re-render (see MAIN OVERRIDE).
+// C11 Results Review (cardiology only). Mounts the ECG/Echo/Device-Cath/Holter/Labs findings sections -
+// these are test RESULTS, not new orders, which is why they live here and not on the Orders screen (C10).
+function cpB_ResultsReview(note) {
+    const d = document.createElement('div'); d.id = 'cpP14'; d.className = 'cp-wrap';
+    d.innerHTML = `
+    <div class="cp-hdr"><h2>Results Review</h2><p>ECG, echocardiogram, device/cath, Holter and lab findings for this encounter.</p></div>
+    <div id="cpResultsMount"></div>
+    <div class="cp-nav">
+        <button type="button" class="cp-btn-sec" id="cpPr14">&larr; Previous</button>
+        <button type="button" class="cp-btn" id="cpNx14">Next &rarr;</button>
+    </div>`;
+    return d;
+}
+
+// Orthopedics-only pane: reuses the real, complete #ortho-form (built in clinical_modal.php, with its
+// own 5-pathway workflow engine) by moving the whole form here instead of rebuilding its ~50 fields in
+// this file's own cp-* style. Unlike the cardio-form (split across C03/C06/C07/C08/C11/C12 - see
+// CARDIO_RELOCATION above), ortho was not asked to be split the same way and stays one pane. Rescued
+// back to its accordion home on every re-render (see the rescue step in the "MAIN OVERRIDE" function).
 function cpB_Orthopedics(note) {
     const d = document.createElement('div'); d.id = 'cpP11'; d.className = 'cp-wrap';
     d.innerHTML = `
     <div class="cp-hdr"><h2>Orthopedic Assessment</h2><p>Select the clinical pathway and complete the orthopedic workflow below.</p></div>
-    <div id="cpOrthoMount"></div>`;
+    <div id="cpOrthoMount"></div>
+    <div class="cp-nav">
+        <button type="button" class="cp-btn-sec" id="cpPr11">&larr; Previous</button>
+        <button type="button" class="cp-btn" id="cpNx11">Next &rarr;</button>
+    </div>`;
     const orthoForm = document.getElementById('ortho-form');
     if (orthoForm) {
         d.querySelector('#cpOrthoMount').appendChild(orthoForm);
@@ -749,11 +1070,10 @@ function wireAll(panes, tabLis, note, allCpts) {
     document.getElementById('cpNxM').onclick = () => goToId('cpP10');
     loadMedicationReviewList(note.patient_id);
 
-    // Allergy Review
+    // Allergy Review (now the second card on the same C05 pane as Medication Review, above - no separate
+    // Previous/Next wiring needed here, the pane has only one cp-nav, already wired via cpPrM/cpNxM).
     const addAlgRealBtn = document.getElementById('cpAddAlgReal');
     if (addAlgRealBtn) addAlgRealBtn.onclick = () => window.openAllergyModal(null, () => loadAllergyReviewList(note.patient_id), note.patient_id);
-    document.getElementById('cpPrA').onclick = () => goToId('cpP9');
-    document.getElementById('cpNxA').onclick = () => goToId('cpP1');
     loadAllergyReviewList(note.patient_id);
 
     // Vitals
@@ -912,6 +1232,13 @@ window._syncCustomTabsToDOM = function() {
     }
     const ccInput = document.getElementById('chief-complaint');
     if(ccInput) ccInput.value = JSON.stringify(ccData);
+
+    // C01 Visit Details -> the hidden inputs submitEncounter reads. The visible fields already mirror on
+    // every keystroke; syncing again here means a save can't miss a last edit that never fired an input event.
+    [['cpVisitRefProv', 'referring-provider'], ['cpVisitRefReason', 'referral-reason']].forEach(([visibleId, hiddenId]) => {
+        const visible = document.getElementById(visibleId), hidden = document.getElementById(hiddenId);
+        if (visible && hidden) hidden.value = visible.value;
+    });
 
     // Diagnoses persist immediately via /api/problems now (see loadAssessmentDiagnosisList) —
     // clinical-icd10 only needs to carry the CPT billing lines here.
@@ -1205,6 +1532,17 @@ function syncToUI(note) {
             // cpP8/cpP11 containing the form would take it (and all its data) down with it via .remove().
             const cardioFormEl = document.getElementById('cardio-form');
             const cardioFormHome = document.getElementById('accordion-cardio');
+            // The mega cardio-form was split into 12 independently-relocatable sections (cardio-sec-*, each still
+            // serialized into cardio_data via an explicit form="cardio-form" attribute on every control - see
+            // clinical_modal.php). Each one gets appendChild'd into whichever tab pane it belongs to on every render
+            // (below). Rescue them ALL back inside #cardio-form first, same reason as the whole-form rescue above:
+            // otherwise the cpP*.remove() cleanup a few lines down deletes the real fields along with the stale pane.
+            if (cardioFormEl) {
+                CARDIO_SECTION_IDS.forEach(id => {
+                    const el = document.getElementById(id);
+                    if (el && el.parentElement !== cardioFormEl) cardioFormEl.appendChild(el);
+                });
+            }
             if (cardioFormEl && cardioFormHome && cardioFormEl.parentElement !== cardioFormHome) {
                 cardioFormHome.appendChild(cardioFormEl);
             }
@@ -1218,24 +1556,44 @@ function syncToUI(note) {
             if (tabMenu) {
                 tabMenu.style.display = 'none';
                 const ex = document.querySelector('.inline-encounter-tabs'); if (ex) ex.remove();
-                for (let i = 0; i < 12; i++) { const p = document.getElementById(`cpP${i}`); if (p) p.remove(); }
+                for (let i = 0; i < 16; i++) { const p = document.getElementById(`cpP${i}`); if (p) p.remove(); }
 
-                const tabDefs = ['Chief Complaint', 'Medication Review', 'Allergy Review', 'Vitals', 'Examination', 'Assessment', 'Plan', 'Lab Orders', 'Billing', 'Sign Encounter'];
+                // The encounter workflow in one keyed list, in the order the clinician walks it (C01-C14).
+                // Keyed, not index-based: steps below look themselves up by `key`, so inserting or reordering a
+                // screen here can never silently point Billing/Sign at the wrong pane again.
+                // The owner's exact C01-C14 order. ortho is interleaved at its natural position (after Vitals,
+                // where Cardiac HPI/Exam would otherwise sit) since this app's ortho workflow predates the
+                // 14-screen cardiology plan and was never asked to be split the same way - it stays one pane.
+                const tabSpecs = [
+                    { key: 'visit',       label: 'Visit Details',             build: cpB_VisitDetails },                 // C01
+                    { key: 'cc',          label: 'Chief Complaint',           build: cpB_CC },                           // C02
+                    { key: 'hpi',         label: 'Cardiac HPI',               build: cpB_CardiacHPI,     only: 'cardio' }, // C03
+                    { key: 'history',     label: 'Cardiac History',           build: cpB_CardiacHistory, only: 'cardio' }, // C04
+                    { key: 'medsallergy', label: 'Medications & Allergies',   build: cpB_MedsAllergies },                // C05
+                    { key: 'vitals',      label: 'Vitals',                    build: cpB_Vitals },                       // C06
+                    { key: 'exam',        label: 'Examination',               build: cpB_Exam },                         // C07
+                    { key: 'ortho',       label: 'Orthopedics',               build: cpB_Orthopedics,    only: 'ortho' },
+                    { key: 'assessment',  label: 'Cardiac Assessment',        build: cpB_Assessment },                   // C08
+                    { key: 'diagnosis',   label: 'Diagnosis / Problem List',  build: cpB_DiagnosisList },                // C09
+                    { key: 'orders',      label: 'Diagnostic Orders',         build: cpB_LabOrders },                    // C10
+                    { key: 'results',     label: 'Results Review',            build: cpB_ResultsReview,  only: 'cardio' }, // C11
+                    { key: 'plan',        label: 'Treatment & Plan',          build: cpB_Plan },                         // C12
+                    { key: 'billing',     label: 'Billing',                   build: (n) => cpB_Billing(n, allCpts) },
+                    { key: 'sign',        label: 'Summary & Sign',            build: cpB_Sign },                        // C14
+                ].filter(s => !s.only || (s.only === 'cardio' ? isCardioEncounter : isOrthoEncounter));
+                // C13 Follow-up is not built yet - no existing UI to relocate here, needs the patient_recalls
+                // wiring that is still pending (see CLAUDE.md, Cardiology encounter workflow section).
+
+                const tabDefs = tabSpecs.map(s => s.label);
+                const tabKeys = tabSpecs.map(s => s.key);
+                const indexOfKey = k => tabKeys.indexOf(k);
                 const ul = document.createElement('ul');
                 ul.className = 'my-custom-tabs inline-encounter-tabs';
                 ul.style.cssText = 'list-style:none;margin:0;padding:0 12px;display:flex;gap:0;border-bottom:2px solid #e2e8f0;background:#fff;overflow-x:auto;';
 
-                const paneBuilders = [cpB_CC, cpB_MedicationReview, cpB_AllergyReview, cpB_Vitals, cpB_Exam, cpB_Assessment, cpB_Plan, cpB_LabOrders, (n) => cpB_Billing(n, allCpts), cpB_Sign];
-                if (isCardioEncounter) {
-                    tabDefs.push('Cardiology');
-                    paneBuilders.push(cpB_Cardiology);
-                }
-                if (isOrthoEncounter) {
-                    tabDefs.push('Orthopedics');
-                    paneBuilders.push(cpB_Orthopedics);
-                }
-                const customPanes = paneBuilders.map(fn => fn(note));
+                const customPanes = tabSpecs.map(s => s.build(note));
                 customPanes.forEach(p => { p.style.setProperty('display', 'none', 'important'); sectionBody.appendChild(p); });
+                if (isCardioEncounter) relocateCardioSections();
 
                 const tabLis = [];
                 tabDefs.forEach((t, i) => {
@@ -1251,7 +1609,7 @@ function syncToUI(note) {
                         customPanes[i].style.setProperty('display', 'block', 'important');
 
                         // Lazy load CPT codes when Billing tab is clicked for the first time
-                        if (i === 8) {
+                        if (i === indexOfKey('billing')) {
                             if (!cptsFetched) {
                                 cptsFetched = true;
                                 const req = typeof ApiService !== 'undefined' ? ApiService.request('/api/billing/cpt-codes') : fetch('/api/billing/cpt-codes').then(r => r.json());
@@ -1269,7 +1627,7 @@ function syncToUI(note) {
                         }
 
                         // Refresh provider name dynamically on Sign tab click
-                        if (i === 9) {
+                        if (i === indexOfKey('sign')) {
                             const signProvInp = document.getElementById('cpSignProv');
                             const sigProvPreview = document.getElementById('cpSigProvNamePreview');
                             let fallbackName = note.provider_name || (note.first_name && note.last_name ? `Dr. ${note.first_name} ${note.last_name}` : '');
@@ -1293,6 +1651,11 @@ function syncToUI(note) {
 
                 tabMenu.parentNode.insertBefore(ul, tabMenu.nextSibling);
                 wireAll(customPanes, tabLis, note, allCpts);
+                // Must run AFTER wireAll: wireAll still points each pane's Next/Previous at a hard-coded
+                // neighbour id, which is wrong as soon as a screen is inserted. This re-points them at the
+                // actual neighbour in tabSpecs order and relabels them to match.
+                wireWorkflowNav(customPanes, tabLis, tabDefs);
+                wireNewEncounterPanes(note);
                 tabLis[0].onclick();
             }
 
