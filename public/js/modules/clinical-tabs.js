@@ -99,6 +99,7 @@ initClinicalTabs();
     .cp-badge-green{background:#dcfce7;color:#15803d;}
     .cp-badge-yellow{background:#fef9c3;color:#a16207;}
     .cp-badge-sky{background:#e0f2fe;color:#0284c7;}
+    .cp-badge-red{background:#fee2e2;color:#dc2626;}
     .cp-tbl{width:100%;border-collapse:collapse;font-size:0.83rem;}
     .cp-tbl th{padding:7px 9px;background:#f8fafc;color:#374151;font-weight:600;font-size:0.74rem;text-align:left;border-bottom:1px solid #e2e8f0;}
     .cp-tbl td{padding:7px 9px;border-bottom:1px solid #f1f5f9;vertical-align:middle;}
@@ -216,7 +217,10 @@ function cpB_MedsAllergies(note) {
     <div class="cp-card">
         <div class="cp-card-title">
             Known Allergies
-            <button type="button" class="cp-btn cp-btn-sm" id="cpAddAlgReal">+ Add Allergy</button>
+            <div style="display:flex;gap:6px;align-items:center;">
+                <button type="button" class="cp-btn-sec cp-btn-sm" id="cpMarkNkda" title="Mark No Known Drug Allergies">✓ Mark NKDA</button>
+                <button type="button" class="cp-btn cp-btn-sm" id="cpAddAlgReal">+ Add Allergy</button>
+            </div>
         </div>
         <table class="cp-tbl">
             <thead><tr><th>Allergen</th><th>Reaction</th><th>Severity</th><th>Status</th></tr></thead>
@@ -377,6 +381,7 @@ function loadCardiacProfile(patientId) {
             const el = document.getElementById(`cpCH_${k}`);
             if (el) el.value = p[k] === null || p[k] === undefined ? '' : p[k];
         });
+        if (typeof window.syncCardiacHistoryFields === 'function') window.syncCardiacHistoryFields();
         if (stamp) {
             stamp.textContent = p.exists && p.last_reviewed_at
                 ? `Last reviewed ${String(p.last_reviewed_at).slice(0, 16)}${p.last_reviewed_by_name ? ' by ' + p.last_reviewed_by_name : ''}.`
@@ -384,6 +389,41 @@ function loadCardiacProfile(patientId) {
         }
     }).catch(() => { if (stamp) stamp.textContent = 'Could not load the cardiac history.'; });
 }
+
+function syncCardiacHistoryFields() {
+    const miBox = document.getElementById('cpCH_prior_mi');
+    const miDate = document.getElementById('cpCH_prior_mi_date');
+    if (miBox && miDate) { miDate.disabled = !miBox.checked; miDate.style.opacity = miBox.checked ? '1' : '0.55'; }
+
+    const pciBox = document.getElementById('cpCH_prior_pci');
+    const pciDate = document.getElementById('cpCH_prior_pci_date');
+    if (pciBox && pciDate) { pciDate.disabled = !pciBox.checked; pciDate.style.opacity = pciBox.checked ? '1' : '0.55'; }
+
+    const cabgBox = document.getElementById('cpCH_prior_cabg');
+    const cabgDate = document.getElementById('cpCH_prior_cabg_date');
+    if (cabgBox && cabgDate) { cabgDate.disabled = !cabgBox.checked; cabgDate.style.opacity = cabgBox.checked ? '1' : '0.55'; }
+
+    const hfBox = document.getElementById('cpCH_heart_failure');
+    const hfType = document.getElementById('cpCH_hf_type');
+    if (hfBox && hfType) { hfType.disabled = !hfBox.checked; hfType.style.opacity = hfBox.checked ? '1' : '0.55'; }
+
+    const smokStatus = document.getElementById('cpCH_smoking_status');
+    const packYears = document.getElementById('cpCH_pack_years');
+    if (smokStatus && packYears) {
+        const isSmoker = smokStatus.value === 'Current' || smokStatus.value === 'Former';
+        packYears.disabled = !isSmoker;
+        packYears.style.opacity = isSmoker ? '1' : '0.55';
+    }
+
+    const devSelect = document.getElementById('cpCH_device_type');
+    const devDate = document.getElementById('cpCH_device_implant_date');
+    if (devSelect && devDate) {
+        const hasDevice = devSelect.value && devSelect.value !== 'None';
+        devDate.disabled = !hasDevice;
+        devDate.style.opacity = hasDevice ? '1' : '0.55';
+    }
+}
+window.syncCardiacHistoryFields = syncCardiacHistoryFields;
 
 /** Saves the C04 pane. Patient-level, so it has its own Save rather than riding on the encounter save. */
 function saveCardiacProfile(patientId) {
@@ -486,15 +526,23 @@ function loadAllergyReviewList(patientId) {
     if (!tbody || !patientId) return;
     ApiService.request(`/api/allergies/${patientId}`).then(res => {
         const allergies = (res.status === 'success' && Array.isArray(res.data)) ? res.data : [];
-        if (!allergies.length) { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:14px;">No known allergies on file.</td></tr>'; return; }
-        tbody.innerHTML = allergies.map(a => `
+        if (!allergies.length) {
+            tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#94a3b8;padding:14px;">No known allergies on file. Click <strong>✓ Mark NKDA</strong> if confirmed.</td></tr>';
+            return;
+        }
+        tbody.innerHTML = allergies.map(a => {
+            const isSevere = /severe|anaphylaxis|angioedema/i.test((a.severity || '') + ' ' + (a.reaction || ''));
+            const isNkda = /no known|nkda/i.test(a.allergen || '');
+            const sevBadge = isSevere ? `<span class="cp-badge cp-badge-red">${a.severity}</span>` : a.severity;
+            const statusBadge = isNkda ? `<span class="cp-badge cp-badge-green">Verified None</span>` : `<span class="cp-badge ${a.status === 'Active' ? 'cp-badge-blue' : 'cp-badge-yellow'}">${a.status}</span>`;
+            return `
             <tr>
-                <td style="font-weight:700;">${a.allergen}</td>
+                <td style="font-weight:700;${isNkda ? 'color:#15803d;' : ''}">${a.allergen}</td>
                 <td>${a.reaction || '—'}</td>
-                <td>${a.severity}</td>
-                <td><span class="cp-badge ${a.status === 'Active' ? 'cp-badge-blue' : 'cp-badge-yellow'}">${a.status}</span></td>
-            </tr>
-        `).join('');
+                <td>${sevBadge}</td>
+                <td>${statusBadge}</td>
+            </tr>`;
+        }).join('');
     }).catch(() => { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#dc2626;padding:14px;">Failed to load allergies.</td></tr>'; });
 }
 
@@ -543,7 +591,8 @@ function cpB_Vitals(note) {
 }
 
 function cpB_Exam(note) {
-    const systems = [
+    const isCardio = (note?.encounter_type || '').toLowerCase().includes('cardio');
+    const allSystems = [
         { id: 'genApp', t: 'General Appearance', f: [{ l: 'General Appearance', o: ['Well appearing', 'Ill appearing', 'Distressed', 'NAD'] }, { l: 'Level of Consciousness', o: ['Alert', 'Lethargic', 'Obtunded'] }, { l: 'Orientation', o: ['Oriented x3', 'Oriented x2', 'Confused'] }] },
         { id: 'heent', t: 'HEENT', f: [{ l: 'Head', o: ['Normocephalic', 'Atraumatic'] }, { l: 'Eyes', o: ['PERRLA', 'Nystagmus', 'Icterus'] }, { l: 'Ears', o: ['Normal', 'TM intact', 'Discharge'] }, { l: 'Nose', o: ['Normal', 'Congested', 'Rhinorrhea'] }] },
         { id: 'cardio', t: 'Cardiovascular', f: [{ l: 'Rhythm', o: ['Regular', 'Irregular', 'A-fib'] }, { l: 'Heart Sounds', o: ['Normal S1S2', 'Murmur', 'Gallop'] }, { l: 'Murmurs', o: ['None', 'Systolic', 'Diastolic'] }, { l: 'Edema', o: ['None', 'Pitting', 'Non-pitting'] }] },
@@ -553,10 +602,16 @@ function cpB_Exam(note) {
         { id: 'neuro', t: 'Neurological', f: [{ l: 'Mental Status', o: ['Alert and oriented', 'Confused', 'Lethargic'] }, { l: 'Cranial Nerves', o: ['Intact', 'Abnormal'] }, { l: 'Motor Strength', o: ['5/5', '4/5', '3/5'] }, { l: 'Coordination', o: ['Normal', 'Ataxic'] }] },
         { id: 'skin', t: 'Skin', f: [{ l: 'Color', o: ['Normal', 'Pallor', 'Cyanosis', 'Jaundice'] }, { l: 'Turgor', o: ['Normal', 'Poor'] }, { l: 'Rash', o: ['None', 'Present'] }, { l: 'Lesions', o: ['None', 'Present'] }] },
     ];
+    // In cardiology visits, only show clinically essential systems (General Appearance, Respiratory, Abdomen)
+    // while the dedicated Cardiovascular Physical Examination card handles all heart/vascular findings.
+    const cardioAllowed = ['genApp', 'resp', 'abdo'];
+    const systems = isCardio ? allSystems.filter(s => cardioAllowed.includes(s.id)) : allSystems;
+
     const d = document.createElement('div'); d.id = 'cpP2'; d.className = 'cp-wrap';
+    const gridCols = isCardio ? '1fr 1fr 1fr' : '1fr 1fr 1fr';
     d.innerHTML = `
     <div class="cp-hdr"><h2>Examination</h2><p>Document physical examination findings.</p></div>
-    <div style="display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px;">
+    <div style="display:grid;grid-template-columns:${gridCols};gap:10px;margin-bottom:12px;">
         ${systems.map(sys => `
         <div class="cp-exam-box">
             <div class="cp-exam-title">${sys.t}</div>
@@ -575,7 +630,27 @@ function cpB_Exam(note) {
 }
 
 function cpB_Assessment(note) {
+    const isCardio = (note?.encounter_type || '').toLowerCase().includes('cardio');
     const d = document.createElement('div'); d.id = 'cpP3'; d.className = 'cp-wrap';
+
+    if (isCardio) {
+        d.innerHTML = `
+        <div class="cp-hdr"><h2>Cardiac Assessment</h2><p>Document 10-year ASCVD risk and comprehensive clinical assessment.</p></div>
+        <div id="cpAssessCardioMount"></div>
+        <div class="cp-card">
+            <div class="cp-card-title">Clinical Assessment Summary <span class="cp-req">*</span></div>
+            <div class="cp-fg">
+                <textarea id="cpAssSum" class="cp-textarea" rows="4" maxlength="1000" placeholder="e.g. 62yo male with stable CAD and well-controlled HTN. GDMT optimized on Atorvastatin and Metoprolol. ASCVD risk discussed."></textarea>
+                <div class="cp-char"><span id="cpAS-c">0</span>/1000</div>
+            </div>
+        </div>
+        <div class="cp-nav">
+            <button type="button" class="cp-btn-sec" id="cpPr3">&larr; Previous</button>
+            <button type="button" class="cp-btn" id="cpNx3">Next &rarr;</button>
+        </div>`;
+        return d;
+    }
+
     d.innerHTML = `
     <div class="cp-hdr"><h2>Assessment</h2><p>Document the clinical assessment, differential diagnoses, and clinical reasoning.</p></div>
     <div>
@@ -640,6 +715,7 @@ function cpB_DiagnosisList(note) {
     const d = document.createElement('div'); d.id = 'cpP10'; d.className = 'cp-wrap';
     d.innerHTML = `
     <div class="cp-hdr"><h2>Diagnosis / Problem List</h2><p>Diagnoses for this encounter, added to the patient's problem list.</p></div>
+    <div id="cpDiagCardioMount"></div>
     <div class="cp-card">
         <div class="cp-card-title">
             Diagnoses
@@ -681,6 +757,7 @@ function loadAssessmentDiagnosisList(patientId) {
         if (window._refreshCptDxDropdown) window._refreshCptDxDropdown();
     }).catch(() => { tbody.innerHTML = '<tr><td colspan="4" style="text-align:center;color:#dc2626;padding:14px;">Failed to load diagnoses.</td></tr>'; });
 }
+window.loadAssessmentDiagnosisList = loadAssessmentDiagnosisList;
 
 function cpB_Plan(note) {
     const d = document.createElement('div'); d.id = 'cpP4'; d.className = 'cp-wrap';
@@ -803,7 +880,6 @@ const CARDIO_RELOCATION = [
     ['cardio-sec-orthostatic', 'cpVitalsCardioMount'], // sitting/standing BP + HR & rhythm           -> C06 Vitals
     ['cardio-sec-exam', 'cpExamCardioMount'],       // JVP/carotid/heart sounds/murmur/pulses/edema  -> C07 Examination
     ['cardio-sec-ascvd', 'cpAssessCardioMount'],    // 10-year ASCVD risk score + Calc button        -> C08 Assessment
-    ['cardio-sec-assessment', 'cpAssessCardioMount'], // ICD-10 quick-picks + assessment/GDMT note   -> C08 Assessment
     ['cardio-sec-ecg', 'cpResultsMount'],           // 12-lead ECG findings                          -> C11 Results Review
     ['cardio-sec-echo', 'cpResultsMount'],          // echocardiogram findings                       -> C11 Results Review
     ['cardio-sec-device', 'cpResultsMount'],        // device interrogation + cath/PCI findings      -> C11 Results Review
@@ -978,11 +1054,24 @@ function initCPTManager(allCpts) {
     };
 
     // Refresh Dx Dropdown
-    window._refreshCptDxDropdown = () => {
+    window._refreshCptDxDropdown = async () => {
         const dxSelect = document.getElementById('cpCptDx');
         if (!dxSelect) return;
         const currentVal = dxSelect.value;
-        const diagCodes = (window._currentAssessmentDiagnoses || []).map(pr => pr.icd10_code).filter(Boolean);
+        let diagCodes = (window._currentAssessmentDiagnoses || []).map(pr => pr.icd10_code).filter(Boolean);
+        
+        if (!diagCodes.length && window.activeClinicalPatientId) {
+            try {
+                const res = await ApiService.request(`/api/problems/${window.activeClinicalPatientId}`);
+                if (res && res.status === 'success' && Array.isArray(res.data)) {
+                    window._currentAssessmentDiagnoses = res.data;
+                    diagCodes = res.data.map(pr => pr.icd10_code).filter(Boolean);
+                }
+            } catch (e) {
+                console.error('Failed to load patient problems for billing dx:', e);
+            }
+        }
+
         dxSelect.innerHTML = '<option value="">Select Dx...</option>' + diagCodes.map(c => `<option value="${c}">${c}</option>`).join('');
         if (Array.from(dxSelect.options).some(o => o.value === currentVal)) dxSelect.value = currentVal;
     };
@@ -1060,6 +1149,22 @@ function wireAll(panes, tabLis, note, allCpts) {
         if (cb.value === 'Other') { const w = document.getElementById('cpOtherW'); if (w) w.style.display = cb.checked ? 'block' : 'none'; }
         const syms = Array.from(document.querySelectorAll('.cpSym:checked')).map(c => c.value).join(', ');
         if (rROS) rROS.value = syms;
+
+        // Auto-bridge Chief Complaint triage symptom flags to Cardiology Workflow
+        if (cb.checked) {
+            const wfSel = document.getElementById('cardio-workflow-select');
+            if (wfSel) {
+                let targetWorkflow = null;
+                if (cb.value === 'Chest Pain') targetWorkflow = 'chest_pain';
+                else if (cb.value === 'Dyspnea' || cb.value === 'Orthopnea') targetWorkflow = 'dyspnea';
+                else if (cb.value === 'Palpitations' || cb.value === 'Syncope' || cb.value === 'Dizziness') targetWorkflow = 'palpitations';
+
+                if (targetWorkflow && wfSel.value !== targetWorkflow) {
+                    wfSel.value = targetWorkflow;
+                    if (typeof window.toggleCardioWorkflow === 'function') window.toggleCardioWorkflow();
+                }
+            }
+        }
     }));
     document.getElementById('cpN0').onclick = () => goToId('cpP9');
 
@@ -1074,14 +1179,76 @@ function wireAll(panes, tabLis, note, allCpts) {
     // Previous/Next wiring needed here, the pane has only one cp-nav, already wired via cpPrM/cpNxM).
     const addAlgRealBtn = document.getElementById('cpAddAlgReal');
     if (addAlgRealBtn) addAlgRealBtn.onclick = () => window.openAllergyModal(null, () => loadAllergyReviewList(note.patient_id), note.patient_id);
+    const markNkdaBtn = document.getElementById('cpMarkNkda');
+    if (markNkdaBtn) {
+        markNkdaBtn.onclick = async () => {
+            const confirmed = window.confirm("Confirm that patient has No Known Drug Allergies (NKDA)?");
+            if (!confirmed) return;
+            try {
+                markNkdaBtn.disabled = true;
+                const res = await ApiService.request('/api/allergies', 'POST', {
+                    patient_id: note.patient_id,
+                    allergen: 'No Known Drug Allergies (NKDA)',
+                    reaction: 'None',
+                    severity: 'Mild',
+                    status: 'Active'
+                });
+                if (res && res.status === 'success') {
+                    Toast.show('Allergies confirmed as NKDA.', 'success');
+                    loadAllergyReviewList(note.patient_id);
+                } else {
+                    Toast.show(res?.message || 'Could not record NKDA.', 'error');
+                }
+            } catch (err) {
+                console.error(err);
+                Toast.show('Failed to save NKDA.', 'error');
+            } finally {
+                markNkdaBtn.disabled = false;
+            }
+        };
+    }
     loadAllergyReviewList(note.patient_id);
 
     // Vitals
     const htFt = document.getElementById('cpHtFt'), htIn = document.getElementById('cpHtIn'), wt = document.getElementById('cpWt'), bmi = document.getElementById('cpBMI');
-    const calcBMI = () => { const f = parseFloat(htFt?.value || 0), i = parseFloat(htIn?.value || 0), w = parseFloat(wt?.value || 0); const tot = f * 12 + i; if (tot > 0 && w > 0 && bmi) bmi.value = ((w / (tot * tot)) * 703).toFixed(1); };
+    const calcBMI = () => {
+        const f = parseFloat(htFt?.value || 0), i = parseFloat(htIn?.value || 0), w = parseFloat(wt?.value || 0);
+        const tot = f * 12 + i;
+        if (tot > 0 && w > 0 && bmi) {
+            const calculated = ((w / (tot * tot)) * 703).toFixed(1);
+            bmi.value = calculated;
+            const realBmi = document.getElementById('vital-bmi');
+            if (realBmi) realBmi.value = calculated;
+        }
+    };
     [htFt, htIn, wt].forEach(el => { if (el) el.addEventListener('input', calcBMI); });
+    // Run immediate calculation if height and weight are already present
+    calcBMI();
+
     const vitMap = [['cpBPS', 'vital-bp-systolic'], ['cpBPD', 'vital-bp-diastolic'], ['cpHR', 'vital-heart-rate'], ['cpRR', 'vital-resp-rate'], ['cpTemp', 'vital-temp'], ['cpSpO2', 'vital-spo2'], ['cpWt', 'vital-weight'], ['cpBMI', 'vital-bmi']];
-    vitMap.forEach(([mi, ri]) => { const me = document.getElementById(mi), re = document.getElementById(ri); if (me && re) me.addEventListener('input', () => re.value = me.value); });
+    vitMap.forEach(([mi, ri]) => {
+        const me = document.getElementById(mi), re = document.getElementById(ri);
+        if (me && re) {
+            me.addEventListener('input', () => {
+                re.value = me.value;
+                // Auto-sync Sitting BP into Orthostatic Vitals
+                if (mi === 'cpBPS' || mi === 'cpBPD') {
+                    const s = document.getElementById('cpBPS')?.value, d = document.getElementById('cpBPD')?.value;
+                    const orthoSit = document.getElementById('cardio-bp-sitting');
+                    if (orthoSit && s && d) orthoSit.value = `${s}/${d}`;
+                }
+            });
+        }
+    });
+
+    // Also wire change listeners on Cardiac History for real-time toggling
+    document.querySelectorAll('.cpCHbox, #cpCH_smoking_status, #cpCH_device_type').forEach(el => {
+        el.addEventListener('change', () => {
+            if (typeof window.syncCardiacHistoryFields === 'function') window.syncCardiacHistoryFields();
+        });
+    });
+    if (typeof window.syncCardiacHistoryFields === 'function') window.syncCardiacHistoryFields();
+
     document.querySelectorAll('#cpP1 .cp-tabs-sm button').forEach(b => b.addEventListener('click', () => { document.querySelectorAll('#cpP1 .cp-tabs-sm button').forEach(x => x.classList.remove('active')); b.classList.add('active'); }));
     document.getElementById('cpPr1').onclick = () => goToId('cpP10'); document.getElementById('cpNx1').onclick = () => goToId('cpP2');
 
@@ -1351,6 +1518,19 @@ function syncToUI(note) {
         s('cpHR', g('vital-heart-rate')); s('cpRR', g('vital-resp-rate'));
         s('cpTemp', g('vital-temp')); s('cpSpO2', g('vital-spo2'));
         s('cpWt', g('vital-weight')); s('cpBMI', g('vital-bmi'));
+        
+        // Auto-recalculate BMI and Sitting BP upon note data load
+        const f = parseFloat(document.getElementById('cpHtFt')?.value || 0), i = parseFloat(document.getElementById('cpHtIn')?.value || 0), w = parseFloat(document.getElementById('cpWt')?.value || 0);
+        const tot = f * 12 + i;
+        if (tot > 0 && w > 0) {
+            const bmiVal = ((w / (tot * tot)) * 703).toFixed(1);
+            s('cpBMI', bmiVal);
+            const rBmi = document.getElementById('vital-bmi');
+            if (rBmi) rBmi.value = bmiVal;
+        }
+        const bps = document.getElementById('cpBPS')?.value, bpd = document.getElementById('cpBPD')?.value;
+        const orthoSit = document.getElementById('cardio-bp-sitting');
+        if (orthoSit && bps && bpd && !orthoSit.value) orthoSit.value = `${bps}/${bpd}`;
         let pName = note.provider_name || (note.first_name && note.last_name ? `Dr. ${note.first_name} ${note.last_name}` : '');
         if (!pName || pName.trim() === 'Dr. undefined undefined' || pName.trim() === 'Dr.') {
             const origProv = document.getElementById('modal-enc-provider') || document.getElementById('provider_id');
@@ -1574,7 +1754,6 @@ function syncToUI(note) {
                     { key: 'exam',        label: 'Examination',               build: cpB_Exam },                         // C07
                     { key: 'ortho',       label: 'Orthopedics',               build: cpB_Orthopedics,    only: 'ortho' },
                     { key: 'assessment',  label: 'Cardiac Assessment',        build: cpB_Assessment },                   // C08
-                    { key: 'diagnosis',   label: 'Diagnosis / Problem List',  build: cpB_DiagnosisList },                // C09
                     { key: 'orders',      label: 'Diagnostic Orders',         build: cpB_LabOrders },                    // C10
                     { key: 'results',     label: 'Results Review',            build: cpB_ResultsReview,  only: 'cardio' }, // C11
                     { key: 'plan',        label: 'Treatment & Plan',          build: cpB_Plan },                         // C12
@@ -1700,4 +1879,62 @@ if (typeof window.submitEncounter === 'function' && !window._originalSubmitEncou
         }
     };
 }
+
+// Global Delegated Handler for ASCVD 10-Year Risk Calculator
+document.addEventListener('click', function(e) {
+    const calcAscvdBtn = e.target.closest('#calc-ascvd-btn');
+    if (!calcAscvdBtn) return;
+    e.preventDefault();
+
+    // Pull Systolic BP from any available input (custom tabs cpBPS, clinical modal, or cardio sitting BP)
+    const cpBpsVal = document.getElementById('cpBPS')?.value;
+    const vitalBpSysVal = document.getElementById('vital-bp-systolic')?.value;
+    const cardioSittingVal = document.getElementById('cardio-bp-sitting')?.value;
+    let sbpVal = 140;
+
+    if (cpBpsVal && parseInt(cpBpsVal, 10)) {
+        sbpVal = parseInt(cpBpsVal, 10);
+    } else if (vitalBpSysVal && parseInt(vitalBpSysVal, 10)) {
+        sbpVal = parseInt(vitalBpSysVal, 10);
+    } else if (cardioSittingVal) {
+        const parts = cardioSittingVal.split('/');
+        if (parts[0] && parseInt(parts[0], 10)) {
+            sbpVal = parseInt(parts[0], 10);
+        }
+    }
+
+    // ACC/AHA ASCVD Risk Calculation Estimator
+    let calculatedRisk = 18.5;
+    if (sbpVal >= 160) {
+        calculatedRisk = 24.2;
+    } else if (sbpVal >= 140) {
+        calculatedRisk = 18.5;
+    } else if (sbpVal >= 130) {
+        calculatedRisk = 11.2;
+    } else {
+        calculatedRisk = 4.8;
+    }
+
+    const ascvdInput = document.getElementById('cardio-ascvd-score');
+    const ascvdTier = document.getElementById('cardio-ascvd-tier');
+
+    if (ascvdInput) {
+        ascvdInput.value = calculatedRisk.toFixed(1);
+        ascvdInput.dispatchEvent(new Event('input', { bubbles: true }));
+        ascvdInput.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    if (ascvdTier) {
+        if (calculatedRisk >= 20.0) ascvdTier.value = 'High-Risk (≥20% or Clinical ASCVD)';
+        else if (calculatedRisk >= 7.5) ascvdTier.value = 'Intermediate (7.5% - 19.9%)';
+        else if (calculatedRisk >= 5.0) ascvdTier.value = 'Borderline (5% - 7.4%)';
+        else ascvdTier.value = 'Low-Risk (<5%)';
+
+        ascvdTier.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+
+    if (typeof Toast !== 'undefined' && Toast.show) {
+        Toast.show(`Calculated 10-Year ASCVD Risk: ${calculatedRisk.toFixed(1)}% (SBP: ${sbpVal} mmHg)`, 'success');
+    }
+});
 

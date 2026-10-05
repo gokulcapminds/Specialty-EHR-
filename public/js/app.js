@@ -5405,6 +5405,8 @@ async function initReportsHandler() {
         else if (activeTab === 'users') loadUsers();
         else if (activeTab === 'specialties') loadSpecialties();
         else if (activeTab === 'invoices') loadInvoices();
+        // audit tab load() is hoisted via window after it is defined below
+        else if (activeTab === 'audit' && typeof window._auditLoad === 'function') window._auditLoad();
     };
 
     // Refresh & Export Toolbar handlers
@@ -5433,7 +5435,7 @@ async function initReportsHandler() {
     let firstLoad = true;       // the first successful load records one "View Audit Log" entry (paging/filtering does not)
     let facetsFilled = false;
     const tbody = byId('audit-trail-list');
-    const COLS = 8;
+    const COLS = 7;
 
     // The browser's local day -> UTC boundaries (the log stores UTC).
     const toUtc = (dateStr, endOfDay) => {
@@ -5497,6 +5499,7 @@ async function initReportsHandler() {
         state.page = res.page;
 
         if (byId('kpi-audit-total')) byId('kpi-audit-total').textContent = Number(res.total || 0).toLocaleString();
+        const pages = Math.ceil((res.total || 1) / (res.per_page || 25));
         if (byId('kpi-audit-page')) byId('kpi-audit-page').textContent = `${res.page} of ${pages}`;
         if (byId('rep-audit-count-badge')) byId('rep-audit-count-badge').textContent = `${Number(res.total || 0).toLocaleString()} events`;
         if (res.facets && res.facets.modules && byId('kpi-audit-modules')) {
@@ -5511,7 +5514,6 @@ async function initReportsHandler() {
                     <td class="rep-time">${fmtTime(r.timestamp)}</td>
                     <td><strong style="color:#1e293b;">${calEscape(r.username || 'System')}</strong></td>
                     <td>${r.user_role ? `<span class="rep-tag">${calEscape(r.user_role)}</span>` : '<span class="rep-muted">&mdash;</span>'}</td>
-                    <td>${patientCell(r)}</td>
                     <td>${calEscape(r.action_type)}</td>
                     <td><span class="rep-tag" style="background:#f0fdf4; color:#166534; border:1px solid #bbf7d0;">${calEscape(r.target_module)}</span></td>
                     <td class="rep-mono">${calEscape(r.ip_address)}</td>
@@ -5528,6 +5530,8 @@ async function initReportsHandler() {
             onPageSizeChange: (size) => { state.perPage = size; state.page = 1; load(); }
         });
     };
+    // Expose audit load so loadCurrentTab (defined before this point) can call it
+    window._auditLoad = load;
 
     // ---- integrity check ----
     const setPill = (kind, text) => {
@@ -5581,6 +5585,11 @@ async function initReportsHandler() {
         // A normal navigation: the session cookie goes along and the server answers with a file download.
         window.location.href = ApiService.getBaseUrl() + 'api/reports/audit/export?' + filterParams().toString();
     };
+
+    // Wire the audit tab button to trigger a fresh load (accounts for switching from another tab)
+    if (auditTabBtn) {
+        auditTabBtn.addEventListener('click', () => { state.page = 1; load(); });
+    }
 
     await load();
     verify();
@@ -18798,6 +18807,12 @@ function toggleCardioWorkflow() {
         const workflows = block.getAttribute('data-workflow').split(/\s+/);
         block.style.display = workflows.includes(workflow) ? '' : 'none';
     });
+
+    // Subflow field-level filtering inside Card 2 (Cardiac Symptoms & Functional Staging)
+    document.querySelectorAll('[data-cardio-subflow]').forEach(el => {
+        const subflows = el.getAttribute('data-cardio-subflow').split(/\s+/);
+        el.style.display = subflows.includes(workflow) ? '' : 'none';
+    });
 }
 window.toggleCardioWorkflow = toggleCardioWorkflow;
 document.addEventListener('change', (e) => {
@@ -19225,7 +19240,7 @@ async function initClinicalHandler() {
     togglePanels();
 
     // Cardiology ICD-10 Quick Selection Buttons Handler
-    document.addEventListener('click', (e) => {
+    document.addEventListener('click', async (e) => {
         const cardioIcdBtn = e.target.closest('.cardio-icd-btn');
         if (cardioIcdBtn) {
             const code = cardioIcdBtn.dataset.code;
@@ -19234,25 +19249,66 @@ async function initClinicalHandler() {
             
             const clinicalIcd10 = document.getElementById('clinical-icd10');
             const cardioAssessment = document.getElementById('cardio-assessment');
+            const patientId = window.activeClinicalPatientId || document.getElementById('clinical-patient-select')?.value;
             
             if (clinicalIcd10) {
                 if (clinicalIcd10.value.includes(code)) {
-                    Toast.show(`${code} is already added to diagnoses.`, 'info');
+                    Toast.show(`${code} is already in diagnosis codes.`, 'info');
                 } else {
                     clinicalIcd10.value = clinicalIcd10.value.trim() ? (clinicalIcd10.value.trim() + '\n' + textToAdd) : textToAdd;
-                    Toast.show(`Added ${code} to Diagnosis Codes`, 'success');
                 }
             }
             if (cardioAssessment && !cardioAssessment.value.includes(code)) {
                 cardioAssessment.value = cardioAssessment.value.trim() ? (cardioAssessment.value.trim() + '\n• Assessment: ' + textToAdd) : ('• Assessment: ' + textToAdd);
+            }
+
+            // Also persist directly into the official Diagnosis / Problem List table
+            if (patientId) {
+                try {
+                    cardioIcdBtn.disabled = true;
+                    const res = await ApiService.request('/api/problems', 'POST', {
+                        patient_id: patientId,
+                        description: desc,
+                        icd10_code: code,
+                        chronicity: 'Chronic',
+                        status: 'Active'
+                    });
+                    if (res && res.status === 'success') {
+                        Toast.show(`Added ${code} (${desc}) to Problem List`, 'success');
+                        if (typeof window.loadAssessmentDiagnosisList === 'function') {
+                            window.loadAssessmentDiagnosisList(patientId);
+                        }
+                    } else {
+                        Toast.show(res?.message || `Added ${code} to codes.`, 'info');
+                    }
+                } catch (err) {
+                    console.error('Error auto-adding diagnosis:', err);
+                } finally {
+                    cardioIcdBtn.disabled = false;
+                }
+            } else {
+                Toast.show(`Added ${code} to Diagnosis Codes`, 'success');
             }
         }
 
         // Real-time ASCVD Risk Calculator Button
         const calcAscvdBtn = e.target.closest('#calc-ascvd-btn');
         if (calcAscvdBtn) {
-            const sbpVal = parseInt(document.getElementById('vital-bp-systolic')?.value || document.getElementById('cardio-bp-sitting')?.value || '158');
-            const ageVal = 62; // standard adult risk calculation factor
+            const cpBps = document.getElementById('cpBPS')?.value;
+            const vitalSys = document.getElementById('vital-bp-systolic')?.value;
+            const cardioSitting = document.getElementById('cardio-bp-sitting')?.value;
+            let sbpVal = 140;
+
+            if (cpBps && parseInt(cpBps, 10)) {
+                sbpVal = parseInt(cpBps, 10);
+            } else if (vitalSys && parseInt(vitalSys, 10)) {
+                sbpVal = parseInt(vitalSys, 10);
+            } else if (cardioSitting) {
+                const parts = cardioSitting.split('/');
+                if (parts[0] && parseInt(parts[0], 10)) {
+                    sbpVal = parseInt(parts[0], 10);
+                }
+            }
             
             // ACC/AHA ASCVD Risk Calculation Estimator
             let calculatedRisk = 18.5;
@@ -19268,14 +19324,19 @@ async function initClinicalHandler() {
 
             const ascvdInput = document.getElementById('cardio-ascvd-score');
             const ascvdTier = document.getElementById('cardio-ascvd-tier');
-            if (ascvdInput) ascvdInput.value = calculatedRisk.toFixed(1);
+            if (ascvdInput) {
+                ascvdInput.value = calculatedRisk.toFixed(1);
+                ascvdInput.dispatchEvent(new Event('input', { bubbles: true }));
+                ascvdInput.dispatchEvent(new Event('change', { bubbles: true }));
+            }
             if (ascvdTier) {
                 if (calculatedRisk >= 20.0) ascvdTier.value = 'High-Risk (≥20% or Clinical ASCVD)';
                 else if (calculatedRisk >= 7.5) ascvdTier.value = 'Intermediate (7.5% - 19.9%)';
                 else if (calculatedRisk >= 5.0) ascvdTier.value = 'Borderline (5% - 7.4%)';
                 else ascvdTier.value = 'Low-Risk (<5%)';
+                ascvdTier.dispatchEvent(new Event('change', { bubbles: true }));
             }
-            Toast.show(`Calculated 10-Year ASCVD Risk: ${calculatedRisk.toFixed(1)}%`, 'success');
+            Toast.show(`Calculated 10-Year ASCVD Risk: ${calculatedRisk.toFixed(1)}% (SBP: ${sbpVal} mmHg)`, 'success');
         }
     });
 

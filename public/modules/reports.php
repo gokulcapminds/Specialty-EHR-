@@ -603,7 +603,6 @@
                                     <th>Time</th>
                                     <th>User</th>
                                     <th>Role</th>
-                                    <th>Patient</th>
                                     <th>Action</th>
                                     <th>Module</th>
                                     <th>IP Address</th>
@@ -611,7 +610,7 @@
                                 </tr>
                             </thead>
                             <tbody id="audit-trail-list">
-                                <tr><td colspan="8" class="rep-empty">Loading audit log...</td></tr>
+                                <tr><td colspan="7" class="rep-empty">Loading audit log...</td></tr>
                             </tbody>
                         </table>
                     </div>
