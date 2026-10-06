@@ -123,6 +123,21 @@ initClinicalTabs();
     .cp-diag-inp-wrap{position:relative;}
     .cp-ro{padding:6px 9px;background:#f8fafc;border:1px solid #e2e8f0;border-radius:5px;font-size:0.85rem;color:#0f172a;min-height:33px;box-sizing:border-box;}
     .cp-note{font-size:0.78rem;color:#64748b;margin:8px 0 0;}
+    /* Clinical Stepper Navigation (Completely Flat, Blue Text Only) */
+    .cp-stepper-nav{display:flex;background:#fff;border-bottom:2px solid #e2e8f0;padding:0 12px;gap:12px;overflow-x:auto;}
+    .cp-step-item{display:flex;align-items:center;padding:12px 14px;cursor:pointer;font-weight:600;font-size:0.86rem;color:#64748b;background:transparent;border:none;border-bottom:2px solid transparent;margin-bottom:-2px;white-space:nowrap;transition:all .15s ease;}
+    .cp-step-item:hover{color:#0284c7;}
+    .cp-step-item.active{background:transparent;color:#0284c7;border-bottom:2px solid #0284c7;font-weight:700;}
+    /* Segmented Inner Sub-Pills (Zero Scroll) */
+    .cp-subpill-nav{display:inline-flex;gap:4px;background:#e2e8f0;padding:4px;border-radius:8px;margin-bottom:12px;}
+    .cp-subpill{padding:6px 14px;font-size:0.81rem;font-weight:600;border-radius:6px;color:#475569;cursor:pointer;border:none;background:transparent;transition:all .15s ease;display:inline-flex;align-items:center;gap:5px;}
+    .cp-subpill:hover{color:#0284c7;background:rgba(255,255,255,0.6);}
+    .cp-subpill.active{background:#fff;color:#0284c7;box-shadow:0 1px 3px rgba(0,0,0,0.1);}
+    /* Info (i) Tooltip Icon */
+    .cp-info-tip{display:inline-flex;align-items:center;justify-content:center;width:18px;height:18px;border-radius:50%;background:#e0f2fe;color:#0284c7;font-size:0.75rem;font-weight:700;cursor:help;margin-left:6px;vertical-align:middle;position:relative;border:1px solid #bae6fd;}
+    .cp-info-tip:hover{background:#0284c7;color:#fff;}
+    .cp-info-tip:hover::after{content:attr(data-tip);position:absolute;top:130%;left:0;background:#0f172a;color:#fff;padding:8px 12px;border-radius:6px;font-size:0.76rem;font-weight:400;white-space:normal;width:max-content;max-width:320px;z-index:999999;box-shadow:0 4px 14px rgba(0,0,0,0.18);pointer-events:none;line-height:1.4;}
+    .cp-info-tip:hover::before{content:'';position:absolute;top:105%;left:5px;border:5px solid transparent;border-bottom-color:#0f172a;z-index:999999;}
     `;
     document.head.appendChild(s);
 })();
@@ -458,25 +473,46 @@ function saveCardiacProfile(patientId) {
  */
 function wireWorkflowNav(panes, tabLis, labels) {
     panes.forEach((pane, i) => {
-        pane.querySelectorAll('.cp-nav button').forEach(btn => {
-            const txt = (btn.textContent || '').trim().toLowerCase();
-            if (txt.startsWith('next')) {
-                if (i < panes.length - 1) {
-                    btn.onclick = () => tabLis[i + 1].onclick();
-                    btn.innerHTML = `Next: ${cpEsc(labels[i + 1])} &rarr;`;
-                    btn.style.display = '';
-                } else {
-                    btn.style.display = 'none';          // last screen has nowhere to go
-                }
-            } else if (txt.includes('previous')) {
-                if (i > 0) {
-                    btn.onclick = () => tabLis[i - 1].onclick();
-                    btn.style.display = '';
-                } else {
-                    btn.style.display = 'none';
-                }
+        // A pane's own .cp-nav can hold more than a Previous/Next pair - cpB_Sign's does (#cpSignBtn, wired
+        // in wireAll() with its real submit handler). Grab it by reference BEFORE hiding that nav below, so
+        // the actual node (not a relabeled copy) can be moved into the unified footer instead of being
+        // discarded along with the rest of that now-hidden nav - that discard is what made Sign Encounter
+        // silently disappear (Save Draft survived because it isn't inside a .cp-nav).
+        const signBtn = pane.querySelector('#cpSignBtn');
+
+        // Hide intermediate sub-card nav bars to keep the interface clean and unified
+        pane.querySelectorAll('.cp-nav').forEach(nav => {
+            if (!nav.classList.contains('cp-stage-footer-nav')) {
+                nav.style.display = 'none';
             }
         });
+
+        // Add or reuse unified Stage Footer Navigation
+        let footerNav = pane.querySelector('.cp-stage-footer-nav');
+        if (!footerNav) {
+            footerNav = document.createElement('div');
+            footerNav.className = 'cp-nav cp-stage-footer-nav';
+            footerNav.style.cssText = 'margin-top:20px;padding:14px 20px;background:#fff;border-radius:8px;border:1px solid #e2e8f0;display:flex;justify-content:space-between;align-items:center;box-shadow:0 1px 3px rgba(0,0,0,0.04);';
+            pane.appendChild(footerNav);
+        }
+
+        const prevHtml = i > 0
+            ? `<button type="button" class="cp-btn-sec cp-stage-prev-btn">&larr; Previous: ${cpEsc(labels[i - 1])}</button>`
+            : `<div></div>`;
+        const nextHtml = i < panes.length - 1
+            ? `<button type="button" class="cp-btn cp-stage-next-btn">Next: ${cpEsc(labels[i + 1])} &rarr;</button>`
+            : `<div></div>`;
+
+        footerNav.innerHTML = `${prevHtml}${nextHtml}`;
+
+        const prevBtn = footerNav.querySelector('.cp-stage-prev-btn');
+        if (prevBtn) prevBtn.onclick = () => { tabLis[i - 1].click(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+
+        const nextBtn = footerNav.querySelector('.cp-stage-next-btn');
+        if (nextBtn) nextBtn.onclick = () => { tabLis[i + 1].click(); window.scrollTo({ top: 0, behavior: 'smooth' }); };
+
+        // Swap the placeholder slot for the real Sign button (same node, so its wireAll() onclick comes with it).
+        if (signBtn) footerNav.replaceChild(signBtn, footerNav.lastElementChild);
     });
 }
 
@@ -838,9 +874,8 @@ function cpB_Sign(note) {
     const today = new Date().toISOString().slice(0, 10);
     const d = document.createElement('div'); d.id = 'cpP7'; d.className = 'cp-wrap';
     d.innerHTML = `
-    <div class="cp-hdr" style="display:flex;justify-content:space-between;align-items:flex-start;">
-        <div><h2>Sign Encounter</h2><p>Review and finalize this encounter note.</p></div>
-        <button type="button" class="cp-btn-sec cp-btn-sm" id="cpSaveDraft">Save Draft</button>
+    <div style="display:flex;justify-content:flex-end;margin-bottom:8px;">
+        <button type="button" class="cp-btn-sec cp-btn-sm" id="cpSaveDraft"><i class="fas fa-save" style="margin-right:4px;"></i> Save Draft</button>
     </div>
     <div class="cp-card">
         <div class="cp-card-title">Encounter Summary</div>
@@ -888,6 +923,37 @@ const CARDIO_RELOCATION = [
     ['cardio-sec-htnplan', 'cpPlanCardioMount'],    // HTN medication/lifestyle plan                 -> C12 Treatment & Plan
 ];
 const CARDIO_SECTION_IDS = CARDIO_RELOCATION.map(([id]) => id);
+
+// Pulls #cardio-form/#ortho-form (and every relocated cardio-sec-*) back to their static home inside the hidden
+// clinical modal - exposed globally because it has to run from TWO places: here, right before this override
+// rebuilds the tab panes (the original reason this existed - a stale cpP8/cpP11 would otherwise take the form
+// down with it via .remove()); and from window.openEncounterInChart (app.js), BEFORE it calls
+// window.openPatientChart() to switch to a different encounter. That second call site matters because
+// relocateCardioSections() moves cardio-sec-* OUT of their static home and INTO mount points that live inside
+// #patient-dashboard-full-content - and openPatientChart replaces that whole element's innerHTML on every call.
+// Without rescuing first, opening a second encounter in the same chart session wiped every relocated cardio-sec-*
+// out of existence (not just out of place) before this override's own rescue ever got a chance to run, silently
+// emptying every cardio-specific screen (ASCVD, exam findings, ECG/Echo/Device/Holter/Labs, HTN plan) on the
+// second and every later encounter opened in that session.
+function rescueClinicalFormSections() {
+    const cardioFormEl = document.getElementById('cardio-form');
+    const cardioFormHome = document.getElementById('accordion-cardio');
+    if (cardioFormEl) {
+        CARDIO_SECTION_IDS.forEach(id => {
+            const el = document.getElementById(id);
+            if (el && el.parentElement !== cardioFormEl) cardioFormEl.appendChild(el);
+        });
+    }
+    if (cardioFormEl && cardioFormHome && cardioFormEl.parentElement !== cardioFormHome) {
+        cardioFormHome.appendChild(cardioFormEl);
+    }
+    const orthoFormEl = document.getElementById('ortho-form');
+    const orthoFormHome = document.getElementById('accordion-ortho');
+    if (orthoFormEl && orthoFormHome && orthoFormEl.parentElement !== orthoFormHome) {
+        orthoFormHome.appendChild(orthoFormEl);
+    }
+}
+window.rescueClinicalFormSections = rescueClinicalFormSections;
 
 // Moves every cardio-sec-* into its target pane's mount point, in CARDIO_RELOCATION order (so sections that
 // share a mount, e.g. cardio-sec-top then cardio-sec-hpi both into #cpHpiMount, land in the right order).
@@ -963,7 +1029,6 @@ function cpB_Orthopedics(note) {
 function cpB_Billing(note, allCpts) {
     const d = document.createElement('div'); d.id = 'cpP6'; d.className = 'cp-wrap';
     d.innerHTML = `
-    <div class="cp-hdr"><h2>Billing — CPT-4 Charge Capture</h2><p>Add procedure codes and finalize charges for this encounter.</p></div>
     <div class="cp-card">
         <div class="cp-card-title">Add CPT-4 Code <span class="cp-badge cp-badge-sky">CPT-4</span></div>
         <div style="display:flex;gap:10px;align-items:flex-end;flex-wrap:wrap;margin-bottom:10px;">
@@ -1693,7 +1758,7 @@ function syncToUI(note) {
                 sp.style.cssText = 'display:flex;align-items:center;gap:14px;color:#334155;font-size:0.85rem;';
                 const encNum = 'ENC-' + String(note.id || '').padStart(5, '0');
                 const encDate = (note.note_date || new Date().toISOString()).split(/[T\s]/)[0];
-                sp.innerHTML = `<span style="display:flex;align-items:center;gap:4px;"><i class="fas fa-hashtag" style="color:#0284c7;"></i> <strong>Encounter:</strong> ${encNum}</span><span style="display:flex;align-items:center;gap:4px;"><i class="fas fa-calendar-check" style="color:#0284c7;"></i> <strong>Date:</strong> ${encDate}</span>`;
+                sp.innerHTML = `<span style="display:flex;align-items:center;gap:4px;"><strong>Encounter:</strong> ${encNum}</span><span style="display:flex;align-items:center;gap:4px;"><i class="fas fa-calendar-check" style="color:#0284c7;"></i> <strong>Date:</strong> ${encDate}</span>`;
                 infoCont.appendChild(sp);
             }
 
@@ -1707,88 +1772,235 @@ function syncToUI(note) {
             const isCardioEncounter = (note.encounter_type || '').toLowerCase().includes('cardio');
             const isOrthoEncounter = (note.encounter_type || '').toLowerCase().includes('ortho');
 
-            // Rescue the real #cardio-form / #ortho-form back to their home inside the (hidden)
-            // clinical modal BEFORE removing any previous render's panes below — otherwise a stale
-            // cpP8/cpP11 containing the form would take it (and all its data) down with it via .remove().
-            const cardioFormEl = document.getElementById('cardio-form');
-            const cardioFormHome = document.getElementById('accordion-cardio');
-            // The mega cardio-form was split into 12 independently-relocatable sections (cardio-sec-*, each still
-            // serialized into cardio_data via an explicit form="cardio-form" attribute on every control - see
-            // clinical_modal.php). Each one gets appendChild'd into whichever tab pane it belongs to on every render
-            // (below). Rescue them ALL back inside #cardio-form first, same reason as the whole-form rescue above:
-            // otherwise the cpP*.remove() cleanup a few lines down deletes the real fields along with the stale pane.
-            if (cardioFormEl) {
-                CARDIO_SECTION_IDS.forEach(id => {
-                    const el = document.getElementById(id);
-                    if (el && el.parentElement !== cardioFormEl) cardioFormEl.appendChild(el);
-                });
-            }
-            if (cardioFormEl && cardioFormHome && cardioFormEl.parentElement !== cardioFormHome) {
-                cardioFormHome.appendChild(cardioFormEl);
-            }
-            const orthoFormEl = document.getElementById('ortho-form');
-            const orthoFormHome = document.getElementById('accordion-ortho');
-            if (orthoFormEl && orthoFormHome && orthoFormEl.parentElement !== orthoFormHome) {
-                orthoFormHome.appendChild(orthoFormEl);
-            }
+            // Rescue the real #cardio-form / #ortho-form (and every relocated cardio-sec-*) back to their home
+            // inside the (hidden) clinical modal BEFORE removing any previous render's panes below - otherwise a
+            // stale cpP8/cpP11 containing the form would take it (and all its data) down with it via .remove().
+            // (window.openEncounterInChart in app.js also calls this, earlier, before it even gets here - see
+            // rescueClinicalFormSections's own comment for why that second call site is required too.)
+            rescueClinicalFormSections();
 
             const tabMenu = document.getElementById('chart-sidebar-menu');
             if (tabMenu) {
                 tabMenu.style.display = 'none';
                 const ex = document.querySelector('.inline-encounter-tabs'); if (ex) ex.remove();
                 for (let i = 0; i < 16; i++) { const p = document.getElementById(`cpP${i}`); if (p) p.remove(); }
+                // The 5-stage stepper's top-level panes (cpStage1..6, built by createStageWithSubPills/inline below)
+                // aren't cpP0..15-numbered, so the loop above never touched them - they were left behind as hidden
+                // orphans on every re-render after the first. Mount points like #cpAssessCardioMount/#cpVitalsCardioMount
+                // aren't unique per render, so getElementById(mountId) in relocateCardioSections() would then find the
+                // STALE orphaned copy (first in document order) instead of the current visible one, leaving every
+                // cardio-sec-* section (ASCVD, exam findings, ECG/Echo/Device/Holter/Labs, HTN plan) silently empty on
+                // every encounter opened after the first one in a page session. Runs after the rescue above, so any
+                // cardio-sec-* still inside a stale pane has already been pulled back out into #cardio-form first.
+                document.querySelectorAll('.cp-stage-pane').forEach(p => p.remove());
 
-                // The encounter workflow in one keyed list, in the order the clinician walks it (C01-C14).
-                // Keyed, not index-based: steps below look themselves up by `key`, so inserting or reordering a
-                // screen here can never silently point Billing/Sign at the wrong pane again.
-                // The owner's exact C01-C14 order. ortho is interleaved at its natural position (after Vitals,
-                // where Cardiac HPI/Exam would otherwise sit) since this app's ortho workflow predates the
-                // 14-screen cardiology plan and was never asked to be split the same way - it stays one pane.
-                const tabSpecs = [
-                    { key: 'visit',       label: 'Visit Details',             build: cpB_VisitDetails },                 // C01
-                    { key: 'cc',          label: 'Chief Complaint',           build: cpB_CC },                           // C02
-                    { key: 'hpi',         label: 'Cardiac HPI',               build: cpB_CardiacHPI,     only: 'cardio' }, // C03
-                    { key: 'history',     label: 'Cardiac History',           build: cpB_CardiacHistory, only: 'cardio' }, // C04
-                    { key: 'medsallergy', label: 'Medications & Allergies',   build: cpB_MedsAllergies },                // C05
-                    { key: 'vitals',      label: 'Vitals',                    build: cpB_Vitals },                       // C06
-                    { key: 'exam',        label: 'Examination',               build: cpB_Exam },                         // C07
-                    { key: 'ortho',       label: 'Orthopedics',               build: cpB_Orthopedics,    only: 'ortho' },
-                    { key: 'assessment',  label: 'Cardiac Assessment',        build: cpB_Assessment },                   // C08
-                    { key: 'orders',      label: 'Diagnostic Orders',         build: cpB_LabOrders },                    // C10
-                    { key: 'results',     label: 'Results Review',            build: cpB_ResultsReview,  only: 'cardio' }, // C11
-                    { key: 'plan',        label: 'Treatment & Plan',          build: cpB_Plan },                         // C12
-                    { key: 'billing',     label: 'Billing',                   build: (n) => cpB_Billing(n, allCpts) },
-                    { key: 'sign',        label: 'Summary & Sign',            build: cpB_Sign },                        // C14
-                ].filter(s => !s.only || (s.only === 'cardio' ? isCardioEncounter : isOrthoEncounter));
-                // C13 Follow-up is not built yet - no existing UI to relocate here, needs the patient_recalls
-                // wiring that is still pending (see CLAUDE.md, Cardiology encounter workflow section).
+                // ══════════════════════════════════════════════════════════════════
+                // OPTION 1: 5-STAGE CLINICAL STEPPER WORKFLOW
+                // Stage 1: Intake & History (Visit Details, CC, HPI, History, Meds & Allergies)
+                // Stage 2: Objective Exam (Vitals + ASCVD Calc, Physical Exam, Ortho)
+                // Stage 3: Diagnostics & Labs (Orders Requisition + Results Review)
+                // Stage 4: Assessment & Plan (Cardiac Assessment + Treatment Plan)
+                // Stage 5: Billing & Sign (CPT-4 Charge Capture + Encounter Sign-Off)
+                // ══════════════════════════════════════════════════════════════════
 
-                const tabDefs = tabSpecs.map(s => s.label);
-                const tabKeys = tabSpecs.map(s => s.key);
-                const indexOfKey = k => tabKeys.indexOf(k);
-                const ul = document.createElement('ul');
-                ul.className = 'my-custom-tabs inline-encounter-tabs';
-                ul.style.cssText = 'list-style:none;margin:0;padding:0 12px;display:flex;gap:0;border-bottom:2px solid #e2e8f0;background:#fff;overflow-x:auto;';
+                // Helper to build a stage container with zero-scroll segmented sub-pills
+                function createStageWithSubPills(stageId, stageTitle, stageDesc, subItems) {
+                    const pane = document.createElement('div');
+                    pane.id = stageId;
+                    pane.className = 'cp-wrap cp-stage-pane';
 
-                const customPanes = tabSpecs.map(s => s.build(note));
-                customPanes.forEach(p => { p.style.setProperty('display', 'none', 'important'); sectionBody.appendChild(p); });
+                    const validItems = subItems.filter(Boolean);
+
+                    // Header with clean Info (i) Tooltip Icon
+                    const hdr = document.createElement('div');
+                    hdr.className = 'cp-hdr';
+                    hdr.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+                    hdr.innerHTML = `<h2 style="margin:0;">${stageTitle}</h2><span class="cp-info-tip" data-tip="${cpEsc(stageDesc)}">i</span>`;
+                    pane.appendChild(hdr);
+
+                    // Sub-pill switcher (only if more than 1 sub-section)
+                    if (validItems.length > 1) {
+                        const pillNav = document.createElement('div');
+                        pillNav.className = 'cp-subpill-nav';
+
+                        const pillBtns = [];
+                        validItems.forEach((item, idx) => {
+                            const pBtn = document.createElement('button');
+                            pBtn.type = 'button';
+                            pBtn.className = `cp-subpill ${idx === 0 ? 'active' : ''}`;
+                            pBtn.textContent = item.label;
+                            pBtn.onclick = () => {
+                                pillBtns.forEach(b => b.classList.remove('active'));
+                                pBtn.classList.add('active');
+                                validItems.forEach((it, i) => {
+                                    it.el.style.setProperty('display', i === idx ? 'block' : 'none', 'important');
+                                });
+                            };
+                            pillBtns.push(pBtn);
+                            pillNav.appendChild(pBtn);
+                        });
+                        pane.appendChild(pillNav);
+                    }
+
+                    // Append sub-elements
+                    validItems.forEach((item, idx) => {
+                        if (validItems.length > 1 && idx > 0) {
+                            item.el.style.setProperty('display', 'none', 'important');
+                        }
+                        pane.appendChild(item.el);
+                    });
+
+                    return pane;
+                }
+
+                const stages = [
+                    {
+                        key: 'stage-intake',
+                        num: 1,
+                        label: 'Subjective',
+                        icon: 'fa-user-clock',
+                        build: () => {
+                            const subItems = [
+                                { label: 'Visit Details', el: cpB_VisitDetails(note) },
+                                { label: 'Chief Complaint', el: cpB_CC(note) },
+                                isCardioEncounter ? { label: 'Cardiac HPI', el: cpB_CardiacHPI(note) } : null,
+                                isCardioEncounter ? { label: 'Cardiac History', el: cpB_CardiacHistory(note) } : null,
+                                { label: 'Meds & Allergies', el: cpB_MedsAllergies(note) }
+                            ];
+                            return createStageWithSubPills(
+                                'cpStage1',
+                                'Subjective',
+                                'Review visit details, patient complaints, cardiac history, and active medications &amp; allergies.',
+                                subItems
+                            );
+                        }
+                    },
+                    {
+                        key: 'stage-exam',
+                        num: 2,
+                        label: 'Objective Exam',
+                        icon: 'fa-stethoscope',
+                        build: () => {
+                            const subItems = [
+                                { label: 'Vitals & ASCVD', el: cpB_Vitals(note) },
+                                { label: 'Physical Exam', el: cpB_Exam(note) },
+                                isOrthoEncounter ? { label: 'Orthopedics', el: cpB_Orthopedics(note) } : null
+                            ];
+                            return createStageWithSubPills(
+                                'cpStage2',
+                                'Objective Examination',
+                                'Record vital signs, calculate ASCVD risk score, and document physical examination findings.',
+                                subItems
+                            );
+                        }
+                    },
+                    {
+                        key: 'stage-diagnostics',
+                        num: 3,
+                        label: 'Diagnostics & Labs',
+                        icon: 'fa-vials',
+                        build: () => {
+                            const subItems = [
+                                { label: 'Orders Requisition', el: cpB_LabOrders(note) },
+                                isCardioEncounter ? { label: 'Results Review (ECG/Echo/Labs)', el: cpB_ResultsReview(note) } : null
+                            ];
+                            return createStageWithSubPills(
+                                'cpStage3',
+                                'Diagnostics &amp; Labs',
+                                'Place new diagnostic orders and review in-office results (ECG, Echo, Cath, Holter, Biomarkers).',
+                                subItems
+                            );
+                        }
+                    },
+                    {
+                        key: 'stage-plan',
+                        num: 4,
+                        label: 'Assessment & Plan',
+                        icon: 'fa-clipboard-check',
+                        build: () => {
+                            const subItems = [
+                                { label: 'Clinical Assessment', el: cpB_Assessment(note) },
+                                // C09 Diagnosis / Problem List - the 5-stage stepper dropped this screen when it replaced
+                                // the old flat tab row, but Sign Encounter still requires at least one patient_problems
+                                // row with an ICD-10 (server-enforced), and Billing's Dx Pointer dropdown only links an
+                                // EXISTING diagnosis, it can't add one - with no sub-pill for it, there was no way to
+                                // add a diagnosis anywhere in this UI and every encounter failed to sign. wireAll()
+                                // already wires #cpAddDiagReal/#cpDiagRealBody unconditionally, so adding it back here
+                                // needed no other changes.
+                                { label: 'Diagnosis / Problem List', el: cpB_DiagnosisList(note) },
+                                { label: 'Treatment & Plan', el: cpB_Plan(note) }
+                            ];
+                            return createStageWithSubPills(
+                                'cpStage4',
+                                'Assessment &amp; Plan',
+                                'Document clinical impressions, risk stratification, diagnoses, and patient treatment plan.',
+                                subItems
+                            );
+                        }
+                    },
+                    {
+                        key: 'stage-billing',
+                        num: 5,
+                        label: 'Billing',
+                        icon: 'fa-file-invoice-dollar',
+                        build: () => {
+                            const pane = document.createElement('div');
+                            pane.id = 'cpStage5';
+                            pane.className = 'cp-wrap cp-stage-pane';
+
+                            const hdr = document.createElement('div');
+                            hdr.className = 'cp-hdr';
+                            hdr.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+                            hdr.innerHTML = `<h2 style="margin:0;">Billing &amp; Coding</h2><span class="cp-info-tip" data-tip="Capture CPT codes with linked diagnosis pointers for this encounter.">i</span>`;
+                            pane.appendChild(hdr);
+
+                            pane.appendChild(cpB_Billing(note, allCpts));
+                            return pane;
+                        }
+                    },
+                    {
+                        key: 'stage-sign',
+                        num: 6,
+                        label: 'Sign Encounter',
+                        icon: 'fa-signature',
+                        build: () => {
+                            const pane = document.createElement('div');
+                            pane.id = 'cpStage6';
+                            pane.className = 'cp-wrap cp-stage-pane';
+
+                            const hdr = document.createElement('div');
+                            hdr.className = 'cp-hdr';
+                            hdr.style.cssText = 'display:flex;align-items:center;gap:8px;margin-bottom:10px;';
+                            hdr.innerHTML = `<h2 style="margin:0;">Sign Encounter</h2><span class="cp-info-tip" data-tip="Review encounter summary, provide digital signature, and lock the chart note.">i</span>`;
+                            pane.appendChild(hdr);
+
+                            pane.appendChild(cpB_Sign(note));
+                            return pane;
+                        }
+                    }
+                ];
+
+                const stageDefs = stages.map(s => s.label);
+                const navBar = document.createElement('nav');
+                navBar.className = 'my-custom-tabs inline-encounter-tabs cp-stepper-nav';
+
+                const stagePanes = stages.map(s => s.build());
+                stagePanes.forEach(p => { p.style.setProperty('display', 'none', 'important'); sectionBody.appendChild(p); });
                 if (isCardioEncounter) relocateCardioSections();
 
-                const tabLis = [];
-                tabDefs.forEach((t, i) => {
-                    const li = document.createElement('li');
-                    li.style.cssText = `list-style:none;padding:10px 13px;cursor:pointer;font-weight:600;font-size:0.83rem;color:${i === 0 ? '#0284c7' : '#64748b'};border-bottom:2px solid ${i === 0 ? '#0284c7' : 'transparent'};margin-bottom:-2px;white-space:nowrap;transition:all .15s;`;
-                    li.textContent = t;
-                    li.onmouseenter = () => { if (!li.dataset.a) li.style.color = '#0369a1'; };
-                    li.onmouseleave = () => { if (!li.dataset.a) li.style.color = '#64748b'; };
-                    li.onclick = () => {
-                        tabLis.forEach(l => { delete l.dataset.a; l.style.color = '#64748b'; l.style.borderBottomColor = 'transparent'; });
-                        li.dataset.a = '1'; li.style.color = '#0284c7'; li.style.borderBottomColor = '#0284c7';
-                        customPanes.forEach(p => p.style.setProperty('display', 'none', 'important'));
-                        customPanes[i].style.setProperty('display', 'block', 'important');
+                const stageBtns = [];
+                stages.forEach((stg, i) => {
+                    const btn = document.createElement('div');
+                    btn.className = `cp-step-item ${i === 0 ? 'active' : ''}`;
+                    btn.innerHTML = `<span>${stg.label}</span>`;
+                    btn.onclick = () => {
+                        stageBtns.forEach(b => b.classList.remove('active'));
+                        btn.classList.add('active');
+                        stagePanes.forEach(p => p.style.setProperty('display', 'none', 'important'));
+                        stagePanes[i].style.setProperty('display', 'block', 'important');
 
-                        // Lazy load CPT codes when Billing tab is clicked for the first time
-                        if (i === indexOfKey('billing')) {
+                        // When switching to Billing stage, initialize CPT Manager & Dx dropdown
+                        if (stg.key === 'stage-billing') {
                             if (!cptsFetched) {
                                 cptsFetched = true;
                                 const req = typeof ApiService !== 'undefined' ? ApiService.request('/api/billing/cpt-codes') : fetch('/api/billing/cpt-codes').then(r => r.json());
@@ -1805,18 +2017,16 @@ function syncToUI(note) {
                             }
                         }
 
-                        // Refresh provider name dynamically on Sign tab click
-                        if (i === indexOfKey('sign')) {
+                        // When switching to Sign stage, refresh provider name preview
+                        if (stg.key === 'stage-sign') {
                             const signProvInp = document.getElementById('cpSignProv');
                             const sigProvPreview = document.getElementById('cpSigProvNamePreview');
                             let fallbackName = note.provider_name || (note.first_name && note.last_name ? `Dr. ${note.first_name} ${note.last_name}` : '');
-
                             const origProv = document.getElementById('modal-enc-provider');
                             if (origProv && origProv.selectedIndex > -1) {
                                 const txt = origProv.options[origProv.selectedIndex].text;
                                 if (txt && !txt.includes('Select') && !txt.includes('Loading')) fallbackName = txt;
                             }
-
                             if (fallbackName && fallbackName.trim() !== 'Dr. undefined undefined' && fallbackName.trim() !== 'Dr.') {
                                 if (signProvInp && (!signProvInp.value || signProvInp.value === 'Provider name' || signProvInp.value === 'Provider')) {
                                     signProvInp.value = fallbackName;
@@ -1825,17 +2035,15 @@ function syncToUI(note) {
                             }
                         }
                     };
-                    tabLis.push(li); ul.appendChild(li);
+                    stageBtns.push(btn);
+                    navBar.appendChild(btn);
                 });
 
-                tabMenu.parentNode.insertBefore(ul, tabMenu.nextSibling);
-                wireAll(customPanes, tabLis, note, allCpts);
-                // Must run AFTER wireAll: wireAll still points each pane's Next/Previous at a hard-coded
-                // neighbour id, which is wrong as soon as a screen is inserted. This re-points them at the
-                // actual neighbour in tabSpecs order and relabels them to match.
-                wireWorkflowNav(customPanes, tabLis, tabDefs);
+                tabMenu.parentNode.insertBefore(navBar, tabMenu.nextSibling);
+                wireAll(stagePanes, stageBtns, note, allCpts);
+                wireWorkflowNav(stagePanes, stageBtns, stageDefs);
                 wireNewEncounterPanes(note);
-                tabLis[0].onclick();
+                stageBtns[0].onclick();
             }
 
             // E. Back button

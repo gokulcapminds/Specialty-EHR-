@@ -5735,12 +5735,14 @@ window.openEncounterInChart = async function (patientId, noteId) {
             ApiService.request(`/api/clinical/note-single/${noteId}`)
         ]);
         window.location.hash = '#patients';
-        await new Promise((resolve) => {
+        // Up to 15s (the Patients module's own /api/me + fetch + /api/patients/list chain can be slow on a
+        // loaded server - see initCalendarHandler's own "slow" comment) - leaves headroom under the 20s failsafe.
+        const patientsModuleReady = await new Promise((resolve) => {
             let n = 0;
             const tick = () => {
-                if (document.getElementById('patient-directory-list-view') && typeof window.openPatientChart === 'function') resolve();
-                else if (n++ < 60) setTimeout(tick, 100);
-                else resolve();
+                if (document.getElementById('patient-directory-list-view') && typeof window.openPatientChart === 'function') resolve(true);
+                else if (n++ < 150) setTimeout(tick, 100);
+                else resolve(false);
             };
             tick();
         });
@@ -5749,6 +5751,19 @@ window.openEncounterInChart = async function (patientId, noteId) {
             Toast.show(nRes.message || pRes.message || 'Could not open the encounter.', 'error');
             return;
         }
+        if (!patientsModuleReady) {
+            // The Patients module never finished loading in time - calling window.openPatientChart here would
+            // throw (it's still undefined) and leave the user on a half-rendered page with no feedback. Bail
+            // out cleanly instead; the failSafe/finally below still clears the overlay.
+            Toast.show('Opening the encounter is taking longer than expected. Please open it from the Patients tab.', 'error');
+            return;
+        }
+        // If a previous encounter in this chart session relocated its cardio-sec-* sections into the tab panes
+        // (clinical-tabs.js), they're now living inside #patient-dashboard-full-content - which openPatientChart
+        // is about to replace wholesale via innerHTML. Rescue them back to their static home first, or they're
+        // destroyed outright (not just displaced), silently emptying every cardio-specific screen on this and
+        // every later encounter opened in the same session. No-op for the very first encounter in a session.
+        if (typeof window.rescueClinicalFormSections === 'function') window.rescueClinicalFormSections();
         await window.openPatientChart(pRes.data, 'encounters');
         // Click the chart's own Edit button: it is the path that finishes rendering the encounters list
         // before the tabbed form takes over (calling populateEncounterModal directly races that render).
@@ -17293,11 +17308,17 @@ async function viewAppointmentDetails(appt) {
                         if (statusRes.status === 'success') {
                             Toast.show(`Appointment status updated to ${newStatus}.`, 'success');
                             BsAlert.close();
-                            initCalendarHandler();
 
                             if (newStatus === 'Arrived') {
-                                // Arrived -> create (or reuse) the visit's encounter and open its SOAP form straight away
+                                // Arrived -> create (or reuse) the visit's encounter and open its SOAP form straight away.
+                                // Deliberately NOT racing this against initCalendarHandler() (below): both hit the
+                                // same slow API, and when the chart-open flow lost that race, window.openPatientChart
+                                // wasn't defined yet and openEncounterInChart crashed with an unhandled TypeError,
+                                // leaving the user on a half-rendered page behind the stuck "Opening encounter..."
+                                // overlay. The calendar grid is about to be navigated away from anyway.
                                 await window.openEncounterForArrival(appt.id, appt.patient_id);
+                            } else {
+                                initCalendarHandler();
                             }
                         } else {
                             Toast.show(statusRes.message || 'Failed to update status.', 'error');
@@ -18057,8 +18078,7 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
                         <div style="font-weight:500; font-size:0.9rem; color:#1e293b;">${escH(pt.first_name)} ${escH(pt.last_name)}</div>
                         <div style="font-size:0.75rem; color:#64748b; background:#f1f5f9; padding:2px 6px; border-radius:4px;">DOB: ${escH(pt.dob || '-')}</div>
                     </div>`).join('') +
-                    (matches.length === 0 ? '<div style="padding:10px 14px; color:#64748b; font-size:0.85rem; text-align:center;">No patient found.</div>' : '') +
-                    `<div class="appt-patient-add-new" style="${itemStyle} color:#0284c7; font-weight:600; font-size:0.9rem;">+ New Patient...</div>`;
+                    (matches.length === 0 ? '<div style="padding:10px 14px; color:#64748b; font-size:0.85rem; text-align:center;">No patient found.</div>' : '');
                 searchDropdown.style.display = 'block';
             };
             searchInput.addEventListener('focus', renderSearchResults);
@@ -18356,12 +18376,17 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
 
             if (saveRes.status === 'success') {
                 Toast.show(saveRes.message || (editItem ? 'Updated successfully.' : 'Created successfully.'), 'success');
-                if (typeof initCalendarHandler === 'function') initCalendarHandler();
+                // Status just became Arrived on a single appointment (not a recurring series): open its SOAP form
+                const becameArrived = result.value.status === 'Arrived' && (!editItem || editItem.status !== 'Arrived')
+                    && saveRes.appointment_id && !(saveRes.created_count > 1);
+                // Skip the unawaited calendar refresh when we're about to navigate away for becameArrived -
+                // both it and openEncounterForArrival hit the same slow APIs, and racing them left
+                // window.openPatientChart undefined when openEncounterInChart needed it (see the other
+                // openEncounterForArrival call site for the full explanation of the crash this caused).
+                if (!becameArrived && typeof initCalendarHandler === 'function') initCalendarHandler();
                 if (typeof renderWaitingListWorkspace === 'function') renderWaitingListWorkspace();
                 if (typeof onSaveSuccess === 'function') await onSaveSuccess();
-                // Status just became Arrived on a single appointment (not a recurring series): open its SOAP form
-                const becameArrived = result.value.status === 'Arrived' && (!editItem || editItem.status !== 'Arrived');
-                if (becameArrived && saveRes.appointment_id && !(saveRes.created_count > 1)) {
+                if (becameArrived) {
                     await window.openEncounterForArrival(saveRes.appointment_id, result.value.patient_id);
                 }
             } else {

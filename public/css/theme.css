@@ -820,6 +820,11 @@ th {
     transition: var(--transition-smooth);
     scrollbar-width: thin;
     scrollbar-color: var(--sb-border) transparent;
+    /* Above #enc-open-overlay (z-index:1040, app.js) so the sidebar stays visible/clickable while an encounter
+       is opening, same as the mobile drawer below already does - without this a sticky element with no z-index
+       loses to that fixed overlay unpredictably depending on paint timing, which is why it used to show on some
+       loads and not others. Still below Bootstrap modals/toasts (1050+). */
+    z-index: 1045;
 }
 
 .sidebar::-webkit-scrollbar {

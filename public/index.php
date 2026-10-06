@@ -20,7 +20,15 @@ if ($apiPos !== false) {
     exit();
 }
 
-// Otherwise, serve SPA interface shell
+// Otherwise, serve SPA interface shell - real HTTP headers, not just the <meta http-equiv> tags below:
+// browsers don't reliably honor http-equiv Cache-Control for navigation caching, so without this a reload
+// (and even a fresh page.goto() in automated testing) could keep serving a cached copy of this document -
+// with its embedded ?v=<old-timestamp> CSS/JS links pointing at stale assets - instead of fetching the
+// current one. This is what made a CSS fix appear to work "sometimes" depending on whether the browser
+// happened to refetch index.php or serve it from cache.
+header('Cache-Control: no-cache, no-store, must-revalidate');
+header('Pragma: no-cache');
+header('Expires: 0');
 ?>
 <!DOCTYPE html>
 <html lang="en">
