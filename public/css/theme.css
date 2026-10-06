@@ -426,6 +426,16 @@ th {
     transition: color 0.2s;
 }
 
+/* .input-icon-right on a <button> (password show/hide toggle) instead of a bare decorative <i> - reset the
+   browser's default button chrome, the icon positioning above still applies unchanged. */
+button.input-icon-right {
+    background: none;
+    border: none;
+    padding: 0;
+    cursor: pointer;
+    line-height: 1;
+}
+
 
 
 .input-with-icon-left {

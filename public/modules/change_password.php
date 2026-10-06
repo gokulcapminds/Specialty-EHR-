@@ -10,7 +10,8 @@
                 <label class="form-label" for="cp-current-password">Temporary Password</label>
                 <div class="input-icon-wrapper">
                     <i class="fas fa-lock input-icon-left"></i>
-                    <input class="form-control input-with-icon-left" type="password" id="cp-current-password" name="current_password" placeholder="Enter the password from your email" required autocomplete="current-password">
+                    <input class="form-control input-with-icon-left input-with-icon-right" type="password" id="cp-current-password" name="current_password" placeholder="Enter the password from your email" required autocomplete="current-password">
+                    <button type="button" class="input-icon-right" data-toggle-password="cp-current-password" aria-label="Show password" title="Show password"><i class="fas fa-eye"></i></button>
                 </div>
             </div>
 
@@ -18,7 +19,8 @@
                 <label class="form-label" for="cp-new-password">New Password</label>
                 <div class="input-icon-wrapper">
                     <i class="fas fa-key input-icon-left"></i>
-                    <input class="form-control input-with-icon-left" type="password" id="cp-new-password" name="new_password" placeholder="At least 10 characters, with a letter and a number" required autocomplete="new-password">
+                    <input class="form-control input-with-icon-left input-with-icon-right" type="password" id="cp-new-password" name="new_password" placeholder="At least 10 characters, with a letter and a number" required autocomplete="new-password">
+                    <button type="button" class="input-icon-right" data-toggle-password="cp-new-password" aria-label="Show password" title="Show password"><i class="fas fa-eye"></i></button>
                 </div>
             </div>
 
@@ -26,7 +28,8 @@
                 <label class="form-label" for="cp-confirm-password">Confirm New Password</label>
                 <div class="input-icon-wrapper">
                     <i class="fas fa-key input-icon-left"></i>
-                    <input class="form-control input-with-icon-left" type="password" id="cp-confirm-password" name="confirm_password" placeholder="Re-enter your new password" required autocomplete="new-password">
+                    <input class="form-control input-with-icon-left input-with-icon-right" type="password" id="cp-confirm-password" name="confirm_password" placeholder="Re-enter your new password" required autocomplete="new-password">
+                    <button type="button" class="input-icon-right" data-toggle-password="cp-confirm-password" aria-label="Show password" title="Show password"><i class="fas fa-eye"></i></button>
                 </div>
             </div>
 

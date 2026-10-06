@@ -151,17 +151,29 @@ class CalendarController {
         }
     }
 
+    // Doctor/Nurse see only their own schedule on the Calendar - mirrors DashboardController's identical
+    // $isClinician scoping for "Today's Clinical Schedule". Super Admin, Receptionist and Billing Staff are
+    // deliberately not scoped: front desk/billing need full-practice visibility to book for any provider and
+    // bill per encounter, and the "Set Calendar View" multi-clinician picker is built for that use case.
+    private const CLINICIAN_SCOPED = ['Doctor', 'Nurse'];
+
     public function index(): void {
         $this->checkAccess(Roles::ALL_STAFF);
         header('Content-Type: application/json');
 
-        $sql = "SELECT a.*, p.first_name_encrypted, p.last_name_encrypted, u.first_name as doc_first, u.last_name as doc_last 
+        $role = $_SESSION['user_role'] ?? '';
+        $isClinicianScoped = in_array($role, self::CLINICIAN_SCOPED, true);
+        $scope = $isClinicianScoped ? ' AND a.provider_id = ?' : '';
+        $params = $isClinicianScoped ? [$_SESSION['user_id']] : [];
+
+        $sql = "SELECT a.*, p.first_name_encrypted, p.last_name_encrypted, u.first_name as doc_first, u.last_name as doc_last
                 FROM appointments a
                 JOIN patients p ON a.patient_id = p.id
                 JOIN users u ON a.provider_id = u.id
+                WHERE 1=1{$scope}
                 ORDER BY a.start_time ASC";
-        
-        $appointments = Database::fetchAll($sql);
+
+        $appointments = Database::fetchAll($sql, $params);
 
         $result = [];
         foreach ($appointments as $a) {
@@ -236,6 +248,17 @@ class CalendarController {
         } catch (\Exception $e) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Invalid date format.']);
+            return;
+        }
+
+        if ($endDt <= $startDt) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'End time must be after start time.']);
+            return;
+        }
+        if (!in_array($status, self::ALLOWED_STATUSES, true)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Invalid appointment status.']);
             return;
         }
 
@@ -552,6 +575,18 @@ class CalendarController {
             echo json_encode(['status' => 'error', 'message' => 'Missing required appointment parameters.']);
             return;
         }
+        if (!in_array($status, self::ALLOWED_STATUSES, true)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'Invalid appointment status.']);
+            return;
+        }
+        // Waiting-list rows carry placeholder times (see the conflict-check comment below), so this only
+        // applies to real bookings - a placeholder pair isn't guaranteed to satisfy end > start.
+        if ($category !== 'Waiting List' && strtotime($endTime) <= strtotime($startTime)) {
+            http_response_code(400);
+            echo json_encode(['status' => 'error', 'message' => 'End time must be after start time.']);
+            return;
+        }
 
         // Provider blocked time (lunch / time off) - real appointments only
         if ($category !== 'Waiting List') {
@@ -592,8 +627,11 @@ class CalendarController {
             return;
         }
 
-        $sql = "UPDATE appointments SET patient_id = ?, provider_id = ?, start_time = ?, end_time = ?, notes = ?, status = ?, appointment_mode = ?, visit_type = ?, category = ?, waiting_list_data = ? WHERE id = ?";
-        Database::query($sql, [$patientId, $providerId, $startTime, $endTime, $notes, $status, $appointmentMode, $visitType, $category, $waitingListData, $id]);
+        // specialty and message_to_patient are real, independently-editable fields in the edit popup (Specialty
+        // Type dropdown, patient-message textarea) - they used to be read from $input above but never written
+        // here, so editing either silently appeared to succeed while the change was discarded.
+        $sql = "UPDATE appointments SET patient_id = ?, provider_id = ?, start_time = ?, end_time = ?, notes = ?, status = ?, specialty = ?, appointment_mode = ?, visit_type = ?, category = ?, waiting_list_data = ?, message_to_patient = ? WHERE id = ?";
+        Database::query($sql, [$patientId, $providerId, $startTime, $endTime, $notes, $status, $specialty, $appointmentMode, $visitType, $category, $waitingListData, $messageToPatient, $id]);
 
         if (strtolower(trim($appointmentMode)) === 'telehealth' || strtolower(trim($visitType)) === 'telehealth') {
             $telehealthRes = \App\Controllers\TelehealthController::createAndSendForAppointment(intval($id), intval($patientId), intval($providerId), $startTime, $endTime);

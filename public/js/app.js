@@ -17934,7 +17934,12 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
         const hour12 = parseInt(document.getElementById('swal-start-hour').value, 10);
         const min = document.getElementById('swal-start-min').value;
         const ampm = document.getElementById('swal-start-ampm').value;
-        const durationMins = parseInt(document.getElementById('swal-appt-duration').value, 10) || 10;
+        // The duration input's min="5" HTML attribute is never enforced (its value is read directly here, not
+        // via native form submission) - a 0 happens to fall back to 10 via `|| 10`, but a negative value (e.g.
+        // typed "-5") does not, and produced an end_time before start_time (end > start is now also rejected
+        // server-side, but this stops the obviously-wrong value from ever being sent).
+        let durationMins = parseInt(document.getElementById('swal-appt-duration').value, 10) || 10;
+        if (durationMins < 5) durationMins = 10;
 
         let hour24 = hour12;
         if (ampm === 'PM' && hour12 < 12) hour24 += 12;
@@ -27622,10 +27627,13 @@ async function initAdministrationHandler() {
         const facility = cachedFacilitiesList.find(f => String(f.id) === String(facilityId));
         const allowedIds = (facility?.specialty_ids || []).map(String);
         const specActive = (s) => s.is_active == null || parseInt(s.is_active, 10) === 1;
-        const filtered = cachedSpecialtiesList.filter(s => allowedIds.includes(String(s.id)) && (specActive(s) || s.specialty_name === selectedSpecialty));
+        // A user's saved specialty may hold either the full display name or the short key (the backend's own
+        // isSpecialtyAllowedForFacility() accepts either) - match on both so a key-form value doesn't look unassigned.
+        const specMatches = (s) => selectedSpecialty && (s.specialty_name === selectedSpecialty || s.specialty_key === selectedSpecialty);
+        const filtered = cachedSpecialtiesList.filter(s => allowedIds.includes(String(s.id)) && (specActive(s) || specMatches(s)));
 
         // Editing a user whose saved specialty the facility no longer practises: say so instead of silently showing a blank choice.
-        if (selectedSpecialty && !filtered.some(s => s.specialty_name === selectedSpecialty) && specNote) {
+        if (selectedSpecialty && !filtered.some(specMatches) && specNote) {
             specNote.textContent = `Previously assigned: "${selectedSpecialty}" - it is no longer offered at this facility. Please choose another specialty.`;
             specNote.hidden = false;
         }
@@ -27634,7 +27642,7 @@ async function initAdministrationHandler() {
             specSelect.innerHTML = '<option value="">— No specialties set for this facility (add them under Facility Management) —</option>';
         } else {
             specSelect.innerHTML = '<option value="">— Select Specialty —</option>' +
-                filtered.map(s => `<option value="${calEscape(s.specialty_name)}" ${selectedSpecialty === s.specialty_name ? 'selected' : ''}>${calEscape(s.specialty_name)}${specActive(s) ? '' : ' (inactive)'}</option>`).join('');
+                filtered.map(s => `<option value="${calEscape(s.specialty_name)}" ${specMatches(s) ? 'selected' : ''}>${calEscape(s.specialty_name)}${specActive(s) ? '' : ' (inactive)'}</option>`).join('');
         }
     };
 
@@ -27831,13 +27839,11 @@ async function initAdministrationHandler() {
             if (document.getElementById('staff-provider-taxonomy')) document.getElementById('staff-provider-taxonomy').value = user.taxonomy_code || '';
             if (document.getElementById('staff-provider-type')) document.getElementById('staff-provider-type').value = user.provider_type || 'Physician (MD)';
 
-            // Step 3 Assignment
-            if (document.getElementById('staff-facility-id')) document.getElementById('staff-facility-id').value = user.facility_id || '';
-            if (document.getElementById('staff-specialty')) {
-                const specSel = document.getElementById('staff-specialty');
-                specSel.value = user.specialty || '';
-                if (specSel.selectedIndex < 0) specSel.selectedIndex = 0;   // saved value no longer offered: show the "— Select —" prompt, not a blank box
-            }
+            // Step 3 Assignment - facility and specialty selection (incl. matching a key-form saved specialty
+            // against the facility's option list, and the "no longer offered" note) is already handled correctly
+            // by the populateStaffDropdowns()/filterSpecialtiesByFacility() call above; re-setting staff-specialty's
+            // .value here with the raw (possibly key-form) user.specialty found no matching option value (options
+            // are always keyed by the full specialty_name) and silently blanked the correct selection back out.
 
             selectStatusRadio(parseInt(user.is_active) === 1);
 
@@ -30081,7 +30087,10 @@ async function openConfirmWaitingListModal(item) {
             const hour12 = parseInt(document.getElementById('swal-confirm-hour').value, 10);
             const min = document.getElementById('swal-confirm-min').value;
             const ampm = document.getElementById('swal-confirm-ampm').value;
-            const durationMins = parseInt(document.getElementById('swal-confirm-duration').value, 10) || 10;
+            // See the matching comment in collectAppointmentPayload (scheduleOnDate) - min="5" isn't enforced
+            // since this value is read directly, not via native form submission.
+            let durationMins = parseInt(document.getElementById('swal-confirm-duration').value, 10) || 10;
+            if (durationMins < 5) durationMins = 10;
 
             let hour24 = hour12;
             if (ampm === 'PM' && hour12 < 12) hour24 += 12;
