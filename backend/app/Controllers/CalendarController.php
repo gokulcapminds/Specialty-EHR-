@@ -102,10 +102,11 @@ class CalendarController {
                     JOIN users u ON a.provider_id = u.id
                     WHERE MONTH(a.start_time) = MONTH(CURRENT_DATE())
                       AND YEAR(a.start_time) = YEAR(CURRENT_DATE())
+                      AND u.facility_id = ?
                     GROUP BY u.id, u.first_name, u.last_name
                     ORDER BY appointment_count DESC";
 
-            $results = Database::fetchAll($sql);
+            $results = Database::fetchAll($sql, [$_SESSION['facility_id'] ?? null]);
 
             echo json_encode([
                 'status' => 'success',
@@ -134,10 +135,11 @@ class CalendarController {
                         COUNT(a.id) as appointment_count
                     FROM appointments a
                     JOIN users u ON a.provider_id = u.id
+                    WHERE u.facility_id = ?
                     GROUP BY u.id, u.first_name, u.last_name, YEAR(a.start_time), MONTH(a.start_time), a.visit_type
                     ORDER BY appointment_year DESC, appointment_month ASC, provider_name ASC";
 
-            $results = Database::fetchAll($sql);
+            $results = Database::fetchAll($sql, [$_SESSION['facility_id'] ?? null]);
 
             echo json_encode([
                 'status' => 'success',
@@ -165,6 +167,10 @@ class CalendarController {
         $isClinicianScoped = in_array($role, self::CLINICIAN_SCOPED, true);
         $scope = $isClinicianScoped ? ' AND a.provider_id = ?' : '';
         $params = $isClinicianScoped ? [$_SESSION['user_id']] : [];
+        // Facility-based data isolation (see Roles::ALL_STAFF doc comment) - every role, not just
+        // Doctor/Nurse, only sees appointments for their own facility's patients.
+        $scope .= ' AND p.facility_id = ?';
+        $params[] = $_SESSION['facility_id'] ?? null;
 
         $sql = "SELECT a.*, p.first_name_encrypted, p.last_name_encrypted, u.first_name as doc_first, u.last_name as doc_last
                 FROM appointments a
@@ -238,6 +244,17 @@ class CalendarController {
         if (!$patientId || !$providerId || empty($startTime) || empty($endTime)) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Missing required appointment parameters.']);
+            return;
+        }
+
+        // Facility-based data isolation: both the patient and the provider must belong to the
+        // booking user's own facility - the same generic 404 either side would get if it just didn't exist.
+        $fid = $_SESSION['facility_id'] ?? null;
+        $patientOwned = Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $fid]);
+        $providerOwned = Database::fetch("SELECT id FROM users WHERE id = ? AND facility_id = ?", [$providerId, $fid]);
+        if (!$patientOwned || !$providerOwned) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient or provider not found.']);
             return;
         }
 
@@ -515,9 +532,17 @@ class CalendarController {
             return;
         }
 
-        // Fetch patient ID first for audit logger
-        $a = Database::fetch("SELECT patient_id FROM appointments WHERE id = ?", [$id]);
-        $patientId = $a ? $a['patient_id'] : null;
+        // Fetch patient ID first for audit logger - also the facility ownership check (join to patients).
+        $a = Database::fetch(
+            "SELECT a.patient_id FROM appointments a JOIN patients p ON p.id = a.patient_id WHERE a.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
+        if (!$a) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Appointment not found.']);
+            return;
+        }
+        $patientId = $a['patient_id'];
 
         $sql = "DELETE FROM appointments WHERE id = ?";
         Database::query($sql, [$id]);
@@ -538,7 +563,10 @@ class CalendarController {
             return;
         }
 
-        $existing = Database::fetch("SELECT * FROM appointments WHERE id = ?", [$id]);
+        $existing = Database::fetch(
+            "SELECT a.* FROM appointments a JOIN patients p ON p.id = a.patient_id WHERE a.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
         if (!$existing) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Appointment not found.']);
@@ -548,6 +576,18 @@ class CalendarController {
         $input = json_decode(file_get_contents('php://input'), true) ?? [];
         $patientId = $input['patient_id'] ?? $existing['patient_id'];
         $providerId = $input['provider_id'] ?? $existing['provider_id'];
+
+        // If the edit reassigns the patient or provider, the new one must still be the booking user's own facility.
+        if ((string)$patientId !== (string)$existing['patient_id'] || (string)$providerId !== (string)$existing['provider_id']) {
+            $fid = $_SESSION['facility_id'] ?? null;
+            $patientOwned = Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $fid]);
+            $providerOwned = Database::fetch("SELECT id FROM users WHERE id = ? AND facility_id = ?", [$providerId, $fid]);
+            if (!$patientOwned || !$providerOwned) {
+                http_response_code(404);
+                echo json_encode(['status' => 'error', 'message' => 'Patient or provider not found.']);
+                return;
+            }
+        }
         $startTime = $input['start_time'] ?? $existing['start_time'];
         $endTime = $input['end_time'] ?? $existing['end_time'];
         $notes = $input['notes'] ?? $existing['notes'];
@@ -674,8 +714,16 @@ class CalendarController {
             $cancelReason = $cancelReason !== '' ? mb_substr($cancelReason, 0, 255) : null;
         }
 
-        $a = Database::fetch("SELECT patient_id FROM appointments WHERE id = ?", [$id]);
-        $patientId = $a ? $a['patient_id'] : null;
+        $a = Database::fetch(
+            "SELECT a.patient_id FROM appointments a JOIN patients p ON p.id = a.patient_id WHERE a.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
+        if (!$a) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Appointment not found.']);
+            return;
+        }
+        $patientId = $a['patient_id'];
 
         $sql = "UPDATE appointments SET status = ?, cancel_reason = ? WHERE id = ?";
         Database::query($sql, [$status, $cancelReason, $id]);
@@ -697,11 +745,34 @@ class CalendarController {
     public function listBlocks(): void {
         $this->checkAccess(Roles::ALL_STAFF);
         header('Content-Type: application/json');
+
+        $role = $_SESSION['user_role'] ?? '';
+        $isClinicianScoped = in_array($role, self::CLINICIAN_SCOPED, true);
+        $facilityId = $_SESSION['facility_id'] ?? null;
+
+        $conditions = [];
+        $params = [];
+
+        if ($facilityId) {
+            $conditions[] = "(b.facility_id = ? OR b.facility_id IS NULL OR u.facility_id = ?)";
+            $params[] = $facilityId;
+            $params[] = $facilityId;
+        }
+
+        if ($isClinicianScoped) {
+            $conditions[] = "b.provider_id = ?";
+            $params[] = $_SESSION['user_id'] ?? 0;
+        }
+
+        $whereClause = !empty($conditions) ? "WHERE " . implode(" AND ", $conditions) : "";
+
         $rows = Database::fetchAll(
             "SELECT b.id, b.provider_id, b.block_date, b.weekday, b.category, b.facility_id, b.start_time, b.end_time, b.reason,
                     CONCAT(u.first_name, ' ', u.last_name) AS provider_name
              FROM provider_time_blocks b JOIN users u ON u.id = b.provider_id
-             ORDER BY b.block_date IS NULL, b.block_date, b.weekday, b.start_time"
+             {$whereClause}
+             ORDER BY b.block_date IS NULL, b.block_date, b.weekday, b.start_time",
+            $params
         );
         echo json_encode(['status' => 'success', 'data' => $rows]);
     }

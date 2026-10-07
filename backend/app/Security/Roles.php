@@ -20,6 +20,17 @@ class Roles {
     /** Every staff role (anyone who may use the application). */
     public const ALL_STAFF = [self::SUPER_ADMIN, self::DOCTOR, self::NURSE, self::RECEPTIONIST, self::BILLING];
 
+    /**
+     * Facility-based data isolation (Oct 2026): every role, including Super Admin, only sees PHI/workflow data
+     * (patients, appointments, encounters, billing, referrals, recalls, messages, documents, ...) for their own
+     * facility - there is no role-based exemption, so this is NOT a role-group constant like the ones above.
+     * Controllers scope these reads/writes with `AND <patients-or-users>.facility_id = ?` bound to
+     * `$_SESSION['facility_id']` (re-read fresh every request by AuthenticationMiddleware, same as user_role).
+     * The only screens that stay enterprise-wide are the admin ones already gated by Roles::ADMIN: Facility
+     * Management, User Management, Roles & Permissions, Audit Log, and Specialty Management (specialties
+     * themselves are a shared catalog, not facility data - see facility_specialties).
+     */
+
     /** System administration: users, facilities, specialties, settings, roles, audit log, deleting a patient. */
     public const ADMIN = [self::SUPER_ADMIN];
 

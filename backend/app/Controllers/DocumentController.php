@@ -34,6 +34,11 @@ class DocumentController {
             echo json_encode(['status' => 'error', 'message' => 'Patient ID is required.']);
             return;
         }
+        if (!Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
+            return;
+        }
 
         // 1. Extension Validation
         $originalFilename = $file['name'];
@@ -134,13 +139,18 @@ class DocumentController {
             echo json_encode(['status' => 'error', 'message' => 'Patient ID is missing.']);
             return;
         }
+        if (!Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
+            return;
+        }
 
-        $sql = "SELECT d.id, d.original_filename, d.mime_type, d.file_size, d.uploaded_at, u.first_name, u.last_name 
+        $sql = "SELECT d.id, d.original_filename, d.mime_type, d.file_size, d.uploaded_at, u.first_name, u.last_name
                 FROM patient_documents d
                 JOIN users u ON d.uploaded_by = u.id
                 WHERE d.patient_id = ?
                 ORDER BY d.uploaded_at DESC";
-        
+
         $docs = Database::fetchAll($sql, [$patientId]);
 
         AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], $patientId, 'View Document Directory', 'Documents');
@@ -158,7 +168,10 @@ class DocumentController {
             return;
         }
 
-        $doc = Database::fetch("SELECT * FROM patient_documents WHERE id = ?", [$docId]);
+        $doc = Database::fetch(
+            "SELECT d.* FROM patient_documents d JOIN patients p ON p.id = d.patient_id WHERE d.id = ? AND p.facility_id = ?",
+            [$docId, $_SESSION['facility_id'] ?? null]
+        );
         if (!$doc) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Document not found.']);
@@ -196,7 +209,10 @@ class DocumentController {
             return;
         }
 
-        $doc = Database::fetch("SELECT * FROM patient_documents WHERE id = ?", [$docId]);
+        $doc = Database::fetch(
+            "SELECT d.* FROM patient_documents d JOIN patients p ON p.id = d.patient_id WHERE d.id = ? AND p.facility_id = ?",
+            [$docId, $_SESSION['facility_id'] ?? null]
+        );
         if (!$doc) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Document not found.']);

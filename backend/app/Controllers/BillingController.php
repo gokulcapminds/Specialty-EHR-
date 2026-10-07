@@ -28,8 +28,8 @@ class BillingController {
 
         $patientId = $_GET['patient_id'] ?? null;
         // Only signed & locked encounters reach billing; an unsigned draft can't be billed
-        $where = ["cn.id NOT IN (SELECT encounter_id FROM invoices WHERE encounter_id IS NOT NULL)", "cn.lock_state = 1"];
-        $params = [];
+        $where = ["cn.id NOT IN (SELECT encounter_id FROM invoices WHERE encounter_id IS NOT NULL)", "cn.lock_state = 1", "p.facility_id = ?"];
+        $params = [$_SESSION['facility_id'] ?? null];
         if ($patientId) {
             $where[] = "cn.patient_id = ?";
             $params[] = $patientId;
@@ -98,8 +98,8 @@ class BillingController {
              FROM clinical_notes cn
              JOIN patients p ON cn.patient_id = p.id
              JOIN users u ON cn.provider_id = u.id
-             WHERE cn.id = ?",
-            [$encId]
+             WHERE cn.id = ? AND p.facility_id = ?",
+            [$encId, $_SESSION['facility_id'] ?? null]
         );
 
         if (!$enc) {
@@ -288,6 +288,11 @@ class BillingController {
             echo json_encode(['status' => 'error', 'message' => 'Patient ID and at least one line item required.']);
             return;
         }
+        if (!Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
+            return;
+        }
 
         // Calculate totals
         $subtotal = 0;
@@ -342,12 +347,13 @@ class BillingController {
         header('Content-Type: application/json');
 
         $patientId = $_GET['patient_id'] ?? null;
-        $whereSql = "";
-        $params = [];
+        $where = ["p.facility_id = ?"];
+        $params = [$_SESSION['facility_id'] ?? null];
         if ($patientId) {
-            $whereSql = "WHERE i.patient_id = ?";
+            $where[] = "i.patient_id = ?";
             $params[] = $patientId;
         }
+        $whereSql = "WHERE " . implode(" AND ", $where);
 
         $sql = "SELECT i.*, p.first_name_encrypted, p.last_name_encrypted,
                        u.first_name AS created_fname, u.last_name AS created_lname,
@@ -403,7 +409,13 @@ class BillingController {
     public function patientCoverage(array $params): void {
         $this->checkAccess(['Super Admin', 'Billing Staff', 'Doctor']);
         header('Content-Type: application/json');
-        echo json_encode(['status' => 'success', 'coverage' => $this->coverageSummary((int)($params['id'] ?? 0))]);
+        $patientId = (int)($params['id'] ?? 0);
+        if (!$patientId || !Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
+            return;
+        }
+        echo json_encode(['status' => 'success', 'coverage' => $this->coverageSummary($patientId)]);
     }
 
     // GET /api/billing/invoice/{id}
@@ -427,8 +439,8 @@ class BillingController {
              JOIN users u ON i.created_by = u.id
              LEFT JOIN clinical_notes cn ON cn.id = i.encounter_id
              LEFT JOIN users pu ON pu.id = cn.provider_id
-             WHERE i.id = ?",
-            [$id]
+             WHERE i.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
         );
 
         if (!$inv) {
@@ -562,7 +574,10 @@ class BillingController {
         $d = \DateTime::createFromFormat('Y-m-d', $paidAt);
         if (!$d || $d->format('Y-m-d') !== $paidAt || $paidAt > date('Y-m-d')) { $fail(400, 'Payment date is not valid.'); return; }
 
-        $inv = Database::fetch("SELECT * FROM invoices WHERE id = ?", [$id]);
+        $inv = Database::fetch(
+            "SELECT i.* FROM invoices i JOIN patients p ON p.id = i.patient_id WHERE i.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
         if (!$inv) { $fail(404, 'Invoice not found.'); return; }
         if ($inv['status'] === 'Draft') { $fail(400, 'Issue the invoice before recording payments.'); return; }
 
@@ -621,7 +636,10 @@ class BillingController {
             echo json_encode(['status' => 'error', 'message' => 'A reason is required to void a payment.']);
             return;
         }
-        $pay = Database::fetch("SELECT p.*, i.invoice_number FROM payments p JOIN invoices i ON i.id = p.invoice_id WHERE p.id = ?", [$id]);
+        $pay = Database::fetch(
+            "SELECT p.*, i.invoice_number FROM payments p JOIN invoices i ON i.id = p.invoice_id JOIN patients pt ON pt.id = i.patient_id WHERE p.id = ? AND pt.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
         if (!$pay) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Payment not found.']);
@@ -661,6 +679,11 @@ class BillingController {
         if (!$id) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Invoice ID required.']);
+            return;
+        }
+        if (!Database::fetch("SELECT i.id FROM invoices i JOIN patients p ON p.id = i.patient_id WHERE i.id = ? AND p.facility_id = ?", [$id, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Invoice not found.']);
             return;
         }
 
@@ -723,9 +746,10 @@ class BillingController {
                 JOIN users u    ON cn.provider_id = u.id
                 WHERE cn.lock_state = 1
                   AND cn.billing_queue_status = 'pending_review'
+                  AND p.facility_id = ?
                 ORDER BY cn.locked_at DESC";
 
-        $rows = Database::fetchAll($sql, []);
+        $rows = Database::fetchAll($sql, [$_SESSION['facility_id'] ?? null]);
         $result = [];
         foreach ($rows as $r) {
             $result[] = [

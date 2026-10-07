@@ -59,25 +59,26 @@ class DashboardController {
 
         $skip = $this->in(self::SKIP_STATUSES);
         $checked = $this->in(self::CHECKED_IN);
+        $fid = $_SESSION['facility_id'] ?? null;
 
         // ---- KPIs ----
         $kpis = [
-            'total_patients' => $this->count("SELECT COUNT(*) c FROM patients WHERE patient_status <> 'Draft'"),
+            'total_patients' => $this->count("SELECT COUNT(*) c FROM patients WHERE patient_status <> 'Draft' AND facility_id = ?", [$fid]),
             'appointments_today' => $this->count(
-                "SELECT COUNT(*) c FROM appointments a WHERE DATE(a.start_time) = CURDATE() AND a.status NOT IN ($skip) AND COALESCE(a.category, '') <> 'Waiting List'" . $apptScope,
-                array_merge(self::SKIP_STATUSES, $apptScopeParams)
+                "SELECT COUNT(*) c FROM appointments a JOIN patients p ON p.id = a.patient_id WHERE DATE(a.start_time) = CURDATE() AND a.status NOT IN ($skip) AND COALESCE(a.category, '') <> 'Waiting List' AND p.facility_id = ?" . $apptScope,
+                array_merge(self::SKIP_STATUSES, [$fid], $apptScopeParams)
             ),
             'arrived_today' => $this->count(
-                "SELECT COUNT(*) c FROM appointments a WHERE DATE(a.start_time) = CURDATE() AND a.status IN ($checked)" . $apptScope,
-                array_merge(self::CHECKED_IN, $apptScopeParams)
+                "SELECT COUNT(*) c FROM appointments a JOIN patients p ON p.id = a.patient_id WHERE DATE(a.start_time) = CURDATE() AND a.status IN ($checked) AND p.facility_id = ?" . $apptScope,
+                array_merge(self::CHECKED_IN, [$fid], $apptScopeParams)
             ),
         ];
 
         // ---- Patient overview ----
         $overview = [
-            'active' => $this->count("SELECT COUNT(*) c FROM patients WHERE patient_status = 'Active'"),
-            'inactive' => $this->count("SELECT COUNT(*) c FROM patients WHERE patient_status = 'Inactive'"),
-            'new_30d' => $this->count("SELECT COUNT(*) c FROM patients WHERE patient_status <> 'Draft' AND DATE(created_at) >= CURDATE() - INTERVAL 29 DAY"),
+            'active' => $this->count("SELECT COUNT(*) c FROM patients WHERE patient_status = 'Active' AND facility_id = ?", [$fid]),
+            'inactive' => $this->count("SELECT COUNT(*) c FROM patients WHERE patient_status = 'Inactive' AND facility_id = ?", [$fid]),
+            'new_30d' => $this->count("SELECT COUNT(*) c FROM patients WHERE patient_status <> 'Draft' AND DATE(created_at) >= CURDATE() - INTERVAL 29 DAY AND facility_id = ?", [$fid]),
             'follow_ups_due' => null,
         ];
 
@@ -85,18 +86,18 @@ class DashboardController {
         $attention = [];
         if ($canClinical) {
             $attention[] = ['key' => 'notes_to_sign', 'label' => 'Clinical notes waiting for signature', 'icon' => 'fa-file-signature', 'link' => '#encounters',
-                'count' => $this->count("SELECT COUNT(*) c FROM clinical_notes n WHERE n.lock_state = 0 AND n.encounter_status = 'ready_for_sign'" . $noteScope, $noteScopeParams)];
+                'count' => $this->count("SELECT COUNT(*) c FROM clinical_notes n JOIN patients p ON p.id = n.patient_id WHERE n.lock_state = 0 AND n.encounter_status = 'ready_for_sign' AND p.facility_id = ?" . $noteScope, array_merge([$fid], $noteScopeParams))];
         }
         if ($canReferralsRecalls) {
             // same scoping as RecallController::all - everyone but Super Admin sees their own (or unassigned) recalls
             $recallScope = $role === 'Super Admin' ? '' : ' AND (r.provider_id = ? OR r.provider_id IS NULL)';
-            $recallParams = $recallScope === '' ? [] : [$userId];
-            $overdue = $this->count("SELECT COUNT(*) c FROM patient_recalls r WHERE r.status = 'Pending' AND r.target_date < CURDATE()" . $recallScope, $recallParams);
-            $due = $this->count("SELECT COUNT(*) c FROM patient_recalls r WHERE r.status = 'Pending' AND r.target_date <= CURDATE()" . $recallScope, $recallParams);
+            $recallParams = $recallScope === '' ? [$fid] : [$fid, $userId];
+            $overdue = $this->count("SELECT COUNT(*) c FROM patient_recalls r JOIN patients p ON p.id = r.patient_id WHERE r.status = 'Pending' AND r.target_date < CURDATE() AND p.facility_id = ?" . $recallScope, $recallParams);
+            $due = $this->count("SELECT COUNT(*) c FROM patient_recalls r JOIN patients p ON p.id = r.patient_id WHERE r.status = 'Pending' AND r.target_date <= CURDATE() AND p.facility_id = ?" . $recallScope, $recallParams);
             $overview['follow_ups_due'] = $due;
             $attention[] = ['key' => 'overdue_recalls', 'label' => 'Overdue patient recalls', 'icon' => 'fa-clock-rotate-left', 'link' => '#recalls', 'count' => $overdue];
             $attention[] = ['key' => 'pending_referrals', 'label' => 'Referrals pending', 'icon' => 'fa-user-md', 'link' => '#referrals',
-                'count' => $this->count("SELECT COUNT(*) c FROM patient_referrals WHERE status = 'Pending'")];
+                'count' => $this->count("SELECT COUNT(*) c FROM patient_referrals r JOIN patients p ON p.id = r.patient_id WHERE r.status = 'Pending' AND p.facility_id = ?", [$fid])];
         }
         $attention[] = ['key' => 'unread_messages', 'label' => 'Unread messages', 'icon' => 'fa-comments', 'link' => '#messaging',
             'count' => $this->count("SELECT COUNT(*) c FROM message_recipients mr JOIN secure_messages m ON m.id = mr.message_id WHERE mr.receiver_id = ? AND mr.read_at IS NULL", [$userId])];
@@ -104,12 +105,15 @@ class DashboardController {
         // ---- Billing (only roles that can open Billing) ----
         $billing = null;
         if ($canBilling) {
-            $unbilled = $this->count("SELECT COUNT(*) c FROM clinical_notes cn WHERE cn.lock_state = 1 AND cn.id NOT IN (SELECT encounter_id FROM invoices WHERE encounter_id IS NOT NULL)");
-            $overdueInv = $this->count(
-                "SELECT COUNT(*) c FROM invoices WHERE due_date IS NOT NULL AND due_date < CURDATE() AND status IN (" . $this->in(self::OPEN_INVOICE) . ")",
-                self::OPEN_INVOICE
+            $unbilled = $this->count(
+                "SELECT COUNT(*) c FROM clinical_notes cn JOIN patients p ON p.id = cn.patient_id WHERE cn.lock_state = 1 AND cn.id NOT IN (SELECT encounter_id FROM invoices WHERE encounter_id IS NOT NULL) AND p.facility_id = ?",
+                [$fid]
             );
-            $badClaims = $this->count("SELECT COUNT(*) c FROM insurance_claims WHERE status IN ('Rejected', 'Denied')");
+            $overdueInv = $this->count(
+                "SELECT COUNT(*) c FROM invoices i JOIN patients p ON p.id = i.patient_id WHERE i.due_date IS NOT NULL AND i.due_date < CURDATE() AND i.status IN (" . $this->in(self::OPEN_INVOICE) . ") AND p.facility_id = ?",
+                array_merge(self::OPEN_INVOICE, [$fid])
+            );
+            $badClaims = $this->count("SELECT COUNT(*) c FROM insurance_claims ic JOIN patients p ON p.id = ic.patient_id WHERE ic.status IN ('Rejected', 'Denied') AND p.facility_id = ?", [$fid]);
             $billing = ['unbilled_encounters' => $unbilled, 'overdue_invoices' => $overdueInv, 'rejected_claims' => $badClaims, 'attention' => $unbilled + $overdueInv + $badClaims];
             $kpis['billing_attention'] = $billing['attention'];
             $attention[] = ['key' => 'unbilled_encounters', 'label' => 'Signed encounters not yet billed', 'icon' => 'fa-file-invoice-dollar', 'link' => '#billing', 'count' => $unbilled];
@@ -128,9 +132,9 @@ class DashboardController {
                  FROM appointments a
                  JOIN patients p ON p.id = a.patient_id
                  LEFT JOIN users u ON u.id = a.provider_id
-                 WHERE DATE(a.start_time) = CURDATE() AND COALESCE(a.category, '') <> 'Waiting List'" . $apptScope . "
+                 WHERE DATE(a.start_time) = CURDATE() AND COALESCE(a.category, '') <> 'Waiting List' AND p.facility_id = ?" . $apptScope . "
                  ORDER BY a.start_time ASC LIMIT 50",
-                $apptScopeParams
+                array_merge([$fid], $apptScopeParams)
             );
             foreach ($rows as $r) {
                 $schedule[] = [
@@ -150,15 +154,15 @@ class DashboardController {
         // ---- Practice activity: last 30 days, zero-filled ----
         $today = Database::fetch("SELECT CURDATE() AS d")['d'];
         $series = [
-            'completed_encounters' => $canClinical ? "SELECT DATE(COALESCE(n.signed_at, n.locked_at, n.note_date)) d, COUNT(*) c FROM clinical_notes n WHERE n.lock_state = 1 AND DATE(COALESCE(n.signed_at, n.locked_at, n.note_date)) >= CURDATE() - INTERVAL 29 DAY" . $noteScope . " GROUP BY d" : null,
-            'new_patients' => "SELECT DATE(created_at) d, COUNT(*) c FROM patients WHERE patient_status <> 'Draft' AND DATE(created_at) >= CURDATE() - INTERVAL 29 DAY GROUP BY d",
-            'no_shows_cancellations' => "SELECT DATE(a.start_time) d, COUNT(*) c FROM appointments a WHERE a.status IN ('No Show', 'Cancelled') AND DATE(a.start_time) >= CURDATE() - INTERVAL 29 DAY AND DATE(a.start_time) <= CURDATE()" . $apptScope . " GROUP BY d",
-            'pending_clinical_docs' => $canClinical ? "SELECT DATE(n.note_date) d, COUNT(*) c FROM clinical_notes n WHERE n.lock_state = 0 AND DATE(n.note_date) >= CURDATE() - INTERVAL 29 DAY" . $noteScope . " GROUP BY d" : null,
-            'billing_claims' => $canBilling ? "SELECT d, SUM(c) c FROM (SELECT DATE(created_at) d, COUNT(*) c FROM invoices WHERE DATE(created_at) >= CURDATE() - INTERVAL 29 DAY GROUP BY d UNION ALL SELECT DATE(created_at) d, COUNT(*) c FROM insurance_claims WHERE DATE(created_at) >= CURDATE() - INTERVAL 29 DAY GROUP BY d) x GROUP BY d" : null,
+            'completed_encounters' => $canClinical ? "SELECT DATE(COALESCE(n.signed_at, n.locked_at, n.note_date)) d, COUNT(*) c FROM clinical_notes n JOIN patients p ON p.id = n.patient_id WHERE n.lock_state = 1 AND DATE(COALESCE(n.signed_at, n.locked_at, n.note_date)) >= CURDATE() - INTERVAL 29 DAY AND p.facility_id = ?" . $noteScope . " GROUP BY d" : null,
+            'new_patients' => "SELECT DATE(created_at) d, COUNT(*) c FROM patients WHERE patient_status <> 'Draft' AND DATE(created_at) >= CURDATE() - INTERVAL 29 DAY AND facility_id = ? GROUP BY d",
+            'no_shows_cancellations' => "SELECT DATE(a.start_time) d, COUNT(*) c FROM appointments a JOIN patients p ON p.id = a.patient_id WHERE a.status IN ('No Show', 'Cancelled') AND DATE(a.start_time) >= CURDATE() - INTERVAL 29 DAY AND DATE(a.start_time) <= CURDATE() AND p.facility_id = ?" . $apptScope . " GROUP BY d",
+            'pending_clinical_docs' => $canClinical ? "SELECT DATE(n.note_date) d, COUNT(*) c FROM clinical_notes n JOIN patients p ON p.id = n.patient_id WHERE n.lock_state = 0 AND DATE(n.note_date) >= CURDATE() - INTERVAL 29 DAY AND p.facility_id = ?" . $noteScope . " GROUP BY d" : null,
+            'billing_claims' => $canBilling ? "SELECT d, SUM(c) c FROM (SELECT DATE(i.created_at) d, COUNT(*) c FROM invoices i JOIN patients p ON p.id = i.patient_id WHERE DATE(i.created_at) >= CURDATE() - INTERVAL 29 DAY AND p.facility_id = ? GROUP BY d UNION ALL SELECT DATE(ic.created_at) d, COUNT(*) c FROM insurance_claims ic JOIN patients p ON p.id = ic.patient_id WHERE DATE(ic.created_at) >= CURDATE() - INTERVAL 29 DAY AND p.facility_id = ? GROUP BY d) x GROUP BY d" : null,
         ];
         $paramsFor = [
-            'completed_encounters' => $noteScopeParams, 'new_patients' => [], 'no_shows_cancellations' => $apptScopeParams,
-            'pending_clinical_docs' => $noteScopeParams, 'billing_claims' => [],
+            'completed_encounters' => array_merge([$fid], $noteScopeParams), 'new_patients' => [$fid], 'no_shows_cancellations' => array_merge([$fid], $apptScopeParams),
+            'pending_clinical_docs' => array_merge([$fid], $noteScopeParams), 'billing_claims' => [$fid, $fid],
         ];
         $days = [];
         for ($i = 29; $i >= 0; $i--) {
@@ -211,7 +215,7 @@ class DashboardController {
             echo json_encode(['status' => 'error', 'message' => 'Unauthenticated session.']);
             return;
         }
-        if (!$patientId || !Database::fetch("SELECT id FROM patients WHERE id = ?", [$patientId])) {
+        if (!$patientId || !Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
             return;

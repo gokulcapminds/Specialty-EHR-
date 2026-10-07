@@ -52,6 +52,8 @@ class MedicationController {
             }
         }
 
+        $where[] = "p.facility_id = ?";
+        $params[] = $_SESSION['facility_id'] ?? null;
         $whereSql = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
 
         $medications = Database::fetchAll(
@@ -82,6 +84,11 @@ class MedicationController {
         if (!$patientId) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Patient ID required.']);
+            return;
+        }
+        if (!Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
             return;
         }
 
@@ -116,6 +123,13 @@ class MedicationController {
         if (empty($patientId) || empty($providerId) || empty($medicationName) || empty($dosage) || empty($route) || empty($frequency) || empty($startDate)) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Patient, provider, medication name, dosage, route, frequency, and start date are required.']);
+            return;
+        }
+        $fid = $_SESSION['facility_id'] ?? null;
+        if (!Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $fid])
+            || !Database::fetch("SELECT id FROM users WHERE id = ? AND facility_id = ?", [$providerId, $fid])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient or provider not found.']);
             return;
         }
 
@@ -155,7 +169,10 @@ class MedicationController {
             return;
         }
 
-        $med = Database::fetch("SELECT id, patient_id, medication_name, status FROM medications WHERE id = ?", [$id]);
+        $med = Database::fetch(
+            "SELECT m.id, m.patient_id, m.medication_name, m.status FROM medications m JOIN patients p ON p.id = m.patient_id WHERE m.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
         if (!$med) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Medication not found.']);
@@ -191,7 +208,10 @@ class MedicationController {
         header('Content-Type: application/json');
 
         $id = $params['id'] ?? null;
-        $med = Database::fetch("SELECT id, patient_id, medication_name, status, refills_remaining FROM medications WHERE id = ?", [$id]);
+        $med = Database::fetch(
+            "SELECT m.id, m.patient_id, m.medication_name, m.status, m.refills_remaining FROM medications m JOIN patients p ON p.id = m.patient_id WHERE m.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
         if (!$med) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Medication not found.']);

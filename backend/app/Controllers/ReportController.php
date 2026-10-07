@@ -80,56 +80,60 @@ class ReportController {
         $this->checkAuth();
         [$from, $to] = $this->parseDateRange();
         $providerId = (int)($_GET['provider_id'] ?? 0);
+        $fid = $_SESSION['facility_id'] ?? null;
 
         // 1. Total Appointments & Attendance
-        $apptWhere = ["DATE(start_time) BETWEEN ? AND ?"];
-        $apptParams = [$from, $to];
+        $apptWhere = ["DATE(a.start_time) BETWEEN ? AND ?", "p.facility_id = ?"];
+        $apptParams = [$from, $to, $fid];
         if ($providerId > 0) {
-            $apptWhere[] = "provider_id = ?";
+            $apptWhere[] = "a.provider_id = ?";
             $apptParams[] = $providerId;
         }
-        $apptSql = "SELECT 
+        $apptSql = "SELECT
                         COUNT(*) as total_appointments,
-                        SUM(CASE WHEN status IN ('Completed', 'Checked-In') THEN 1 ELSE 0 END) as completed,
-                        SUM(CASE WHEN status = 'No Show' THEN 1 ELSE 0 END) as no_shows,
-                        SUM(CASE WHEN status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled
-                    FROM appointments WHERE " . implode(' AND ', $apptWhere);
+                        SUM(CASE WHEN a.status IN ('Completed', 'Checked-In') THEN 1 ELSE 0 END) as completed,
+                        SUM(CASE WHEN a.status = 'No Show' THEN 1 ELSE 0 END) as no_shows,
+                        SUM(CASE WHEN a.status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled
+                    FROM appointments a JOIN patients p ON p.id = a.patient_id WHERE " . implode(' AND ', $apptWhere);
         $apptRow = Database::fetch($apptSql, $apptParams) ?: [];
 
         // 2. Encounters & Documentation
-        $encWhere = ["note_date BETWEEN ? AND ?"];
-        $encParams = [$from, $to];
+        $encWhere = ["n.note_date BETWEEN ? AND ?", "p.facility_id = ?"];
+        $encParams = [$from, $to, $fid];
         if ($providerId > 0) {
-            $encWhere[] = "provider_id = ?";
+            $encWhere[] = "n.provider_id = ?";
             $encParams[] = $providerId;
         }
-        $encSql = "SELECT 
+        $encSql = "SELECT
                        COUNT(*) as total_encounters,
-                       SUM(CASE WHEN lock_state = 1 THEN 1 ELSE 0 END) as signed_notes,
-                       SUM(CASE WHEN lock_state = 0 OR lock_state IS NULL THEN 1 ELSE 0 END) as unsigned_notes
-                   FROM clinical_notes WHERE " . implode(' AND ', $encWhere);
+                       SUM(CASE WHEN n.lock_state = 1 THEN 1 ELSE 0 END) as signed_notes,
+                       SUM(CASE WHEN n.lock_state = 0 OR n.lock_state IS NULL THEN 1 ELSE 0 END) as unsigned_notes
+                   FROM clinical_notes n JOIN patients p ON p.id = n.patient_id WHERE " . implode(' AND ', $encWhere);
         $encRow = Database::fetch($encSql, $encParams) ?: [];
 
         // 3. Billing & Revenue KPIs
-        $invWhere = ["invoice_date BETWEEN ? AND ?"];
-        $invParams = [$from, $to];
-        $invSql = "SELECT 
+        $invWhere = ["i.invoice_date BETWEEN ? AND ?", "p.facility_id = ?"];
+        $invParams = [$from, $to, $fid];
+        // invoices has no balance_due column (pre-existing, found while scoping this query) - balance is
+        // computed the same way ClaimController::arAging() and BillingController::recalcInvoice() do it:
+        // total - paid - non-voided adjustments.
+        $invSql = "SELECT
                        COUNT(*) as total_invoices,
-                       COALESCE(SUM(total_amount), 0) as gross_charges,
-                       COALESCE(SUM(paid_amount), 0) as total_collected,
-                       COALESCE(SUM(balance_due), 0) as outstanding_ar
-                   FROM invoices WHERE " . implode(' AND ', $invWhere);
+                       COALESCE(SUM(i.total_amount), 0) as gross_charges,
+                       COALESCE(SUM(i.paid_amount), 0) as total_collected,
+                       COALESCE(SUM(i.total_amount - i.paid_amount - COALESCE((SELECT SUM(a.amount) FROM adjustments a WHERE a.invoice_id = i.id AND a.voided_at IS NULL), 0)), 0) as outstanding_ar
+                   FROM invoices i JOIN patients p ON p.id = i.patient_id WHERE " . implode(' AND ', $invWhere);
         $invRow = Database::fetch($invSql, $invParams) ?: [];
 
         // 4. Claims Summary
-        $claimWhere = ["created_at BETWEEN ? AND ?"];
-        $claimParams = [$from . ' 00:00:00', $to . ' 23:59:59'];
-        $claimSql = "SELECT 
+        $claimWhere = ["c.created_at BETWEEN ? AND ?", "p.facility_id = ?"];
+        $claimParams = [$from . ' 00:00:00', $to . ' 23:59:59', $fid];
+        $claimSql = "SELECT
                          COUNT(*) as total_claims,
-                         SUM(CASE WHEN status = 'Accepted' THEN 1 ELSE 0 END) as accepted_claims,
-                         SUM(CASE WHEN status = 'Denied' THEN 1 ELSE 0 END) as denied_claims,
-                         SUM(CASE WHEN status = 'Submitted' THEN 1 ELSE 0 END) as pending_claims
-                     FROM insurance_claims WHERE " . implode(' AND ', $claimWhere);
+                         SUM(CASE WHEN c.status = 'Accepted' THEN 1 ELSE 0 END) as accepted_claims,
+                         SUM(CASE WHEN c.status = 'Denied' THEN 1 ELSE 0 END) as denied_claims,
+                         SUM(CASE WHEN c.status = 'Submitted' THEN 1 ELSE 0 END) as pending_claims
+                     FROM insurance_claims c JOIN patients p ON p.id = c.patient_id WHERE " . implode(' AND ', $claimWhere);
         $claimRow = Database::fetch($claimSql, $claimParams) ?: [];
 
         $this->respond([
@@ -176,40 +180,46 @@ class ReportController {
     public function financial(): void {
         $this->checkAccess(['Super Admin', 'Admin', 'Billing Staff', 'Doctor']);
         [$from, $to] = $this->parseDateRange();
+        $fid = $_SESSION['facility_id'] ?? null;
 
-        // 1. A/R Aging Buckets
-        $agingSql = "SELECT 
-            SUM(CASE WHEN DATEDIFF(CURDATE(), invoice_date) <= 30 THEN balance_due ELSE 0 END) AS bucket_0_30,
-            SUM(CASE WHEN DATEDIFF(CURDATE(), invoice_date) BETWEEN 31 AND 60 THEN balance_due ELSE 0 END) AS bucket_31_60,
-            SUM(CASE WHEN DATEDIFF(CURDATE(), invoice_date) BETWEEN 61 AND 90 THEN balance_due ELSE 0 END) AS bucket_61_90,
-            SUM(CASE WHEN DATEDIFF(CURDATE(), invoice_date) BETWEEN 91 AND 120 THEN balance_due ELSE 0 END) AS bucket_91_120,
-            SUM(CASE WHEN DATEDIFF(CURDATE(), invoice_date) > 120 THEN balance_due ELSE 0 END) AS bucket_120_plus,
-            SUM(balance_due) AS total_ar
-        FROM invoices 
-        WHERE status <> 'Paid' AND balance_due > 0";
-        $aging = Database::fetch($agingSql) ?: [
-            'bucket_0_30' => 0, 'bucket_31_60' => 0, 'bucket_61_90' => 0, 
+        // 1. A/R Aging Buckets. invoices has no balance_due column (pre-existing, found while scoping this
+        // query) - computed the same way ClaimController::arAging() does: total - paid - non-voided adjustments.
+        $bal = "(i.total_amount - i.paid_amount - COALESCE((SELECT SUM(a.amount) FROM adjustments a WHERE a.invoice_id = i.id AND a.voided_at IS NULL), 0))";
+        $agingSql = "SELECT
+            SUM(CASE WHEN DATEDIFF(CURDATE(), i.invoice_date) <= 30 THEN {$bal} ELSE 0 END) AS bucket_0_30,
+            SUM(CASE WHEN DATEDIFF(CURDATE(), i.invoice_date) BETWEEN 31 AND 60 THEN {$bal} ELSE 0 END) AS bucket_31_60,
+            SUM(CASE WHEN DATEDIFF(CURDATE(), i.invoice_date) BETWEEN 61 AND 90 THEN {$bal} ELSE 0 END) AS bucket_61_90,
+            SUM(CASE WHEN DATEDIFF(CURDATE(), i.invoice_date) BETWEEN 91 AND 120 THEN {$bal} ELSE 0 END) AS bucket_91_120,
+            SUM(CASE WHEN DATEDIFF(CURDATE(), i.invoice_date) > 120 THEN {$bal} ELSE 0 END) AS bucket_120_plus,
+            SUM({$bal}) AS total_ar
+        FROM invoices i JOIN patients p ON p.id = i.patient_id
+        WHERE i.status <> 'Paid' AND {$bal} > 0 AND p.facility_id = ?";
+        $aging = Database::fetch($agingSql, [$fid]) ?: [
+            'bucket_0_30' => 0, 'bucket_31_60' => 0, 'bucket_61_90' => 0,
             'bucket_91_120' => 0, 'bucket_120_plus' => 0, 'total_ar' => 0
         ];
 
-        // 2. Revenue by Payment Method
-        $paySql = "SELECT 
-                       payment_method, 
-                       COUNT(*) as transaction_count, 
-                       COALESCE(SUM(amount), 0) as total_amount
-                   FROM payments 
-                   WHERE payment_date BETWEEN ? AND ? AND voided_at IS NULL
-                   GROUP BY payment_method ORDER BY total_amount DESC";
-        $payRows = Database::fetchAll($paySql, [$from, $to]);
+        // 2. Revenue by Payment Method. payments has no payment_method/payment_date columns (pre-existing,
+        // found while scoping this query) - the real columns are `method` and `paid_at`.
+        $paySql = "SELECT
+                       pay.method AS payment_method,
+                       COUNT(*) as transaction_count,
+                       COALESCE(SUM(pay.amount), 0) as total_amount
+                   FROM payments pay
+                   JOIN invoices i ON i.id = pay.invoice_id
+                   JOIN patients p ON p.id = i.patient_id
+                   WHERE pay.paid_at BETWEEN ? AND ? AND pay.voided_at IS NULL AND p.facility_id = ?
+                   GROUP BY pay.method ORDER BY total_amount DESC";
+        $payRows = Database::fetchAll($paySql, [$from, $to, $fid]);
 
         // 3. Invoices List for Selected Period
-        $invSql = "SELECT i.id, i.invoice_number, i.invoice_date, i.patient_id, i.total_amount, i.paid_amount, i.balance_due, i.status,
+        $invSql = "SELECT i.id, i.invoice_number, i.invoice_date, i.patient_id, i.total_amount, i.paid_amount, {$bal} AS balance_due, i.status,
                           p.first_name_encrypted, p.last_name_encrypted
                    FROM invoices i
                    JOIN patients p ON i.patient_id = p.id
-                   WHERE i.invoice_date BETWEEN ? AND ?
+                   WHERE i.invoice_date BETWEEN ? AND ? AND p.facility_id = ?
                    ORDER BY i.invoice_date DESC LIMIT 100";
-        $rawInvoices = Database::fetchAll($invSql, [$from, $to]);
+        $rawInvoices = Database::fetchAll($invSql, [$from, $to, $fid]);
         $invoices = [];
         foreach ($rawInvoices as $r) {
             $invoices[] = [
@@ -225,12 +235,13 @@ class ReportController {
             ];
         }
 
-        // 4. Claims Status Breakdown
-        $claimsSql = "SELECT status, COUNT(*) as count, COALESCE(SUM(total_charge), 0) as total_charge
-                      FROM insurance_claims
-                      WHERE DATE(created_at) BETWEEN ? AND ?
-                      GROUP BY status";
-        $claimsBreakdown = Database::fetchAll($claimsSql, [$from, $to]);
+        // 4. Claims Status Breakdown. insurance_claims has no total_charge column (pre-existing, found while
+        // scoping this query) - the real column is `billed_amount` (same one ClaimController reads).
+        $claimsSql = "SELECT c.status, COUNT(*) as count, COALESCE(SUM(c.billed_amount), 0) as total_charge
+                      FROM insurance_claims c JOIN patients p ON p.id = c.patient_id
+                      WHERE DATE(c.created_at) BETWEEN ? AND ? AND p.facility_id = ?
+                      GROUP BY c.status";
+        $claimsBreakdown = Database::fetchAll($claimsSql, [$from, $to, $fid]);
 
         $this->respond([
             'date_range' => ['from' => $from, 'to' => $to],
@@ -259,8 +270,9 @@ class ReportController {
         $status = trim($_GET['status'] ?? ''); // 'signed', 'draft', or empty
         $q = trim($_GET['q'] ?? '');
 
-        $where = ["cn.note_date BETWEEN ? AND ?"];
-        $params = [$from, $to];
+        $fid = $_SESSION['facility_id'] ?? null;
+        $where = ["cn.note_date BETWEEN ? AND ?", "p.facility_id = ?"];
+        $params = [$from, $to, $fid];
         if ($providerId > 0) {
             $where[] = "cn.provider_id = ?";
             $params[] = $providerId;
@@ -282,6 +294,7 @@ class ReportController {
                            SUM(CASE WHEN cn.lock_state = 0 OR cn.lock_state IS NULL THEN 1 ELSE 0 END) as unsigned_count
                     FROM clinical_notes cn
                     JOIN users u ON cn.provider_id = u.id
+                    JOIN patients p ON cn.patient_id = p.id
                     WHERE " . implode(' AND ', $where) . "
                     GROUP BY u.id, u.first_name, u.last_name
                     ORDER BY total_encounters DESC";
@@ -353,14 +366,14 @@ class ReportController {
         $topDiagnoses = array_slice(array_values($icdMap), 0, 20);
 
         // 3. Orders Overview for period
-        $ordersSql = "SELECT order_type, status, COUNT(*) as count 
-                      FROM orders 
-                      WHERE DATE(created_at) BETWEEN ? AND ?
-                      GROUP BY order_type, status";
-        $orderStats = Database::fetchAll($ordersSql, [$from, $to]);
+        $ordersSql = "SELECT o.order_type, o.status, COUNT(*) as count
+                      FROM orders o JOIN patients p ON p.id = o.patient_id
+                      WHERE DATE(o.created_at) BETWEEN ? AND ? AND p.facility_id = ?
+                      GROUP BY o.order_type, o.status";
+        $orderStats = Database::fetchAll($ordersSql, [$from, $to, $fid]);
 
         // 4. Provider list for dropdown filter
-        $allProviders = Database::fetchAll("SELECT id, first_name, last_name FROM users WHERE role IN ('Doctor', 'Nurse Practitioner', 'Physician Assistant') AND is_active = 1 ORDER BY first_name ASC");
+        $allProviders = Database::fetchAll("SELECT id, first_name, last_name FROM users WHERE role IN ('Doctor', 'Nurse Practitioner', 'Physician Assistant') AND is_active = 1 AND facility_id = ? ORDER BY first_name ASC", [$fid]);
 
         // Metrics calculations
         $totalEnc = count($encounters);
@@ -401,8 +414,9 @@ class ReportController {
         $visitType = trim($_GET['visit_type'] ?? '');
         $q = trim($_GET['q'] ?? '');
 
-        $where = ["DATE(a.start_time) BETWEEN ? AND ?"];
-        $params = [$from, $to];
+        $fid = $_SESSION['facility_id'] ?? null;
+        $where = ["DATE(a.start_time) BETWEEN ? AND ?", "p.facility_id = ?"];
+        $params = [$from, $to, $fid];
         if ($providerId > 0) {
             $where[] = "a.provider_id = ?";
             $params[] = $providerId;
@@ -417,9 +431,9 @@ class ReportController {
         }
 
         // 1. Status Breakdown
-        $statusSql = "SELECT a.status, COUNT(*) as count 
-                      FROM appointments a 
-                      WHERE " . implode(' AND ', $where) . " 
+        $statusSql = "SELECT a.status, COUNT(*) as count
+                      FROM appointments a JOIN patients p ON p.id = a.patient_id
+                      WHERE " . implode(' AND ', $where) . "
                       GROUP BY a.status";
         $statusRows = Database::fetchAll($statusSql, $params);
 
@@ -431,6 +445,7 @@ class ReportController {
                           SUM(CASE WHEN a.status = 'Cancelled' THEN 1 ELSE 0 END) as cancelled
                    FROM appointments a
                    JOIN users u ON a.provider_id = u.id
+                   JOIN patients p ON a.patient_id = p.id
                    WHERE " . implode(' AND ', $where) . "
                    GROUP BY u.id, u.first_name, u.last_name
                    ORDER BY total_appointments DESC";
@@ -488,7 +503,7 @@ class ReportController {
         }
 
         // Providers list for filter dropdown
-        $allProviders = Database::fetchAll("SELECT id, first_name, last_name FROM users WHERE role IN ('Doctor', 'Nurse Practitioner', 'Physician Assistant') AND is_active = 1 ORDER BY first_name ASC");
+        $allProviders = Database::fetchAll("SELECT id, first_name, last_name FROM users WHERE role IN ('Doctor', 'Nurse Practitioner', 'Physician Assistant') AND is_active = 1 AND facility_id = ? ORDER BY first_name ASC", [$fid]);
 
         $this->respond([
             'date_range' => ['from' => $from, 'to' => $to],
@@ -552,8 +567,11 @@ class ReportController {
     public function specialties(): void {
         $this->checkAccess(Roles::ALL_STAFF);
         [$from, $to] = $this->parseDateRange();
+        $fid = $_SESSION['facility_id'] ?? null;
 
-        $sql = "SELECT 
+        // LEFT JOINs clinical_notes without a facility filter on the note itself would count every facility's
+        // encounters for a provider who matches on role alone; scope both the provider roster and the note join.
+        $sql = "SELECT
                     COALESCE(u.specialty, 'General / Unassigned') as specialty,
                     COUNT(cn.id) as total_encounters,
                     COUNT(DISTINCT cn.patient_id) as unique_patients,
@@ -561,10 +579,11 @@ class ReportController {
                     COUNT(DISTINCT u.id) as provider_count
                 FROM users u
                 LEFT JOIN clinical_notes cn ON cn.provider_id = u.id AND cn.note_date BETWEEN ? AND ?
-                WHERE u.role IN ('Doctor', 'Nurse', 'Medical Assistant')
+                    AND cn.patient_id IN (SELECT id FROM patients WHERE facility_id = ?)
+                WHERE u.role IN ('Doctor', 'Nurse', 'Medical Assistant') AND u.facility_id = ?
                 GROUP BY specialty
                 ORDER BY total_encounters DESC";
-        $specialtyBreakdown = Database::fetchAll($sql, [$from, $to]);
+        $specialtyBreakdown = Database::fetchAll($sql, [$from, $to, $fid, $fid]);
 
         $this->respond([
             'date_range' => ['from' => $from, 'to' => $to],
@@ -600,9 +619,9 @@ class ReportController {
                     FROM clinical_notes cn
                     JOIN users u ON cn.provider_id = u.id
                     JOIN patients p ON cn.patient_id = p.id
-                    WHERE cn.note_date BETWEEN ? AND ?
+                    WHERE cn.note_date BETWEEN ? AND ? AND p.facility_id = ?
                     ORDER BY cn.note_date DESC";
-            $rows = Database::fetchAll($sql, [$from, $to]);
+            $rows = Database::fetchAll($sql, [$from, $to, $_SESSION['facility_id'] ?? null]);
             foreach ($rows as $r) {
                 fputcsv($out, [
                     $r['id'],
@@ -625,9 +644,9 @@ class ReportController {
                     FROM appointments a
                     JOIN users u ON a.provider_id = u.id
                     JOIN patients p ON a.patient_id = p.id
-                    WHERE DATE(a.start_time) BETWEEN ? AND ?
+                    WHERE DATE(a.start_time) BETWEEN ? AND ? AND p.facility_id = ?
                     ORDER BY a.start_time DESC";
-            $rows = Database::fetchAll($sql, [$from, $to]);
+            $rows = Database::fetchAll($sql, [$from, $to, $_SESSION['facility_id'] ?? null]);
             foreach ($rows as $r) {
                 fputcsv($out, [
                     $r['id'],
@@ -661,7 +680,8 @@ class ReportController {
             $this->checkAccess(Roles::ALL_STAFF);
             fputcsv($out, ['Specialty', 'Provider Count', 'Total Encounters', 'Unique Patients', 'Signed Encounters']);
 
-            $sql = "SELECT 
+            $fid = $_SESSION['facility_id'] ?? null;
+            $sql = "SELECT
                         COALESCE(u.specialty, 'General / Unassigned') as specialty,
                         COUNT(cn.id) as total_encounters,
                         COUNT(DISTINCT cn.patient_id) as unique_patients,
@@ -669,10 +689,11 @@ class ReportController {
                         COUNT(DISTINCT u.id) as provider_count
                     FROM users u
                     LEFT JOIN clinical_notes cn ON cn.provider_id = u.id AND cn.note_date BETWEEN ? AND ?
-                    WHERE u.role IN ('Doctor', 'Nurse', 'Medical Assistant')
+                        AND cn.patient_id IN (SELECT id FROM patients WHERE facility_id = ?)
+                    WHERE u.role IN ('Doctor', 'Nurse', 'Medical Assistant') AND u.facility_id = ?
                     GROUP BY specialty
                     ORDER BY total_encounters DESC";
-            $rows = Database::fetchAll($sql, [$from, $to]);
+            $rows = Database::fetchAll($sql, [$from, $to, $fid, $fid]);
             foreach ($rows as $r) {
                 fputcsv($out, [
                     $r['specialty'],

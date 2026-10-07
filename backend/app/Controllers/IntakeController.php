@@ -25,7 +25,7 @@ class IntakeController {
             return;
         }
 
-        $patient = Database::fetch("SELECT id, first_name_encrypted, last_name_encrypted, email FROM patients WHERE id = ?", [$patientId]);
+        $patient = Database::fetch("SELECT id, first_name_encrypted, last_name_encrypted, email FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null]);
         if (!$patient) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Patient record not found.']);
@@ -279,11 +279,11 @@ class IntakeController {
 
         $form = Database::fetch(
             "SELECT pif.*, p.first_name_encrypted, p.last_name_encrypted
-             FROM patient_intake_forms pif 
-             JOIN patients p ON pif.patient_id = p.id 
-             WHERE pif.patient_id = ? 
+             FROM patient_intake_forms pif
+             JOIN patients p ON pif.patient_id = p.id
+             WHERE pif.patient_id = ? AND p.facility_id = ?
              ORDER BY pif.id DESC LIMIT 1",
-            [$patientId]
+            [$patientId, $_SESSION['facility_id'] ?? null]
         );
 
         if (!$form) {
@@ -337,8 +337,9 @@ class IntakeController {
                     p.first_name_encrypted, p.last_name_encrypted
              FROM patient_intake_forms pif
              JOIN patients p ON pif.patient_id = p.id
-             WHERE pif.status IN ('Submitted', 'Approved')
-             ORDER BY pif.submitted_at DESC LIMIT 10"
+             WHERE pif.status IN ('Submitted', 'Approved') AND p.facility_id = ?
+             ORDER BY pif.submitted_at DESC LIMIT 10",
+            [$_SESSION['facility_id'] ?? null]
         );
 
         $unreadCount = 0;
@@ -381,6 +382,14 @@ class IntakeController {
         if (!$id) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Invalid intake form ID.']);
+            return;
+        }
+        if (!Database::fetch(
+            "SELECT pif.id FROM patient_intake_forms pif JOIN patients p ON p.id = pif.patient_id WHERE (pif.id = ? OR pif.patient_id = ?) AND p.facility_id = ?",
+            [$id, $id, $_SESSION['facility_id'] ?? null]
+        )) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Intake form not found.']);
             return;
         }
 

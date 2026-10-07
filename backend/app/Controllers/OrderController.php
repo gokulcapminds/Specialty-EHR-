@@ -41,6 +41,8 @@ class OrderController {
             }
         }
 
+        $where[] = "p.facility_id = ?";
+        $params[] = $_SESSION['facility_id'] ?? null;
         $whereSql = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
 
         $orders = Database::fetchAll(
@@ -71,6 +73,11 @@ class OrderController {
         if (!$patientId) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Patient ID required.']);
+            return;
+        }
+        if (!Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
             return;
         }
 
@@ -109,6 +116,13 @@ class OrderController {
         if (empty($patientId) || empty($providerId) || empty($orderType) || empty($orderName)) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Patient, provider, order type, and order name/test are required.']);
+            return;
+        }
+        $fid = $_SESSION['facility_id'] ?? null;
+        if (!Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $fid])
+            || !Database::fetch("SELECT id FROM users WHERE id = ? AND facility_id = ?", [$providerId, $fid])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient or provider not found.']);
             return;
         }
 
@@ -151,7 +165,10 @@ class OrderController {
             return;
         }
 
-        $order = Database::fetch("SELECT id, patient_id, order_number, status FROM orders WHERE id = ?", [$id]);
+        $order = Database::fetch(
+            "SELECT o.id, o.patient_id, o.order_number, o.status FROM orders o JOIN patients p ON p.id = o.patient_id WHERE o.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
         if (!$order) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Order not found.']);
@@ -183,7 +200,10 @@ class OrderController {
         }
 
         $id = $params['id'] ?? null;
-        $order = Database::fetch("SELECT id, patient_id, order_number, status FROM orders WHERE id = ?", [$id]);
+        $order = Database::fetch(
+            "SELECT o.id, o.patient_id, o.order_number, o.status FROM orders o JOIN patients p ON p.id = o.patient_id WHERE o.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
         if (!$order) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Order not found.']);
@@ -217,6 +237,15 @@ class OrderController {
         header('Content-Type: application/json');
 
         $orderId = $params['id'] ?? null;
+        $orderRow = Database::fetch(
+            "SELECT o.patient_id FROM orders o JOIN patients p ON p.id = o.patient_id WHERE o.id = ? AND p.facility_id = ?",
+            [$orderId, $_SESSION['facility_id'] ?? null]
+        );
+        if (!$orderRow) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Order not found.']);
+            return;
+        }
         $results = Database::fetchAll(
             "SELECT r.*, CONCAT(u.first_name, ' ', u.last_name) AS signed_by_name
              FROM results r
@@ -226,7 +255,6 @@ class OrderController {
             [$orderId]
         );
 
-        $orderRow = Database::fetch("SELECT patient_id FROM orders WHERE id = ?", [$orderId]);
         AuditLogger::log($_SESSION['user_id'] ?? null, $_SESSION['username'] ?? null, $_SESSION['user_role'] ?? null, $orderRow['patient_id'] ?? null, 'View Order Results', 'Orders', (string)$orderId);
 
         echo json_encode(['status' => 'success', 'data' => $results]);
@@ -238,7 +266,10 @@ class OrderController {
         header('Content-Type: application/json');
 
         $orderId = $params['id'] ?? null;
-        $order = Database::fetch("SELECT id, patient_id, order_number, order_type, status FROM orders WHERE id = ?", [$orderId]);
+        $order = Database::fetch(
+            "SELECT o.id, o.patient_id, o.order_number, o.order_type, o.status FROM orders o JOIN patients p ON p.id = o.patient_id WHERE o.id = ? AND p.facility_id = ?",
+            [$orderId, $_SESSION['facility_id'] ?? null]
+        );
         if (!$order) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Order not found.']);

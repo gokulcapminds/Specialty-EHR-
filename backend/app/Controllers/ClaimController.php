@@ -83,11 +83,15 @@ class ClaimController {
         return $out;
     }
 
+    // Facility-based data isolation: the single `JOIN invoices i ... JOIN patients p` here is the one place that
+    // scopes every claim lookup (show/update/setStatus/remit/reverseRemit/appeal/close/billSecondary/edi837/cms1500
+    // all load a claim through this), so a cross-facility claim id was never a real gap once this was filtered.
     public function load(int $id): ?array {
         $c = Database::fetch(
             "SELECT c.*, i.invoice_number, i.status AS invoice_status, i.total_amount AS invoice_total
-             FROM insurance_claims c JOIN invoices i ON i.id = c.invoice_id WHERE c.id = ?",
-            [$id]
+             FROM insurance_claims c JOIN invoices i ON i.id = c.invoice_id JOIN patients p ON p.id = i.patient_id
+             WHERE c.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
         );
         return $c ?: null;
     }
@@ -306,7 +310,8 @@ class ClaimController {
     // GET /api/billing/claims?status=&payer=&q=&date_from=&date_to=
     public function index(): void {
         $this->checkAccess(self::VIEW_ROLES);
-        $where = ['1=1']; $params = [];
+        $fid = $_SESSION['facility_id'] ?? null;
+        $where = ['p.facility_id = ?']; $params = [$fid];
         $status = $_GET['status'] ?? '';
         if ($status === 'open') {
             $where[] = "c.status IN ('" . implode("','", self::OPEN_STATUSES) . "')";
@@ -321,7 +326,7 @@ class ClaimController {
             "SELECT c.id, c.claim_number, c.invoice_id, c.patient_id, c.sequence, c.status, c.payer_name, c.date_of_service,
                     c.billed_amount, c.insurance_paid, c.adjustment_amount, c.patient_resp, c.timely_filing_due,
                     i.invoice_number, DATEDIFF(CURDATE(), c.date_of_service) AS age_days
-             FROM insurance_claims c JOIN invoices i ON i.id = c.invoice_id
+             FROM insurance_claims c JOIN invoices i ON i.id = c.invoice_id JOIN patients p ON p.id = i.patient_id
              WHERE " . implode(' AND ', $where) . " ORDER BY c.id DESC",
             $params
         );
@@ -333,22 +338,27 @@ class ClaimController {
             $out[] = $r;
         }
         $counts = [];
-        foreach (Database::fetchAll("SELECT status, COUNT(*) c FROM insurance_claims GROUP BY status") as $r) $counts[$r['status']] = (int)$r['c'];
+        foreach (Database::fetchAll(
+            "SELECT c.status, COUNT(*) c FROM insurance_claims c JOIN invoices i ON i.id = c.invoice_id JOIN patients p ON p.id = i.patient_id WHERE p.facility_id = ? GROUP BY c.status",
+            [$fid]
+        ) as $r) $counts[$r['status']] = (int)$r['c'];
 
         $openList = "'" . implode("','", self::OPEN_STATUSES) . "'";
         $kpi = Database::fetch(
             "SELECT
-               COALESCE(SUM(CASE WHEN status IN ($openList) THEN billed_amount - insurance_paid - adjustment_amount END), 0) AS outstanding,
-               COALESCE(SUM(CASE WHEN status IN ('Submitted','Accepted','Appealed') THEN billed_amount END), 0) AS awaiting_amount,
-               SUM(status IN ('Submitted','Accepted','Appealed')) AS awaiting_count,
-               COALESCE(SUM(CASE WHEN status = 'Denied' THEN billed_amount END), 0) AS denied_amount,
-               SUM(status = 'Denied') AS denied_count
-             FROM insurance_claims"
+               COALESCE(SUM(CASE WHEN c.status IN ($openList) THEN c.billed_amount - c.insurance_paid - c.adjustment_amount END), 0) AS outstanding,
+               COALESCE(SUM(CASE WHEN c.status IN ('Submitted','Accepted','Appealed') THEN c.billed_amount END), 0) AS awaiting_amount,
+               SUM(c.status IN ('Submitted','Accepted','Appealed')) AS awaiting_count,
+               COALESCE(SUM(CASE WHEN c.status = 'Denied' THEN c.billed_amount END), 0) AS denied_amount,
+               SUM(c.status = 'Denied') AS denied_count
+             FROM insurance_claims c JOIN invoices i ON i.id = c.invoice_id JOIN patients p ON p.id = i.patient_id WHERE p.facility_id = ?",
+            [$fid]
         );
         $patientBal = Database::fetch(
             "SELECT COALESCE(SUM(i.total_amount - i.paid_amount - COALESCE((SELECT SUM(a.amount) FROM adjustments a WHERE a.invoice_id = i.id AND a.voided_at IS NULL), 0)), 0) AS bal,
                     COUNT(*) AS n
-             FROM invoices i WHERE i.status = 'Patient Balance'"
+             FROM invoices i JOIN patients p ON p.id = i.patient_id WHERE i.status = 'Patient Balance' AND p.facility_id = ?",
+            [$fid]
         );
         $this->respond([
             'status' => 'success',
@@ -383,14 +393,20 @@ class ClaimController {
             }
             $out[$row]['total']['amount'] += $amount; $out[$row]['total']['count']++;
         };
+        $fid = $_SESSION['facility_id'] ?? null;
         $open = "'" . implode("','", self::OPEN_STATUSES) . "'";
-        foreach (Database::fetchAll("SELECT billed_amount - insurance_paid - adjustment_amount AS due, DATEDIFF(CURDATE(), date_of_service) AS age FROM insurance_claims WHERE status IN ($open)") as $r) {
+        foreach (Database::fetchAll(
+            "SELECT c.billed_amount - c.insurance_paid - c.adjustment_amount AS due, DATEDIFF(CURDATE(), c.date_of_service) AS age
+             FROM insurance_claims c JOIN invoices i ON i.id = c.invoice_id JOIN patients p ON p.id = i.patient_id
+             WHERE c.status IN ($open) AND p.facility_id = ?",
+            [$fid]
+        ) as $r) {
             if ((float)$r['due'] > self::TOL) $put('insurance', max(0, (int)$r['age']), (float)$r['due']);
         }
         $sql = "SELECT i.total_amount - i.paid_amount - COALESCE((SELECT SUM(a.amount) FROM adjustments a WHERE a.invoice_id = i.id AND a.voided_at IS NULL), 0) AS due,
                        DATEDIFF(CURDATE(), i.invoice_date) AS age
-                FROM invoices i WHERE i.status IN ('Issued','Partially Paid','Patient Balance','Overdue')";
-        foreach (Database::fetchAll($sql) as $r) {
+                FROM invoices i JOIN patients p ON p.id = i.patient_id WHERE i.status IN ('Issued','Partially Paid','Patient Balance','Overdue') AND p.facility_id = ?";
+        foreach (Database::fetchAll($sql, [$fid]) as $r) {
             if ((float)$r['due'] > self::TOL) $put('patient', max(0, (int)$r['age']), (float)$r['due']);
         }
         foreach (['insurance', 'patient'] as $row) {
@@ -413,7 +429,10 @@ class ClaimController {
         $this->checkAccess(self::EDIT_ROLES);
         $in = $this->input();
         $invoiceId = (int)($in['invoice_id'] ?? 0);
-        $inv = $invoiceId ? Database::fetch("SELECT * FROM invoices WHERE id = ?", [$invoiceId]) : null;
+        $inv = $invoiceId ? Database::fetch(
+            "SELECT i.* FROM invoices i JOIN patients p ON p.id = i.patient_id WHERE i.id = ? AND p.facility_id = ?",
+            [$invoiceId, $_SESSION['facility_id'] ?? null]
+        ) : null;
         if (!$inv) { $this->fail('Invoice not found.', 404); return; }
         if ($inv['status'] === 'Draft') { $this->fail('Issue the invoice before creating a claim.'); return; }
         if ((float)$inv['discount'] > 0) { $this->fail('Invoices with a discount cannot be billed to insurance. Remove the discount or bill the patient.'); return; }

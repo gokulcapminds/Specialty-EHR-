@@ -202,6 +202,11 @@ class ClinicalController {
             echo json_encode(['status' => 'error', 'message' => 'Patient ID required.']);
             return;
         }
+        if (!Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
+            return;
+        }
 
         $noteDate = !empty($input['note_date']) ? date('Y-m-d H:i:s', strtotime($input['note_date'])) : date('Y-m-d H:i:s');
 
@@ -267,13 +272,14 @@ class ClinicalController {
             return;
         }
 
-        $sql = "SELECT n.*, u.first_name, u.last_name 
+        $sql = "SELECT n.*, u.first_name, u.last_name
                 FROM clinical_notes n
                 JOIN users u ON n.provider_id = u.id
-                WHERE n.patient_id = ?
+                JOIN patients p ON p.id = n.patient_id
+                WHERE n.patient_id = ? AND p.facility_id = ?
                 ORDER BY n.note_date DESC";
-        
-        $notes = Database::fetchAll($sql, [$patientId]);
+
+        $notes = Database::fetchAll($sql, [$patientId, $_SESSION['facility_id'] ?? null]);
 
         foreach ($notes as &$note) {
             if ($note['immunizations_administered']) {
@@ -294,6 +300,11 @@ class ClinicalController {
         if (!$id) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Encounter ID required.']);
+            return;
+        }
+        if (!Database::fetch("SELECT n.id FROM clinical_notes n JOIN patients p ON p.id = n.patient_id WHERE n.id = ? AND p.facility_id = ?", [$id, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Encounter not found.']);
             return;
         }
 
@@ -505,7 +516,10 @@ class ClinicalController {
             return;
         }
 
-        $note = Database::fetch("SELECT * FROM clinical_notes WHERE id = ?", [$id]);
+        $note = Database::fetch(
+            "SELECT n.* FROM clinical_notes n JOIN patients p ON p.id = n.patient_id WHERE n.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
         if (!$note) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Clinical note record not found.']);
@@ -555,11 +569,12 @@ class ClinicalController {
         }
 
         $note = Database::fetch(
-            "SELECT n.*, u.first_name, u.last_name 
+            "SELECT n.*, u.first_name, u.last_name
              FROM clinical_notes n
              LEFT JOIN users u ON n.provider_id = u.id
-             WHERE n.id = ?",
-            [$id]
+             JOIN patients p ON p.id = n.patient_id
+             WHERE n.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
         );
 
         if (!$note) {
@@ -593,7 +608,10 @@ class ClinicalController {
             return;
         }
 
-        $note = Database::fetch("SELECT * FROM clinical_notes WHERE id = ?", [$id]);
+        $note = Database::fetch(
+            "SELECT n.* FROM clinical_notes n JOIN patients p ON p.id = n.patient_id WHERE n.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
         if (!$note) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Encounter not found.']);
@@ -685,7 +703,10 @@ class ClinicalController {
             return;
         }
 
-        $note = Database::fetch("SELECT lock_state, addendums, patient_id FROM clinical_notes WHERE id = ?", [$id]);
+        $note = Database::fetch(
+            "SELECT n.lock_state, n.addendums, n.patient_id FROM clinical_notes n JOIN patients p ON p.id = n.patient_id WHERE n.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
         if (!$note) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Encounter not found.']);
@@ -751,6 +772,11 @@ class ClinicalController {
         if (!$id) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Encounter ID required.']);
+            return;
+        }
+        if (!Database::fetch("SELECT n.id FROM clinical_notes n JOIN patients p ON p.id = n.patient_id WHERE n.id = ? AND p.facility_id = ?", [$id, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Encounter not found.']);
             return;
         }
 

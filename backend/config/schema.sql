@@ -799,3 +799,14 @@ CREATE TABLE IF NOT EXISTS patient_cardiac_profile (
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
     UNIQUE KEY uniq_patient_cardiac (patient_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Migration 2026-10-06: facility-based data isolation (applied live). Every facility previously shared
+-- one pool of patients/appointments/encounters/billing/etc; this backfills the two tables that carry
+-- facility_id (patients, users - every other patient-linked table has no facility_id of its own and is
+-- scoped at query time via a join back to patients) so the new per-request scoping in the controllers
+-- has a real value to filter on. All 15 patients and 4 users with facility_id IS NULL were defaulted to
+-- facility 11 (Metro Heart & Vascular Center) as a one-time data backfill, not a schema change - this is
+-- demo/test data, not real PHI, so a single default was acceptable; a real deployment migrating existing
+-- data would need per-record review instead of one default for everything.
+UPDATE patients SET facility_id = 11 WHERE facility_id IS NULL;
+UPDATE users SET facility_id = 11 WHERE facility_id IS NULL;

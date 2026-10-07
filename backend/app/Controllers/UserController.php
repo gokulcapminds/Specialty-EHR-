@@ -135,10 +135,27 @@ class UserController {
     }
 
     public function index(): void {
-        $this->checkAdminAccess();
         header('Content-Type: application/json');
 
-        $users = Database::fetchAll("SELECT " . self::USER_COLUMNS . " FROM users ORDER BY username ASC");
+        $role = $_SESSION['user_role'] ?? '';
+        if ($role === 'Super Admin') {
+            $users = Database::fetchAll("SELECT " . self::USER_COLUMNS . " FROM users ORDER BY username ASC");
+        } else if (in_array($role, Roles::ALL_STAFF, true)) {
+            $facilityId = $_SESSION['facility_id'] ?? null;
+            if (!$facilityId) {
+                http_response_code(403);
+                echo json_encode(['status' => 'error', 'message' => 'No active facility assigned.']);
+                return;
+            }
+            $users = Database::fetchAll(
+                "SELECT " . self::USER_COLUMNS . " FROM users WHERE is_active = 1 AND (facility_id = ? OR facility_id IS NULL) ORDER BY first_name ASC, last_name ASC",
+                [$facilityId]
+            );
+        } else {
+            $this->checkAdminAccess();
+            return;
+        }
+
         echo json_encode(['status' => 'success', 'data' => $users]);
     }
 

@@ -70,8 +70,9 @@ class EncounterController {
                     LEFT JOIN users u ON u.id = a.provider_id
                     WHERE DATE(a.start_time) BETWEEN ? AND ?
                       AND a.status NOT IN ('Cancelled', 'No Show', 'Waiting List', 'Completed')
-                      AND NOT EXISTS (SELECT 1 FROM clinical_notes n WHERE n.appointment_id = a.id)";
-        $apptParams = [$from, $to];
+                      AND NOT EXISTS (SELECT 1 FROM clinical_notes n WHERE n.appointment_id = a.id)
+                      AND p.facility_id = ?";
+        $apptParams = [$from, $to, $_SESSION['facility_id'] ?? null];
         if ($providerId) { $apptSql .= " AND a.provider_id = ?"; $apptParams[] = $providerId; }
         foreach (Database::fetchAll($apptSql, $apptParams) as $a) {
             $stage = in_array($a['appointment_status'], self::CHECKED_IN, true) ? 'Checked in' : 'Scheduled';
@@ -95,8 +96,9 @@ class EncounterController {
                     JOIN patients p ON p.id = n.patient_id
                     LEFT JOIN users u ON u.id = n.provider_id
                     LEFT JOIN appointments a ON a.id = n.appointment_id
-                    WHERE (n.lock_state = 0 OR DATE(n.note_date) BETWEEN ? AND ?)";
-        $noteParams = [$from, $to];
+                    WHERE (n.lock_state = 0 OR DATE(n.note_date) BETWEEN ? AND ?)
+                      AND p.facility_id = ?";
+        $noteParams = [$from, $to, $_SESSION['facility_id'] ?? null];
         if ($providerId) { $noteSql .= " AND n.provider_id = ?"; $noteParams[] = $providerId; }
         $noteSql .= " ORDER BY n.note_date DESC LIMIT 500";
         foreach (Database::fetchAll($noteSql, $noteParams) as $n) {
@@ -143,7 +145,10 @@ class EncounterController {
         $fail = fn(string $m, int $c = 400) => $this->respond(['status' => 'error', 'message' => $m], $c);
 
         if ($appointmentId) {
-            $a = Database::fetch("SELECT * FROM appointments WHERE id = ?", [$appointmentId]);
+            $a = Database::fetch(
+                "SELECT a.* FROM appointments a JOIN patients p ON p.id = a.patient_id WHERE a.id = ? AND p.facility_id = ?",
+                [$appointmentId, $_SESSION['facility_id'] ?? null]
+            );
             if (!$a) { $fail('Appointment not found.', 404); return; }
             // idempotent: never create a second encounter for the same appointment
             $existing = Database::fetch("SELECT id FROM clinical_notes WHERE appointment_id = ?", [$appointmentId]);
@@ -159,9 +164,9 @@ class EncounterController {
             $type = trim(preg_replace('/\s*EHR$/i', '', (string)($a['specialty'] ?? ''))) ?: 'Cardiology';
         } else {
             $patientId = (int)($in['patient_id'] ?? 0);
-            if (!$patientId || !Database::fetch("SELECT id FROM patients WHERE id = ?", [$patientId])) { $fail('Choose a patient to start a walk-in encounter.'); return; }
+            if (!$patientId || !Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) { $fail('Choose a patient to start a walk-in encounter.'); return; }
             $providerId = (int)($in['provider_id'] ?? 0) ?: (int)$_SESSION['user_id'];
-            if (!Database::fetch("SELECT id FROM users WHERE id = ? AND is_active = 1", [$providerId])) { $fail('Choose an active provider.'); return; }
+            if (!Database::fetch("SELECT id FROM users WHERE id = ? AND is_active = 1 AND facility_id = ?", [$providerId, $_SESSION['facility_id'] ?? null])) { $fail('Choose an active provider.'); return; }
             $noteDate = date('Y-m-d H:i:s');
             [$visitType, $visitTypeError] = VisitTypes::resolve($in['visit_type'] ?? null);
             if ($visitTypeError) { $fail($visitTypeError); return; }

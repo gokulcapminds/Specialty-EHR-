@@ -1637,7 +1637,7 @@
 .pd-switch input:focus-visible + .pd-switch-slider { box-shadow: 0 0 0 3px rgba(2, 132, 199, 0.25); }
 .pd-switch input:disabled + .pd-switch-slider { opacity: 0.5; cursor: not-allowed; }
 
-.pd-edit-btn { border: 1px solid #cbd5e1; background: #ffffff; color: #0f172a; border-radius: 6px; padding: 5px 12px; font-size: 0.8rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; gap: 6px; }
+.pd-edit-btn { border: 1px solid #cbd5e1; background: #ffffff; color: #0f172a; border-radius: 6px; padding: 6px 10px; font-size: 0.85rem; font-weight: 600; cursor: pointer; display: inline-flex; align-items: center; justify-content: center; }
 .pd-edit-btn:hover:not(:disabled) { background: #f8fafc; border-color: #94a3b8; }
 .pd-edit-btn:disabled { opacity: 0.6; cursor: wait; }
 

@@ -80,8 +80,11 @@ class PatientController {
         $this->checkAccess(Roles::ALL_STAFF);
         header('Content-Type: application/json');
 
-        $sql = "SELECT id, first_name, last_name, role, specialty FROM users WHERE role IN ('Doctor', 'Super Admin') ORDER BY first_name ASC";
-        $providers = Database::fetchAll($sql);
+        // Facility-scoped (see Roles::ALL_STAFF's facility-isolation doc comment) - this is the single
+        // endpoint behind nearly every Provider/Clinician dropdown in the app, so scoping it here scopes
+        // all of them without touching each frontend call site.
+        $sql = "SELECT id, first_name, last_name, role, specialty FROM users WHERE role IN ('Doctor', 'Super Admin') AND facility_id = ? ORDER BY first_name ASC";
+        $providers = Database::fetchAll($sql, [$_SESSION['facility_id'] ?? null]);
         echo json_encode(['status' => 'success', 'data' => $providers]);
     }
 
@@ -129,9 +132,11 @@ class PatientController {
                 LEFT JOIN patient_insurance pi ON p.id = pi.patient_id AND pi.insurance_type = 'Primary'
                 LEFT JOIN patient_insurance pi2 ON p.id = pi2.patient_id AND pi2.insurance_type = 'Secondary'
                 LEFT JOIN patient_intake_forms pif ON pif.id = (SELECT MAX(id) FROM patient_intake_forms WHERE patient_id = p.id)
-                WHERE p.id = ?";
+                WHERE p.id = ? AND p.facility_id = ?";
 
-        $pt = Database::fetch($sql, [$id]);
+        // A patient at another facility gets the same generic 404 as a nonexistent id - never a
+        // distinguishable response, so an id guess can't even confirm a patient exists elsewhere.
+        $pt = Database::fetch($sql, [$id, $_SESSION['facility_id'] ?? null]);
         if (!$pt) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
@@ -205,9 +210,9 @@ class PatientController {
                 LEFT JOIN patient_insurance pi ON p.id = pi.patient_id AND pi.insurance_type = 'Primary'
                 LEFT JOIN patient_insurance pi2 ON p.id = pi2.patient_id AND pi2.insurance_type = 'Secondary'
                 LEFT JOIN patient_intake_forms pif ON pif.id = (SELECT MAX(id) FROM patient_intake_forms WHERE patient_id = p.id)
-                " . ($idFilter ? "WHERE p.id = ?" : "") . "
+                WHERE p.facility_id = ?" . ($idFilter ? " AND p.id = ?" : "") . "
                 ORDER BY p.id DESC";
-        $params = $idFilter ? [$idFilter] : [];
+        $params = $idFilter ? [$_SESSION['facility_id'] ?? null, $idFilter] : [$_SESSION['facility_id'] ?? null];
 
         $patients = Database::fetchAll($sql, $params);
 
@@ -263,20 +268,7 @@ class PatientController {
                 } catch (\Exception $e) { $nextApptFormatted = ''; }
             }
 
-            $clinicians = [];
-            if (!empty($p['provider_first_name'])) {
-                $clinicians[] = trim($p['provider_first_name'] . ' ' . $p['provider_last_name']);
-            }
-            // Clinicians = assigned provider plus every provider this patient actually has appointments with
-            if (!empty($p['appt_clinicians'])) {
-                foreach (explode(', ', $p['appt_clinicians']) as $apptClinician) {
-                    $clinicians[] = trim($apptClinician);
-                }
-            }
-            $cliniciansStr = implode(', ', array_unique(array_filter($clinicians)));
-            if (empty($cliniciansStr) && !empty($assignedProviderName)) {
-                $cliniciansStr = $assignedProviderName;
-            }
+            $cliniciansStr = $assignedProviderName;
 
             $payer = !empty($p['ins_provider']) ? $p['ins_provider'] : (!empty($p['payer_id']) ? $p['payer_id'] : (!empty($p['plan_name']) ? $p['plan_name'] : ''));
             $docCount = (int)($p['notes_count'] ?? 0) + (int)($p['docs_count'] ?? 0);
@@ -423,6 +415,7 @@ class PatientController {
                        (SELECT COUNT(*) FROM patient_documents WHERE patient_id = p.id) AS docs_count
                 FROM patients p
                 LEFT JOIN users u ON p.primary_provider_id = u.id
+                WHERE p.facility_id = ?
                 ORDER BY p.id DESC";
 
         $fmt = function ($raw, string $format): string {
@@ -431,15 +424,8 @@ class PatientController {
         };
 
         $out = [];
-        foreach (Database::fetchAll($sql) as $p) {
+        foreach (Database::fetchAll($sql, [$_SESSION['facility_id'] ?? null]) as $p) {
             $assigned = !empty($p['provider_first_name']) ? 'Dr. ' . $p['provider_first_name'] . ' ' . $p['provider_last_name'] : '';
-            $clinicians = [];
-            if (!empty($p['provider_first_name'])) {
-                $clinicians[] = trim($p['provider_first_name'] . ' ' . $p['provider_last_name']);
-            }
-            if (!empty($p['appt_clinicians'])) {
-                foreach (explode(', ', $p['appt_clinicians']) as $c) $clinicians[] = trim($c);
-            }
             $out[] = [
                 'id' => $p['id'],
                 'first_name' => EncryptionService::decrypt($p['first_name_encrypted']),
@@ -452,7 +438,7 @@ class PatientController {
                 'patient_status' => $p['patient_status'] ?? 'Active',
                 'primary_provider_id' => $p['primary_provider_id'],
                 'assigned_provider_name' => $assigned,
-                'clinicians' => implode(', ', array_unique(array_filter($clinicians))) ?: $assigned,
+                'clinicians' => $assigned,
                 'last_appt' => $fmt($p['last_appt_raw'], 'n/j/Y'),
                 'next_appt' => $fmt($p['next_appt_raw'], 'n/j/Y g:i A'),
                 'last_appt_raw' => $p['last_appt_raw'] ?? '',
@@ -481,7 +467,7 @@ class PatientController {
             return;
         }
 
-        $row = Database::fetch("SELECT id, patient_status FROM patients WHERE id = ?", [$id]);
+        $row = Database::fetch("SELECT id, patient_status FROM patients WHERE id = ? AND facility_id = ?", [$id, $_SESSION['facility_id'] ?? null]);
         if (!$row) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
@@ -568,7 +554,9 @@ class PatientController {
         $primaryProviderId = !empty($input['primary_provider_id']) ? intval($input['primary_provider_id']) : null;
         $insuranceProvider = $input['insurance_provider'] ?? '';
         $insurancePolicy = $input['insurance_policy'] ?? '';
-        $facilityId = !empty($input['facility_id']) ? intval($input['facility_id']) : null;
+        // Always the creating staff member's own facility - never trusted from client input, so a user
+        // can't create a patient under a facility other than their own.
+        $facilityId = $_SESSION['facility_id'] ?? null;
         $isDraft = !empty($input['is_draft']);
         $patientStatus = $isDraft ? 'Draft' : ($input['patient_status'] ?? 'Active');
         $communicationConsent = !empty($input['communication_consent']) ? 1 : 0;
@@ -791,7 +779,7 @@ class PatientController {
             return;
         }
 
-        $existingPatient = Database::fetch("SELECT * FROM patients WHERE id = ?", [$id]);
+        $existingPatient = Database::fetch("SELECT * FROM patients WHERE id = ? AND facility_id = ?", [$id, $_SESSION['facility_id'] ?? null]);
         if (!$existingPatient) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Patient record not found.']);
@@ -812,7 +800,9 @@ class PatientController {
         $state = isset($input['state']) ? $input['state'] : ($existingPatient['state'] ?? '');
         $country = isset($input['country']) ? $input['country'] : ($existingPatient['country'] ?? 'United States');
         $zip = isset($input['zip']) ? $input['zip'] : ($existingPatient['zip'] ?? '');
-        $facilityId = isset($input['facility_id']) ? (!empty($input['facility_id']) ? intval($input['facility_id']) : null) : $existingPatient['facility_id'];
+        // Facility is never reassigned here (no client-input override) - the patient's facility was fixed at
+        // creation and this endpoint only edits demographics, not which facility owns the record.
+        $facilityId = $existingPatient['facility_id'];
         $patientStatus = $input['patient_status'] ?? ($existingPatient['patient_status'] ?? 'Active');
         $communicationConsent = isset($input['communication_consent']) ? ($input['communication_consent'] ? 1 : 0) : (int)($existingPatient['communication_consent'] ?? 0);
         $emergencyContacts = is_array($input['emergency_contacts_json'] ?? null)
@@ -824,12 +814,17 @@ class PatientController {
         }
         $emergencyContactsJson = !empty($emergencyContacts) ? json_encode($emergencyContacts) : null;
 
-        // Drafts stay 'Draft' while saved as drafts; finishing one (a normal save) makes it Active.
+        // Draft handling:
+        // - If saving explicitly as draft (is_draft=1): status is 'Draft'
+        // - If editing an existing 'Draft' and submitting normally (is_draft=0): status becomes 'Active'
+        // - If editing an existing Active/Inactive patient and submitting normally: keep existing status
         $isDraft = is_array($input) && !empty($input['is_draft']);
         if ($isDraft) {
             $patientStatus = 'Draft';
-        } elseif (($existingPatient['patient_status'] ?? '') === 'Draft' && $patientStatus === 'Draft') {
+        } elseif (($existingPatient['patient_status'] ?? '') === 'Draft') {
             $patientStatus = 'Active';
+        } else {
+            $patientStatus = $input['patient_status'] ?? ($existingPatient['patient_status'] ?? 'Active');
         }
 
         // MVP quick-registration: only name, DOB, phone, and email are required.
@@ -936,7 +931,7 @@ class PatientController {
         $aboutPatient = $input['about_patient'] ?? '';
         $hearSource = $input['hear_source'] ?? '';
         $hearSpecificSource = $input['hear_specific_source'] ?? '';
-        $photoUrl = !empty($input['photo_url']) ? $input['photo_url'] : ($existingPatient['photo_url'] ?? '');
+        $photoUrl = array_key_exists('photo_url', $input) ? ($input['photo_url'] ?? '') : ($existingPatient['photo_url'] ?? '');
 
         $sql = "UPDATE patients SET
                     first_name_encrypted = ?, 
@@ -1081,7 +1076,7 @@ class PatientController {
         $copayVal = $input['copay'] ?? ($input['copay_amount'] ?? null);
         $insPhoneVal = $input['insurance_phone'] ?? null;
 
-        $patient = Database::fetch("SELECT id FROM patients WHERE id = ?", [$id]);
+        $patient = Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$id, $_SESSION['facility_id'] ?? null]);
         if (!$patient) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Patient record not found.']);
@@ -1114,24 +1109,97 @@ class PatientController {
             return;
         }
 
+        $owned = Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$id, $_SESSION['facility_id'] ?? null]);
+        if (!$owned) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient record not found.']);
+            return;
+        }
+
         try {
             // Log audit event BEFORE deleting the patient row so foreign key constraint (audit_logs.patient_id) is satisfied
             AuditLogger::log($_SESSION['user_id'] ?? 1, $_SESSION['username'] ?? 'system', $_SESSION['user_role'] ?? 'Super Admin', $id, 'Delete Patient Record', 'Patient Directory', $id);
 
-            // Delete linked records safely
-            $tablesToDelete = ['patient_insurance', 'appointments', 'clinical_notes', 'patient_documents', 'encounters', 'prescriptions'];
-            foreach ($tablesToDelete as $table) {
-                try {
-                    Database::query("DELETE FROM {$table} WHERE patient_id = ?", [$id]);
-                } catch (\Throwable $t) {}
-            }
-
-            Database::query("DELETE FROM patients WHERE id = ?", [$id]);
+            $files = $this->purgePatientData((int)$id);
+            $this->deletePatientFiles($files);
 
             echo json_encode(['status' => 'success', 'message' => 'Patient deleted successfully.']);
         } catch (\Throwable $e) {
             http_response_code(500);
             echo json_encode(['status' => 'error', 'message' => 'Error deleting patient record: ' . $e->getMessage()]);
+        }
+    }
+
+    /**
+     * Deletes a patient and every row across the app that links to them (not all are
+     * enforced by a real FK - see CLAUDE.md "Facility-based data isolation" / bulk-delete
+     * notes), inside one transaction. Returns the on-disk file paths (document/referral
+     * uploads) the caller should remove after the transaction commits.
+     */
+    private function purgePatientData(int $id): array {
+        $docFiles = array_column(
+            Database::fetchAll("SELECT stored_filename FROM patient_documents WHERE patient_id = ? AND stored_filename IS NOT NULL AND stored_filename != ''", [$id]),
+            'stored_filename'
+        );
+        $refFiles = array_column(
+            Database::fetchAll("SELECT document_path FROM patient_referrals WHERE patient_id = ? AND document_path IS NOT NULL AND document_path != ''", [$id]),
+            'document_path'
+        );
+
+        $pdo = Database::getConnection();
+        $pdo->beginTransaction();
+        try {
+            Database::query("DELETE FROM results WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM imaging_ai_findings WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM claim_lines WHERE claim_id IN (SELECT id FROM insurance_claims WHERE patient_id = ?)", [$id]);
+            Database::query("DELETE FROM claim_status_history WHERE claim_id IN (SELECT id FROM insurance_claims WHERE patient_id = ?)", [$id]);
+            Database::query("DELETE FROM message_attachments WHERE message_id IN (SELECT id FROM secure_messages WHERE patient_id = ?)", [$id]);
+            Database::query("DELETE FROM message_recipients WHERE message_id IN (SELECT id FROM secure_messages WHERE patient_id = ?)", [$id]);
+            Database::query("DELETE FROM edi_transactions WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM eligibility_checks WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM payments WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM adjustments WHERE invoice_id IN (SELECT id FROM invoices WHERE patient_id = ?)", [$id]);
+            Database::query("DELETE FROM insurance_claims WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM invoice_line_items WHERE invoice_id IN (SELECT id FROM invoices WHERE patient_id = ?)", [$id]);
+            Database::query("DELETE FROM secure_messages WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM invoices WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM clinical_notes WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM orders WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM telehealth_sessions WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM medications WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM patient_documents WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM patient_education WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM patient_problems WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM treatment_plans WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM billing_claims WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM appointments WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM patient_insurance WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM patient_allergies WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM patient_cardiac_profile WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM patient_intake_forms WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM patient_recall_attempts WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM patient_recalls WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM patient_referrals WHERE patient_id = ?", [$id]);
+            Database::query("DELETE FROM patients WHERE id = ?", [$id]);
+            $pdo->commit();
+        } catch (\Throwable $e) {
+            $pdo->rollBack();
+            throw $e;
+        }
+
+        return ['documents' => $docFiles, 'referrals' => $refFiles];
+    }
+
+    private function deletePatientFiles(array $files): void {
+        $base = dirname(__DIR__, 3);
+        foreach ($files['documents'] ?? [] as $f) {
+            foreach (["$base/storage/documents/$f", "$base/public/uploads/documents/$f"] as $path) {
+                if (is_file($path)) { @unlink($path); }
+            }
+        }
+        foreach ($files['referrals'] ?? [] as $f) {
+            $path = (strpos($f, $base) === 0) ? $f : "$base/" . ltrim($f, '/\\');
+            if (is_file($path)) { @unlink($path); }
         }
     }
 }

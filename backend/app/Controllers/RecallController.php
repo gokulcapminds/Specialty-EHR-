@@ -29,10 +29,12 @@ class RecallController {
             $where[] = "(r.provider_id = ? OR r.provider_id IS NULL)";
             $params[] = $userId;
         }
+        $where[] = "p.facility_id = ?";
+        $params[] = $_SESSION['facility_id'] ?? null;
 
         $whereSql = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
 
-        $sql = "SELECT r.*, 
+        $sql = "SELECT r.*,
                        p.first_name_encrypted, p.last_name_encrypted, p.phone_encrypted, p.email,
                        CONCAT(u.first_name, ' ', u.last_name) AS provider_name,
                        COALESCE(att.attempts_count, 0) AS attempts_count,
@@ -120,6 +122,11 @@ class RecallController {
             echo json_encode(['status' => 'error', 'message' => 'Patient ID required.']);
             return;
         }
+        if (!Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
+            return;
+        }
 
         $recalls = Database::fetchAll(
             "SELECT r.*, CONCAT(u.first_name, ' ', u.last_name) AS provider_name
@@ -151,8 +158,13 @@ class RecallController {
             echo json_encode(['status' => 'error', 'message' => 'Patient ID, Recall Type, and Target Date are required.']);
             return;
         }
+        if (!Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
+            return;
+        }
 
-        $sql = "INSERT INTO patient_recalls 
+        $sql = "INSERT INTO patient_recalls
                 (patient_id, recall_type, target_date, priority, internal_note, provider_id, status, created_at)
                 VALUES (?, ?, ?, ?, ?, ?, 'Pending', NOW())";
 
@@ -178,9 +190,15 @@ class RecallController {
             return;
         }
 
+        $rec = Database::fetch("SELECT r.patient_id, r.recall_type, p.first_name_encrypted, p.email FROM patient_recalls r JOIN patients p ON r.patient_id = p.id WHERE r.id = ? AND p.facility_id = ?", [$id, $_SESSION['facility_id'] ?? null]);
+        if (!$rec) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Recall record not found.']);
+            return;
+        }
+
         Database::query("UPDATE patient_recalls SET status = ?, updated_at = NOW() WHERE id = ?", [$status, $id]);
 
-        $rec = Database::fetch("SELECT r.patient_id, r.recall_type, p.first_name_encrypted, p.email FROM patient_recalls r JOIN patients p ON r.patient_id = p.id WHERE r.id = ?", [$id]);
         $emailSent = false;
         if ($rec) {
             if (!empty($rec['email']) && $status === 'Completed') {
@@ -222,7 +240,7 @@ class RecallController {
             return;
         }
 
-        $rec = Database::fetch("SELECT r.patient_id, r.recall_type, r.target_date, p.first_name_encrypted, p.email FROM patient_recalls r JOIN patients p ON r.patient_id = p.id WHERE r.id = ?", [$id]);
+        $rec = Database::fetch("SELECT r.patient_id, r.recall_type, r.target_date, p.first_name_encrypted, p.email FROM patient_recalls r JOIN patients p ON r.patient_id = p.id WHERE r.id = ? AND p.facility_id = ?", [$id, $_SESSION['facility_id'] ?? null]);
         if (!$rec) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Recall record not found.']);
@@ -276,12 +294,16 @@ class RecallController {
             return;
         }
 
+        $rec = Database::fetch("SELECT r.patient_id FROM patient_recalls r JOIN patients p ON p.id = r.patient_id WHERE r.id = ? AND p.facility_id = ?", [$id, $_SESSION['facility_id'] ?? null]);
+        if (!$rec) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Recall record not found.']);
+            return;
+        }
+
         Database::query("UPDATE patient_recalls SET target_date = ?, updated_at = NOW() WHERE id = ?", [$newTargetDate, $id]);
 
-        $rec = Database::fetch("SELECT patient_id FROM patient_recalls WHERE id = ?", [$id]);
-        if ($rec) {
-            AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], $rec['patient_id'], "Snooze Recall ID: {$id} to {$newTargetDate}", 'Recalls');
-        }
+        AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], $rec['patient_id'], "Snooze Recall ID: {$id} to {$newTargetDate}", 'Recalls');
 
         echo json_encode(['status' => 'success', 'message' => "Recall snoozed to {$newTargetDate}."]);
     }
@@ -297,7 +319,10 @@ class RecallController {
             return;
         }
 
-        $rec = Database::fetch("SELECT patient_id, recall_type FROM patient_recalls WHERE id = ?", [$id]);
+        $rec = Database::fetch(
+            "SELECT r.patient_id, r.recall_type FROM patient_recalls r JOIN patients p ON p.id = r.patient_id WHERE r.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
         if ($rec) {
             Database::query("DELETE FROM patient_recalls WHERE id = ?", [$id]);
             AuditLogger::log($_SESSION['user_id'], $_SESSION['username'], $_SESSION['user_role'], $rec['patient_id'], "Delete Recall ID: {$id}", 'Recalls');
@@ -331,8 +356,13 @@ class RecallController {
             echo json_encode(['status' => 'error', 'message' => 'Recall Type and Target Date are required.']);
             return;
         }
+        if (!Database::fetch("SELECT r.id FROM patient_recalls r JOIN patients p ON p.id = r.patient_id WHERE r.id = ? AND p.facility_id = ?", [$id, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Recall record not found.']);
+            return;
+        }
 
-        $sql = "UPDATE patient_recalls 
+        $sql = "UPDATE patient_recalls
                 SET recall_type = ?, target_date = ?, priority = ?, internal_note = ?, status = ?, updated_at = NOW()";
         $binds = [$recallType, $targetDate, $priority, $internalNote, $status];
 
@@ -367,6 +397,8 @@ class RecallController {
             $where[] = "(r.provider_id = ? OR r.provider_id IS NULL)";
             $params[] = $userId;
         }
+        $where[] = "p.facility_id = ?";
+        $params[] = $_SESSION['facility_id'] ?? null;
         $whereSql = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
 
         $rows = Database::fetchAll("

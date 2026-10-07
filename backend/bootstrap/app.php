@@ -333,13 +333,18 @@ try {
         'about_patient' => "TEXT DEFAULT NULL",
         'hear_source' => "VARCHAR(100) DEFAULT NULL",
         'hear_specific_source' => "VARCHAR(100) DEFAULT NULL",
-        'photo_url' => "TEXT DEFAULT NULL"
+        'photo_url' => "LONGTEXT DEFAULT NULL"
     ];
     foreach ($newPatCols as $cName => $cDef) {
         if (!in_array($cName, $patCols)) {
             $db->exec("ALTER TABLE patients ADD COLUMN {$cName} {$cDef}");
         }
     }
+    // Ensure photo_url is LONGTEXT so base64 profile pictures are never truncated
+    try {
+        $db->exec("ALTER TABLE patients MODIFY COLUMN photo_url LONGTEXT DEFAULT NULL");
+    } catch (\Throwable $t) {}
+
 
     // Auto-create patient_insurance table if missing
     $db->exec("CREATE TABLE IF NOT EXISTS patient_insurance (

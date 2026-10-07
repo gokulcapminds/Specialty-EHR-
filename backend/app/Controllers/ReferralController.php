@@ -16,13 +16,15 @@ class ReferralController {
         header('Content-Type: application/json');
 
         $referrals = Database::fetchAll(
-            "SELECT r.*, 
+            "SELECT r.*,
                     p.first_name_encrypted, p.last_name_encrypted,
                     CONCAT(u.first_name, ' ', u.last_name) AS referring_provider_name
              FROM patient_referrals r
              LEFT JOIN patients p ON r.patient_id = p.id
              LEFT JOIN users u ON r.referring_provider_id = u.id
-             ORDER BY r.referral_date DESC, r.id DESC"
+             WHERE p.facility_id = ?
+             ORDER BY r.referral_date DESC, r.id DESC",
+            [$_SESSION['facility_id'] ?? null]
         );
 
         foreach ($referrals as &$ref) {
@@ -50,6 +52,11 @@ class ReferralController {
         if (!$patientId) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Patient ID required.']);
+            return;
+        }
+        if (!Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
             return;
         }
 
@@ -98,6 +105,11 @@ class ReferralController {
         if (!$patientId || empty($specialty) || empty($specialistName)) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Patient, Specialty, and Specialist Name are required.']);
+            return;
+        }
+        if (!Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
             return;
         }
 
@@ -158,6 +170,11 @@ class ReferralController {
         if (!$id) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Referral ID required.']);
+            return;
+        }
+        if (!Database::fetch("SELECT r.id FROM patient_referrals r JOIN patients p ON p.id = r.patient_id WHERE r.id = ? AND p.facility_id = ?", [$id, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Referral record not found.']);
             return;
         }
 
@@ -238,8 +255,16 @@ class ReferralController {
             return;
         }
 
-        $ref = Database::fetch("SELECT patient_id FROM patient_referrals WHERE id = ?", [$id]);
-        $patientId = $ref ? $ref['patient_id'] : null;
+        $ref = Database::fetch(
+            "SELECT r.patient_id FROM patient_referrals r JOIN patients p ON p.id = r.patient_id WHERE r.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
+        if (!$ref) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Referral record not found.']);
+            return;
+        }
+        $patientId = $ref['patient_id'];
 
         Database::query("DELETE FROM patient_referrals WHERE id = ?", [$id]);
 
@@ -262,7 +287,7 @@ class ReferralController {
             return;
         }
 
-        $ref = Database::fetch("SELECT r.*, p.email, p.first_name_encrypted, p.last_name_encrypted FROM patient_referrals r LEFT JOIN patients p ON r.patient_id = p.id WHERE r.id = ?", [$id]);
+        $ref = Database::fetch("SELECT r.*, p.email, p.first_name_encrypted, p.last_name_encrypted FROM patient_referrals r JOIN patients p ON r.patient_id = p.id WHERE r.id = ? AND p.facility_id = ?", [$id, $_SESSION['facility_id'] ?? null]);
         if (!$ref) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Referral record not found.']);
@@ -321,7 +346,7 @@ class ReferralController {
             return;
         }
 
-        $ref = Database::fetch("SELECT r.*, p.email, p.first_name_encrypted, p.last_name_encrypted FROM patient_referrals r LEFT JOIN patients p ON r.patient_id = p.id WHERE r.id = ?", [$id]);
+        $ref = Database::fetch("SELECT r.*, p.email, p.first_name_encrypted, p.last_name_encrypted FROM patient_referrals r JOIN patients p ON r.patient_id = p.id WHERE r.id = ? AND p.facility_id = ?", [$id, $_SESSION['facility_id'] ?? null]);
         if (!$ref) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Referral record not found.']);
@@ -368,7 +393,10 @@ class ReferralController {
             return;
         }
 
-        $ref = Database::fetch("SELECT patient_id, document_path, clinical_documentation FROM patient_referrals WHERE id = ?", [$id]);
+        $ref = Database::fetch(
+            "SELECT r.patient_id, r.document_path, r.clinical_documentation FROM patient_referrals r JOIN patients p ON p.id = r.patient_id WHERE r.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
         if (!$ref) {
             http_response_code(404);
             echo "Referral record not found.";

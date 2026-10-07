@@ -25,7 +25,7 @@ class AuthenticationMiddleware {
         // The session remembers who logged in, but the account may have changed since: re-read it on every request
         // (one primary-key lookup) so deactivating or demoting a user takes effect immediately, not at their next login.
         $user = Database::fetch(
-            "SELECT u.role, u.is_active, u.password_changed_at, u.custom_role_id, cr.name AS custom_role_name, cr.base_role AS custom_base_role, cr.permissions_matrix AS custom_matrix
+            "SELECT u.role, u.is_active, u.password_changed_at, u.facility_id, u.custom_role_id, cr.name AS custom_role_name, cr.base_role AS custom_base_role, cr.permissions_matrix AS custom_matrix
              FROM users u LEFT JOIN custom_roles cr ON cr.id = u.custom_role_id WHERE u.id = ?",
             [$_SESSION['user_id']]
         );
@@ -42,6 +42,9 @@ class AuthenticationMiddleware {
         }
         if (($user['role'] ?? '') !== ($_SESSION['user_role'] ?? null)) {
             $_SESSION['user_role'] = $user['role'];
+        }
+        if (($user['facility_id'] ?? null) != ($_SESSION['facility_id'] ?? null)) {
+            $_SESSION['facility_id'] = $user['facility_id'];
         }
 
         // Custom role: the user is still their base role (scoping, specialty rules) but may only do what the role's ticks allow.

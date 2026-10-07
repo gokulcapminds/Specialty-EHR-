@@ -52,13 +52,13 @@ class ImagingController
                     FROM patient_documents d
                     LEFT JOIN patients p ON d.patient_id = p.id
                     LEFT JOIN users u ON d.uploaded_by = u.id
-                    WHERE d.patient_id = ?
+                    WHERE d.patient_id = ? AND p.facility_id = ?
                       AND (
                           d.mime_type IN ('application/dicom','application/octet-stream','image/jpeg','image/png','image/gif')
                           OR d.original_filename REGEXP '\\.(dcm|dicom|jpg|jpeg|png)$'
                       )
                     ORDER BY d.study_date DESC, d.uploaded_at DESC";
-            $studies = Database::fetchAll($sql, [$patientId]);
+            $studies = Database::fetchAll($sql, [$patientId, $_SESSION['facility_id'] ?? null]);
         } else {
             $sql = "SELECT d.id, d.patient_id, d.original_filename, d.mime_type, d.file_size,
                            d.modality, d.study_description, d.study_date,
@@ -68,12 +68,13 @@ class ImagingController
                     FROM patient_documents d
                     LEFT JOIN patients p ON d.patient_id = p.id
                     LEFT JOIN users u ON d.uploaded_by = u.id
-                    WHERE (
+                    WHERE p.facility_id = ?
+                      AND (
                           d.mime_type IN ('application/dicom','application/octet-stream','image/jpeg','image/png','image/gif')
                           OR d.original_filename REGEXP '\\.(dcm|dicom|jpg|jpeg|png)$'
                     )
                     ORDER BY d.study_date DESC, d.uploaded_at DESC";
-            $studies = Database::fetchAll($sql);
+            $studies = Database::fetchAll($sql, [$_SESSION['facility_id'] ?? null]);
         }
 
         AuditLogger::log(
@@ -99,7 +100,10 @@ class ImagingController
             return;
         }
 
-        $doc = Database::fetch("SELECT * FROM patient_documents WHERE id = ?", [(int)$docId]);
+        $doc = Database::fetch(
+            "SELECT d.* FROM patient_documents d JOIN patients p ON p.id = d.patient_id WHERE d.id = ? AND p.facility_id = ?",
+            [(int)$docId, $_SESSION['facility_id'] ?? null]
+        );
         if (!$doc) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Document not found.']);
@@ -155,7 +159,10 @@ class ImagingController
             return;
         }
 
-        $doc = Database::fetch("SELECT id, patient_id FROM patient_documents WHERE id = ?", [$documentId]);
+        $doc = Database::fetch(
+            "SELECT d.id, d.patient_id FROM patient_documents d JOIN patients p ON p.id = d.patient_id WHERE d.id = ? AND p.facility_id = ?",
+            [$documentId, $_SESSION['facility_id'] ?? null]
+        );
         if (!$doc) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Document not found.']);
@@ -206,7 +213,10 @@ class ImagingController
             return;
         }
 
-        $doc = Database::fetch("SELECT * FROM patient_documents WHERE id = ?", [$documentId]);
+        $doc = Database::fetch(
+            "SELECT d.* FROM patient_documents d JOIN patients p ON p.id = d.patient_id WHERE d.id = ? AND p.facility_id = ?",
+            [$documentId, $_SESSION['facility_id'] ?? null]
+        );
         if (!$doc) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Document not found.']);
@@ -271,7 +281,10 @@ class ImagingController
             return;
         }
 
-        $run = Database::fetch("SELECT * FROM imaging_ai_findings WHERE id = ?", [$runId]);
+        $run = Database::fetch(
+            "SELECT f.* FROM imaging_ai_findings f JOIN patients p ON p.id = f.patient_id WHERE f.id = ? AND p.facility_id = ?",
+            [$runId, $_SESSION['facility_id'] ?? null]
+        );
         if (!$run) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Analysis run not found.']);
@@ -280,7 +293,10 @@ class ImagingController
 
         // If a note is provided, append the finding as imaging result text
         if ($noteId) {
-            $note = Database::fetch("SELECT id, imaging_findings FROM clinical_notes WHERE id = ?", [$noteId]);
+            $note = Database::fetch(
+                "SELECT n.id, n.imaging_findings FROM clinical_notes n JOIN patients p ON p.id = n.patient_id WHERE n.id = ? AND p.facility_id = ?",
+                [$noteId, $_SESSION['facility_id'] ?? null]
+            );
             if ($note !== false) {
                 $findings  = json_decode($run['findings_json'], true);
                 $appendTxt = sprintf(

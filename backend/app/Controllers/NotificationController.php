@@ -42,8 +42,9 @@ class NotificationController {
                         p.first_name_encrypted, p.last_name_encrypted
                  FROM patient_intake_forms pif
                  JOIN patients p ON pif.patient_id = p.id
-                 WHERE pif.status = 'Submitted'
-                 ORDER BY pif.submitted_at DESC LIMIT 100"
+                 WHERE pif.status = 'Submitted' AND p.facility_id = ?
+                 ORDER BY pif.submitted_at DESC LIMIT 100",
+                [$_SESSION['facility_id'] ?? null]
             );
 
             foreach ($intakeForms as $f) {
@@ -75,8 +76,9 @@ class NotificationController {
                  FROM patient_referrals r
                  LEFT JOIN patients p ON r.patient_id = p.id
                  LEFT JOIN users u ON r.referring_provider_id = u.id
-                 WHERE r.status IN ('Pending', 'New', 'Submitted')
-                 ORDER BY r.id DESC LIMIT 100"
+                 WHERE r.status IN ('Pending', 'New', 'Submitted') AND p.facility_id = ?
+                 ORDER BY r.id DESC LIMIT 100",
+                [$_SESSION['facility_id'] ?? null]
             );
 
             foreach ($referrals as $r) {

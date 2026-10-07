@@ -47,7 +47,7 @@ class CardiacProfileController {
         Roles::enforce(Roles::CLINICAL);
         header('Content-Type: application/json');
         $patientId = $this->patientId($params);
-        if (!$patientId || !Database::fetch("SELECT id FROM patients WHERE id = ?", [$patientId])) {
+        if (!$patientId || !Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
             $this->fail(404, 'Patient not found.');
             return;
         }
@@ -76,7 +76,7 @@ class CardiacProfileController {
         Roles::enforce(Roles::CLINICAL);
         header('Content-Type: application/json');
         $patientId = $this->patientId($params);
-        if (!$patientId || !Database::fetch("SELECT id FROM patients WHERE id = ?", [$patientId])) {
+        if (!$patientId || !Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
             $this->fail(404, 'Patient not found.');
             return;
         }

@@ -33,6 +33,8 @@ class ProblemController {
             }
         }
 
+        $where[] = "p.facility_id = ?";
+        $params[] = $_SESSION['facility_id'] ?? null;
         $whereSql = !empty($where) ? "WHERE " . implode(" AND ", $where) : "";
 
         $problems = Database::fetchAll(
@@ -65,6 +67,11 @@ class ProblemController {
             echo json_encode(['status' => 'error', 'message' => 'Patient ID required.']);
             return;
         }
+        if (!Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
+            return;
+        }
 
         $problems = Database::fetchAll(
             "SELECT pr.*, CONCAT(u.first_name, ' ', u.last_name) AS created_by_name
@@ -93,6 +100,11 @@ class ProblemController {
             echo json_encode(['status' => 'error', 'message' => 'Patient and diagnosis description are required.']);
             return;
         }
+        if (!Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
+            return;
+        }
 
         $icd10Code = $input['icd10_code'] ?? null;
         $onsetDate = !empty($input['onset_date']) ? $input['onset_date'] : null;
@@ -117,7 +129,10 @@ class ProblemController {
         header('Content-Type: application/json');
 
         $id = $params['id'] ?? null;
-        $problem = Database::fetch("SELECT id, patient_id, description FROM patient_problems WHERE id = ?", [$id]);
+        $problem = Database::fetch(
+            "SELECT pr.id, pr.patient_id, pr.description FROM patient_problems pr JOIN patients p ON p.id = pr.patient_id WHERE pr.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
         if (!$problem) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Diagnosis not found.']);
@@ -153,7 +168,10 @@ class ProblemController {
         header('Content-Type: application/json');
 
         $id = $params['id'] ?? null;
-        $problem = Database::fetch("SELECT id, patient_id, description FROM patient_problems WHERE id = ?", [$id]);
+        $problem = Database::fetch(
+            "SELECT pr.id, pr.patient_id, pr.description FROM patient_problems pr JOIN patients p ON p.id = pr.patient_id WHERE pr.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
         if (!$problem) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Diagnosis not found.']);
@@ -173,7 +191,10 @@ class ProblemController {
         header('Content-Type: application/json');
 
         $id = $params['id'] ?? null;
-        $problem = Database::fetch("SELECT id, patient_id, description FROM patient_problems WHERE id = ?", [$id]);
+        $problem = Database::fetch(
+            "SELECT pr.id, pr.patient_id, pr.description FROM patient_problems pr JOIN patients p ON p.id = pr.patient_id WHERE pr.id = ? AND p.facility_id = ?",
+            [$id, $_SESSION['facility_id'] ?? null]
+        );
         if (!$problem) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Diagnosis not found.']);

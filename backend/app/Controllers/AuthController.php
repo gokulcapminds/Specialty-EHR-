@@ -62,6 +62,10 @@ class AuthController {
             $_SESSION['user_id'] = $user['id'];
             $_SESSION['username'] = $user['username'];
             $_SESSION['user_role'] = $user['role'];
+            // Every role's PHI/workflow visibility (patients, appointments, encounters, billing, ...) is
+            // scoped to this facility - re-read fresh on every request by AuthenticationMiddleware, same
+            // as user_role, so reassigning a user's facility applies on their next request, not next login.
+            $_SESSION['facility_id'] = $user['facility_id'];
             $_SESSION['active_specialty'] = $specialty;
             $_SESSION['first_name'] = $user['first_name'];
             $_SESSION['last_name'] = $user['last_name'];

@@ -152,9 +152,10 @@ class TelehealthController {
                 FROM telehealth_sessions ts
                 JOIN patients p ON ts.patient_id = p.id
                 JOIN users u ON ts.created_by = u.id
+                WHERE p.facility_id = ?
                 ORDER BY ts.id DESC";
 
-        $rows = Database::fetchAll($sql);
+        $rows = Database::fetchAll($sql, [$_SESSION['facility_id'] ?? null]);
         $result = [];
 
         foreach ($rows as $r) {
@@ -196,7 +197,7 @@ class TelehealthController {
         }
 
         // Fetch patient details
-        $patient = Database::fetch("SELECT * FROM patients WHERE id = ?", [$patientId]);
+        $patient = Database::fetch("SELECT * FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null]);
         if (!$patient) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Patient record not found.']);
@@ -263,7 +264,7 @@ class TelehealthController {
             return;
         }
 
-        $session = Database::fetch("SELECT ts.*, p.first_name_encrypted, p.last_name_encrypted FROM telehealth_sessions ts JOIN patients p ON ts.patient_id = p.id WHERE ts.id = ?", [$id]);
+        $session = Database::fetch("SELECT ts.*, p.first_name_encrypted, p.last_name_encrypted FROM telehealth_sessions ts JOIN patients p ON ts.patient_id = p.id WHERE ts.id = ? AND p.facility_id = ?", [$id, $_SESSION['facility_id'] ?? null]);
         if (!$session) {
             http_response_code(404);
             echo json_encode(['status' => 'error', 'message' => 'Telehealth session record not found.']);
@@ -308,6 +309,11 @@ class TelehealthController {
 
         if (!in_array($status, ['Active', 'Completed', 'Cancelled'])) {
             $status = 'Completed';
+        }
+        if (!Database::fetch("SELECT ts.id FROM telehealth_sessions ts JOIN patients p ON p.id = ts.patient_id WHERE ts.id = ? AND p.facility_id = ?", [$id, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Telehealth session record not found.']);
+            return;
         }
 
         Database::query("UPDATE telehealth_sessions SET status = ? WHERE id = ?", [$status, $id]);

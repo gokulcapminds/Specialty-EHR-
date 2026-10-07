@@ -313,6 +313,11 @@ class MessagingController {
             echo json_encode(['status' => 'error', 'message' => 'Patient ID required.']);
             return;
         }
+        if (!Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
+            return;
+        }
 
         $messages = Database::fetchAll(
             "SELECT m.*, CONCAT(u.first_name, ' ', u.last_name) AS sender_name, u.role AS sender_role
@@ -361,6 +366,11 @@ class MessagingController {
         if (!$patientId || empty($subject) || empty($body)) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Patient ID, Subject, and Message Body are required.']);
+            return;
+        }
+        if (!Database::fetch("SELECT id FROM patients WHERE id = ? AND facility_id = ?", [$patientId, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Patient not found.']);
             return;
         }
 
@@ -417,6 +427,11 @@ class MessagingController {
         if (!$id) {
             http_response_code(400);
             echo json_encode(['status' => 'error', 'message' => 'Message ID required.']);
+            return;
+        }
+        if (!Database::fetch("SELECT m.id FROM secure_messages m JOIN patients p ON p.id = m.patient_id WHERE m.id = ? AND p.facility_id = ?", [$id, $_SESSION['facility_id'] ?? null])) {
+            http_response_code(404);
+            echo json_encode(['status' => 'error', 'message' => 'Message not found.']);
             return;
         }
 

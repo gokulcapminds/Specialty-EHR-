@@ -7540,6 +7540,7 @@ async function initPatientsHandler() {
                 }
                 if (avatarIcon) avatarIcon.style.display = "none";
             }
+            photoInput.value = "";
         };
     }
 
@@ -7982,6 +7983,7 @@ async function initPatientsHandler() {
             consent_telehealth: consentTelehealth,
             consent_release_info: consentRelease,
             is_draft: isDraft ? 1 : 0,
+            patient_status: isDraft ? 'Draft' : 'Active',
         };
 
         const submitTargetBtn = isDraft ? btnStepSaveDraft : btnStepSubmit;
@@ -8009,7 +8011,13 @@ async function initPatientsHandler() {
                     `Patient "${first || "Draft"
                     } ${last || "Patient"}" ${actionVerb} successfully!`;
                 Toast.show(successMsg, "success");
+                if (currentEditingPatientId) {
+                    fullPatientCache.delete(String(currentEditingPatientId));
+                }
                 closeWizard();
+                if (isDraft && filterStatus) {
+                    filterStatus.value = "Draft";
+                }
                 await initPatientsHandler();
             } else {
                 if (errorAlert && errorText) {
@@ -8278,7 +8286,119 @@ async function initPatientsHandler() {
     // Print Patient Directory Helper
     if (btnPrintPatients) {
         btnPrintPatients.onclick = () => {
-            window.print();
+            if (!allPatients || allPatients.length === 0) {
+                Toast.show("No patient records to print.", "info");
+                return;
+            }
+
+            // Get currently filtered patients based on active filters
+            let filtered = [...allPatients];
+            const statusVal = filterStatus ? filterStatus.value : 'Active';
+            if (statusVal === 'Active') {
+                filtered = filtered.filter(p => (p.patient_status || 'Active') === 'Active');
+            } else if (statusVal === 'Inactive') {
+                filtered = filtered.filter(p => (p.patient_status || '') === 'Inactive');
+            } else if (statusVal === 'Draft') {
+                filtered = filtered.filter(p => (p.patient_status || '') === 'Draft');
+            }
+
+            const assignedVal = filterAssignedTo ? filterAssignedTo.value : '';
+            if (assignedVal) {
+                filtered = filtered.filter(p => String(p.primary_provider_id) === String(assignedVal));
+            }
+
+            const query = searchInput ? searchInput.value.trim().toLowerCase() : "";
+            if (query) {
+                filtered = filtered.filter((p) => {
+                    const fullName = `${p.first_name || ''} ${p.last_name || ''}`.toLowerCase();
+                    const dob = (p.dob || '').toLowerCase();
+                    const email = (p.email || '').toLowerCase();
+                    const phone = (p.phone || p.home_phone || '').toLowerCase();
+                    const provider = (p.assigned_provider_name || p.clinicians || '').toLowerCase();
+                    return fullName.includes(query) || dob.includes(query) || email.includes(query) || phone.includes(query) || provider.includes(query);
+                });
+            }
+
+            const dateStr = new Date().toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' });
+
+            const printWindow = window.open('', '_blank', 'width=1000,height=750');
+            if (!printWindow) {
+                Toast.show("Please allow popups to print the patient list.", "warning");
+                return;
+            }
+
+            const escapeHtml = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+
+            let rowsHtml = filtered.map((p, idx) => `
+                <tr>
+                    <td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11pt;">${idx + 1}</td>
+                    <td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-weight: 600; font-size: 11pt; color: #0f172a;">${escapeHtml((p.first_name || '') + ' ' + (p.last_name || ''))}</td>
+                    ${visibleColumns.dob ? `<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11pt;">${escapeHtml(p.dob || '—')}</td>` : ''}
+                    ${visibleColumns.phone ? `<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11pt;">${escapeHtml(p.phone || p.home_phone || '—')}</td>` : ''}
+                    ${visibleColumns.last_appt ? `<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11pt;">${escapeHtml(p.last_appt || '—')}</td>` : ''}
+                    ${visibleColumns.next_appt ? `<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11pt;">${escapeHtml(p.next_appt || '—')}</td>` : ''}
+                    ${visibleColumns.clinicians ? `<td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 11pt;">${escapeHtml(p.clinicians || p.assigned_provider_name || '—')}</td>` : ''}
+                    <td style="padding: 8px 10px; border-bottom: 1px solid #e2e8f0; font-size: 10pt;">${escapeHtml(p.patient_status || 'Active')}</td>
+                </tr>
+            `).join('');
+
+            printWindow.document.write(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Patient Directory - ${dateStr}</title>
+                    <style>
+                        @page { size: landscape; margin: 12mm; }
+                        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Arial, sans-serif; color: #1e293b; margin: 0; padding: 15px; }
+                        .print-header { display: flex; justify-content: space-between; align-items: flex-end; border-bottom: 2px solid #0284c7; padding-bottom: 10px; margin-bottom: 15px; }
+                        .print-title { font-size: 18pt; font-weight: 700; color: #0f172a; margin: 0; }
+                        .print-meta { font-size: 10pt; color: #64748b; }
+                        table { width: 100%; border-collapse: collapse; text-align: left; }
+                        th { background: #f1f5f9; padding: 10px; font-size: 10.5pt; font-weight: 700; color: #334155; border-bottom: 2px solid #cbd5e1; }
+                        tr:nth-child(even) { background-color: #f8fafc; }
+                        .footer { margin-top: 20px; font-size: 9pt; color: #94a3b8; text-align: right; }
+                        @media print {
+                            body { padding: 0; }
+                            -webkit-print-color-adjust: exact;
+                            print-color-adjust: exact;
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="print-header">
+                        <div>
+                            <h1 class="print-title">Patient Directory</h1>
+                            <div class="print-meta">Status Filter: <strong>${escapeHtml(statusVal)}</strong> | Total Records: <strong>${filtered.length}</strong></div>
+                        </div>
+                        <div class="print-meta">Printed on: <strong>${dateStr}</strong></div>
+                    </div>
+                    <table>
+                        <thead>
+                            <tr>
+                                <th style="width: 40px;">#</th>
+                                <th>Patient Name</th>
+                                ${visibleColumns.dob ? '<th>DOB</th>' : ''}
+                                ${visibleColumns.phone ? '<th>Phone</th>' : ''}
+                                ${visibleColumns.last_appt ? '<th>Last Appt</th>' : ''}
+                                ${visibleColumns.next_appt ? '<th>Next Appt</th>' : ''}
+                                ${visibleColumns.clinicians ? '<th>Clinician</th>' : ''}
+                                <th>Status</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            ${rowsHtml || '<tr><td colspan="8" style="text-align:center; padding: 20px;">No patient records found.</td></tr>'}
+                        </tbody>
+                    </table>
+                    <div class="footer">Confidential Medical Record Summary - Specialty EHR</div>
+                </body>
+                </html>
+            `);
+            printWindow.document.close();
+            printWindow.focus();
+            setTimeout(() => {
+                printWindow.print();
+                printWindow.close();
+            }, 300);
         };
     }
 
@@ -8477,7 +8597,7 @@ async function initPatientsHandler() {
                                     <span class="pd-switch-slider"></span>
                                 </label>
                             </td>`;
-                    const actionsTd = `<td style="text-align: right; white-space: nowrap;">${canEditPatient ? `<button type="button" class="pd-edit-btn" data-id="${p.id}"><i class="fas fa-pen"></i> Edit</button>` : ''}</td>`;
+                    const actionsTd = `<td style="text-align: right; white-space: nowrap;">${canEditPatient ? `<button type="button" class="pd-edit-btn" data-id="${p.id}" title="Edit Patient" aria-label="Edit Patient"><i class="fas fa-pen"></i></button>` : ''}</td>`;
 
                     const isDraft = p.status === "Draft" || p.patient_status === "Draft";
                     const draftBadge = isDraft
@@ -8962,20 +9082,20 @@ async function initPatientsHandler() {
 
             const recordId = `PAT${String(p.id).padStart(4, "0")}`;
             const photoSrc = p.photo_url || p.photo || "";
-            const avatarHtml = photoSrc
-                ? `<img src="${photoSrc}"
-                                                                style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 2px solid #0284c7;">`
-                : `
-                                                            <div
-                                                                style="width: 80px; height: 80px; border-radius: 50%; background: #e2e8f0; display: inline-flex; align-items: center; justify-content: center; position: relative;">
-                                                                <i class="fas fa-user"
-                                                                    style="font-size: 2.2rem; color: #94a3b8;"></i>
-                                                                <div
-                                                                    style="position: absolute; bottom: 0; right: 0; background: #0d9488; color: white; border-radius: 50%; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; border: 2px solid #ffffff;">
-                                                                    <i class="fas fa-camera"></i>
-                                                                </div>
-                                                            </div>
-                                                            `;
+            const avatarHtml = `
+                <div class="pt-chart-avatar-box" id="pt-chart-avatar-box" title="Click to change patient photo" style="position: relative; width: 80px; height: 80px; cursor: pointer; border-radius: 50%;">
+                    ${photoSrc
+                        ? `<img id="pt-chart-avatar-img" src="${photoSrc}" style="width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 2px solid #0284c7; display: block;">`
+                        : `<div id="pt-chart-avatar-default" style="width: 80px; height: 80px; border-radius: 50%; background: #e2e8f0; display: inline-flex; align-items: center; justify-content: center; border: 2px solid #cbd5e1;">
+                                <i class="fas fa-user" style="font-size: 2.2rem; color: #94a3b8;"></i>
+                           </div>`
+                    }
+                    <div class="pt-chart-avatar-badge" style="position: absolute; bottom: 0; right: 0; background: #0284c7; color: white; border-radius: 50%; width: 26px; height: 26px; display: flex; align-items: center; justify-content: center; font-size: 0.8rem; border: 2px solid #ffffff; box-shadow: 0 1px 3px rgba(0,0,0,0.2);">
+                        <i class="fas fa-camera"></i>
+                    </div>
+                    <input type="file" id="pt-chart-direct-photo-input" accept="image/*" style="display: none;">
+                </div>
+            `;
 
             const renderDemographicsTabContent = () => `
                                                             <div class="demo-data-grid"
@@ -15446,6 +15566,58 @@ async function initPatientsHandler() {
             if (editPatientChartBtn) {
                 editPatientChartBtn.onclick = () => {
                     openPatientWizard(p, false);
+                };
+            }
+
+            // Wire Direct Photo Upload from Chart Avatar Box
+            const chartAvatarBox = fullContentEl.querySelector("#pt-chart-avatar-box");
+            const chartPhotoInput = fullContentEl.querySelector("#pt-chart-direct-photo-input");
+            if (chartAvatarBox && chartPhotoInput) {
+                chartAvatarBox.onclick = (e) => {
+                    if (e.target === chartPhotoInput) return;
+                    chartPhotoInput.click();
+                };
+                chartPhotoInput.onchange = async (e) => {
+                    const file = e.target.files?.[0];
+                    if (!file) return;
+                    try {
+                        const compressedUrl = await compressImageFile(file, 400, 400, 0.85);
+                        if (!compressedUrl) {
+                            Toast.show("Failed to process image file.", "error");
+                            return;
+                        }
+                        const res = await ApiService.request(`/api/patient/${p.id}`, "PUT", {
+                            first_name: p.first_name,
+                            last_name: p.last_name,
+                            dob: p.dob,
+                            gender: p.gender || "Other",
+                            phone: p.cell_phone || p.phone || "",
+                            email: p.email || "",
+                            photo_url: compressedUrl
+                        });
+                        if (res.status === "success") {
+                            p.photo_url = compressedUrl;
+                            p.photo = compressedUrl;
+                            fullPatientCache.delete(String(p.id));
+                            Toast.show("Profile photo updated successfully!", "success");
+                            const avatarImg = chartAvatarBox.querySelector("#pt-chart-avatar-img");
+                            const avatarDefault = chartAvatarBox.querySelector("#pt-chart-avatar-default");
+                            if (avatarImg) {
+                                avatarImg.src = compressedUrl;
+                                avatarImg.style.display = "block";
+                            } else if (avatarDefault) {
+                                const newImg = document.createElement("img");
+                                newImg.id = "pt-chart-avatar-img";
+                                newImg.src = compressedUrl;
+                                newImg.style.cssText = "width: 80px; height: 80px; border-radius: 50%; object-fit: cover; border: 2px solid #0284c7; display: block;";
+                                avatarDefault.replaceWith(newImg);
+                            }
+                        } else {
+                            Toast.show(res.message || "Failed to update profile photo.", "error");
+                        }
+                    } catch (err) {
+                        Toast.show("Server communication error while saving photo.", "error");
+                    }
                 };
             }
 
