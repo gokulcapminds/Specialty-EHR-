@@ -1365,43 +1365,77 @@ function wireAll(panes, tabLis, note, allCpts) {
     document.getElementById('cpPr5').onclick = () => goToId('cpP4'); document.getElementById('cpNx5').onclick = () => goToId('cpP6');
 
     // Sign Encounter (now tab 7)
+    // Found and fixed (Oct 2026): reopening an already-signed encounter still showed a fully active,
+    // clickable "Sign Encounter" button and an editable signature pad - the chart header correctly showed
+    // "Signed (Locked)" (via the SAME lock_state check below, already used there), but nothing on this pane
+    // itself respected it. lock_state is the real signed flag, not just the presence of signed_signature_data
+    // (that's also written by a plain draft save) - same reasoning as the header's own check.
+    const locked = note.lock_state !== undefined && note.lock_state !== null
+        ? Number(note.lock_state) === 1
+        : !!(note.signed_signature_data || note.signed_by_name);
+
     const saveDraft = document.getElementById('cpSaveDraft');
-    if (saveDraft) saveDraft.onclick = () => { window._syncCustomTabsToDOM(); const b = document.getElementById('save-encounter-btn') || document.getElementById('update-encounter-btn'); if (b) b.click(); };
+    if (locked && saveDraft) {
+        saveDraft.disabled = true;
+        saveDraft.style.opacity = '0.5';
+        saveDraft.style.cursor = 'not-allowed';
+        saveDraft.onclick = () => Toast.show('This encounter is signed and cannot be edited.', 'info');
+    } else if (saveDraft) {
+        saveDraft.onclick = () => { window._syncCustomTabsToDOM(); const b = document.getElementById('save-encounter-btn') || document.getElementById('update-encounter-btn'); if (b) b.click(); };
+    }
+    ['cpSignDate', 'cpSignProv', 'cpSignLoc'].forEach(id => { const el = document.getElementById(id); if (el && locked) el.disabled = true; });
     document.getElementById('cpPr7').onclick = () => goToId('cpP6');
     // Signature Canvas Logic
     const cvs = document.getElementById('cpSigCanvas');
     let isDrawing = false, isSigned = !!(note && note.signed_signature_data);
 
+    const clearBtnEl = document.getElementById('cpSigClear');
+    if (locked && clearBtnEl) clearBtnEl.style.display = 'none';
+
     if (cvs) {
         const ctx = cvs.getContext('2d');
         ctx.lineWidth = 2.5; ctx.lineCap = 'round'; ctx.strokeStyle = '#0f172a';
 
+        // Paint the stored signature regardless of lock state (there's something to show either way) -
+        // only the interactive drawing below is skipped once locked.
         if (note && note.signed_signature_data && note.signed_signature_data.startsWith('data:image')) {
             const img = new Image();
             img.onload = () => ctx.drawImage(img, 0, 0, cvs.width, cvs.height);
             img.src = note.signed_signature_data;
         }
 
-        const getPos = e => {
-            const r = cvs.getBoundingClientRect();
-            const evt = e.touches ? e.touches[0] : e;
-            const scaleX = cvs.width / r.width;
-            const scaleY = cvs.height / r.height;
-            return { x: (evt.clientX - r.left) * scaleX, y: (evt.clientY - r.top) * scaleY };
-        };
+        if (!locked) {
+            const getPos = e => {
+                const r = cvs.getBoundingClientRect();
+                const evt = e.touches ? e.touches[0] : e;
+                const scaleX = cvs.width / r.width;
+                const scaleY = cvs.height / r.height;
+                return { x: (evt.clientX - r.left) * scaleX, y: (evt.clientY - r.top) * scaleY };
+            };
 
-        const start = e => { e.preventDefault(); isDrawing = true; isSigned = true; const p = getPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
-        const draw = e => { if (!isDrawing) return; e.preventDefault(); const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); };
-        const stop = e => { if (isDrawing) { e.preventDefault(); isDrawing = false; ctx.closePath(); } };
+            const start = e => { e.preventDefault(); isDrawing = true; isSigned = true; const p = getPos(e); ctx.beginPath(); ctx.moveTo(p.x, p.y); };
+            const draw = e => { if (!isDrawing) return; e.preventDefault(); const p = getPos(e); ctx.lineTo(p.x, p.y); ctx.stroke(); };
+            const stop = e => { if (isDrawing) { e.preventDefault(); isDrawing = false; ctx.closePath(); } };
 
-        cvs.addEventListener('mousedown', start); cvs.addEventListener('mousemove', draw); window.addEventListener('mouseup', stop);
-        cvs.addEventListener('touchstart', start, { passive: false }); cvs.addEventListener('touchmove', draw, { passive: false }); window.addEventListener('touchend', stop);
+            cvs.addEventListener('mousedown', start); cvs.addEventListener('mousemove', draw); window.addEventListener('mouseup', stop);
+            cvs.addEventListener('touchstart', start, { passive: false }); cvs.addEventListener('touchmove', draw, { passive: false }); window.addEventListener('touchend', stop);
 
-        const clearBtn = document.getElementById('cpSigClear');
-        if (clearBtn) clearBtn.onclick = () => { ctx.clearRect(0, 0, cvs.width, cvs.height); isSigned = false; };
+            const clearBtn = document.getElementById('cpSigClear');
+            if (clearBtn) clearBtn.onclick = () => { ctx.clearRect(0, 0, cvs.width, cvs.height); isSigned = false; };
+        } else {
+            cvs.style.cursor = 'not-allowed';
+            cvs.style.pointerEvents = 'none';
+        }
     }
 
-    document.getElementById('cpSignBtn').onclick = () => {
+    const signBtnEl = document.getElementById('cpSignBtn');
+    if (locked && signBtnEl) {
+        signBtnEl.disabled = true;
+        signBtnEl.textContent = 'Already Signed';
+        signBtnEl.style.background = '#94a3b8';
+        signBtnEl.style.cursor = 'not-allowed';
+        signBtnEl.onclick = () => Toast.show('This encounter is already signed and locked.', 'info');
+    } else if (signBtnEl) signBtnEl.onclick = () => {
         if (cvs && !isSigned) { alert('Please draw your signature.'); return; }
         if (cvs && isSigned) {
             const rData = document.getElementById('sig-data-url');
@@ -1427,9 +1461,15 @@ function wireAll(panes, tabLis, note, allCpts) {
                     const res = await ApiService.request(`/api/clinical/notes/${signNoteId}/sign`, 'POST', { signed_signature_data: document.getElementById('sig-data-url')?.value || '' });
                     if (res && res.status === 'success') {
                         Toast.show('Encounter signed and locked. Sent to the billing queue.', 'success');
-                        const fresh = await ApiService.request(`/api/clinical/note-single/${signNoteId}`);
-                        if (fresh.status === 'success' && fresh.data) window.populateEncounterModal(fresh.data, true);
                         if (typeof window.refreshBillingData === 'function') { try { window.refreshBillingData(); } catch (_) { } }
+                        // Return to the patient's Dashboard tab after a successful sign, instead of leaving the
+                        // user sitting on the now-locked, read-only encounter form. Same safeguard as
+                        // openEncounterInChart (app.js): rescue the relocated cardio-sec-* sections back to
+                        // their static home BEFORE openPatientChart replaces #patient-dashboard-full-content's
+                        // innerHTML, or the next encounter opened in this session would find them already
+                        // destroyed - see the CARDIO_RELOCATION/rescueClinicalFormSections comments above.
+                        if (typeof window.rescueClinicalFormSections === 'function') window.rescueClinicalFormSections();
+                        if (typeof window.openPatientChart === 'function') await window.openPatientChart({ id: signPatientId }, 'dashboard');
                     } else {
                         window.activeClinicalNoteId = signNoteId;
                         window.activeClinicalPatientId = signPatientId;
@@ -1716,7 +1756,25 @@ function syncToUI(note) {
         let allCpts = [];   // populated lazily on first Billing tab click
         let cptsFetched = false;
 
+        // Found and fixed (Oct 2026): the original populateEncounterModal (app.js) quietly re-fetches the
+        // note and calls window.populateEncounterModal(fresh, true) again to replace any stale cached copy -
+        // but window.populateEncounterModal is always THIS heavy override by the time that fires, so every
+        // "quiet refresh" was tearing down and rebuilding the entire 6-stage stepper (rescue -> remove old
+        // panes -> rebuild -> relocateCardioSections) from scratch. Opening one encounter was observed firing
+        // this 4 times in a row (two independent call sites, each triggering its own refetch-recurse), and
+        // the repeated rescue/rebuild/relocate churn is the likely reason Cardiac HPI / the Cardiovascular
+        // exam card (both moved by relocateCardioSections) sometimes ended up empty instead of landing in
+        // their final mount point. A redundant call for the SAME note within a second of the last full build
+        // is now skipped entirely - any genuinely new data (e.g. right after Sign) still comes from a fresh
+        // note.id or enough of a time gap to rebuild normally.
+        let lastBuiltNoteId = null, lastBuiltAt = 0;
+
         window.populateEncounterModal = function (note, isFresh) {
+            if (note && note.id != null && note.id === lastBuiltNoteId && (Date.now() - lastBuiltAt) < 1000) {
+                return;
+            }
+            if (note && note.id != null) { lastBuiltNoteId = note.id; lastBuiltAt = Date.now(); }
+
             const dashboard = document.getElementById('patient-dashboard-full-content');
             if (!dashboard || dashboard.offsetParent === null) { window._originalPopulateEncounterModal(note, isFresh); return; }
 

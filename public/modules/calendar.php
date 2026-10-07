@@ -31,33 +31,41 @@
                 </div>
 
                 <!-- Right Side: Action buttons and View/Mode controls -->
-                <div class="header-actions" style="display: flex; align-items: center; gap: 12px;">
-                    <!-- View Selector: Calendar vs List -->
-                    <div class="view-toggle">
-                        <button class="toggle-btn active" id="toggle-view-calendar">Calendar View</button>
-                        <button class="toggle-btn" id="toggle-view-list">List View</button>
+                <div class="header-actions">
+                    <!-- View Selector: Calendar vs List (Tab style with underline) -->
+                    <div class="cal-top-view-tabs">
+                        <button class="cal-view-tab active" id="toggle-view-calendar">
+                            <i class="far fa-calendar-alt"></i> Calendar View
+                        </button>
+                        <button class="cal-view-tab" id="toggle-view-list">
+                            <i class="fas fa-list-ul"></i> List View
+                        </button>
                     </div>
 
-                    <!-- Unified Primary + Schedule Button -->
-                    <button class="btn btn-primary mod-calendar-style-1" id="schedule-appt-btn" style="border-radius: 20px; padding: 6px 16px; display: inline-flex; align-items: center; justify-content: center; gap: 6px;">
-                        <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true" style="flex:none;"><path d="M6 1v10M1 6h10" stroke="currentColor" stroke-width="2" stroke-linecap="round" fill="none"/></svg><span>Schedule</span>
+                    <div class="cal-header-divider"></div>
+
+                    <!-- Primary + Schedule Button -->
+                    <button class="btn btn-primary cal-schedule-main-btn" id="schedule-appt-btn">
+                        <i class="fas fa-plus"></i> Schedule
                     </button>
 
-                    <!-- Icon actions: calendar view filter, provider availability -->
-                    <div class="cal-icon-actions" style="display: flex; align-items: center; gap: 8px;">
-                        <button class="btn btn-secondary mod-calendar-style-2" id="calendar-profile-btn" onclick="openCalendarViewModal()" aria-label="Set calendar view" data-tip="Set calendar view" style="border-radius: 50%; width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center;">
+                    <!-- Action icon buttons -->
+                    <div class="cal-icon-actions">
+                        <button class="cal-action-icon-btn" id="calendar-profile-btn" onclick="openCalendarViewModal()" aria-label="Set calendar view" data-tip="Set calendar view">
                             <i class="far fa-user"></i>
                         </button>
-                        <button class="btn btn-secondary mod-calendar-style-2" id="cal-block-btn" aria-label="Provider availability" data-tip="Provider availability" style="border-radius: 50%; width: 36px; height: 36px; padding: 0; display: flex; align-items: center; justify-content: center;">
+                        <button class="cal-action-icon-btn" id="cal-block-btn" aria-label="Provider availability" data-tip="Provider availability">
                             <i class="fas fa-user-clock"></i>
                         </button>
                     </div>
 
+                    <div class="cal-header-divider"></div>
+
                     <!-- Mode Switcher: Day, Week, Month -->
-                    <div class="view-toggle" id="calendar-modes-toggle">
-                        <button class="toggle-btn" id="btn-mode-day">Day</button>
-                        <button class="toggle-btn" id="btn-mode-week">Week</button>
-                        <button class="toggle-btn active" id="btn-mode-month">Month</button>
+                    <div class="cal-mode-segmented-control" id="calendar-modes-toggle">
+                        <button class="cal-seg-btn" id="btn-mode-day">Day</button>
+                        <button class="cal-seg-btn" id="btn-mode-week">Week</button>
+                        <button class="cal-seg-btn active" id="btn-mode-month">Month</button>
                     </div>
                 </div>
             </header>

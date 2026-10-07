@@ -8015,8 +8015,12 @@ async function initPatientsHandler() {
                     fullPatientCache.delete(String(currentEditingPatientId));
                 }
                 closeWizard();
-                if (isDraft && filterStatus) {
-                    filterStatus.value = "Draft";
+                // Always match the filter to the patient's resulting status, not just when saving
+                // as Draft - otherwise completing a Draft (isDraft=false, now Active) while the list
+                // is still filtered to "Draft" makes the patient silently vanish from view right after
+                // a successful save, looking exactly like the save failed.
+                if (filterStatus) {
+                    filterStatus.value = isDraft ? "Draft" : "Active";
                 }
                 await initPatientsHandler();
             } else {
@@ -9634,12 +9638,6 @@ async function initPatientsHandler() {
                                                                         <li class="my-tab-item" data-sec="vitals">
                                                                             <span>Vitals</span>
                                                                         </li>
-                                                                        <li class="my-tab-item" data-sec="injections">
-                                                                            <span>Injections</span>
-                                                                        </li>
-                                                                        <li class="my-tab-item" data-sec="vaccines">
-                                                                            <span>Vaccines</span>
-                                                                        </li>
                                                                         <li class="my-tab-item" data-sec="documents">
                                                                             <span>Documents</span>
                                                                         </li>
@@ -9998,16 +9996,11 @@ async function initPatientsHandler() {
                         cardsHtml = paginatedList
                             .map((note, idx) => {
                                 const encNum = "ENC-" + String(note.id || idx + 1).padStart(5, "0");
-                                const encDate =
+                                const encDate = (
                                     note.note_date ||
                                     note.created_at ||
-                                    new Date().toISOString().slice(0, 10);
-
-                                let badgeText = "FAMILY MEDICINE (INTERNAL MEDICINE)";
-                                if (note.encounter_type === "Pediatrics")
-                                    badgeText = "PEDIATRICS EHR";
-                                else if (note.encounter_type === "OB/GYN")
-                                    badgeText = "OB/GYN EHR";
+                                    new Date().toISOString().slice(0, 10)
+                                ).slice(0, 10);
 
                                 const clinician =
                                     note.signed_by_name ||
@@ -10033,10 +10026,8 @@ async function initPatientsHandler() {
                                                                                 style="display: flex; align-items: center; gap: 10px; margin-bottom: 6px;">
                                                                                 <h3
                                                                                     style="margin: 0; font-size: 1.05rem; font-weight: 800; color: #0f172a;">
-                                                                                    Encounter #${encNum} (${encDate})
+                                                                                    Encounter ${encNum} (${encDate})
                                                                                 </h3>
-                                                                                <span
-                                                                                    style="background: #0284c7; color: white; padding: 3px 10px; border-radius: 12px; font-size: 0.72rem; font-weight: 800; letter-spacing: 0.5px;">${badgeText}</span>
                                                                             </div>
                                                                             <div
                                                                                 style="font-size: 0.86rem; color: #64748b; display: flex; gap: 16px; align-items: center;">
@@ -10089,7 +10080,7 @@ async function initPatientsHandler() {
                                                                         style="display: flex; align-items: center; justify-content: space-between; margin-bottom: 18px; padding-bottom: 12px; border-bottom: 1px solid #f1f5f9;">
                                                                         <h3
                                                                             style="margin: 0; font-size: 1.1rem; font-weight: 700; color: #0284c7; display: flex; align-items: center; gap: 8px;">
-                                                                            <i class="fas fa-stethoscope"></i> Patient
+                                                                            Patient
                                                                             Encounters History
                                                                         </h3>
                                                                         <button type="button"
@@ -16385,21 +16376,50 @@ function calOutsideHours(dateStr, time24, providerId = null) {
     });
 }
 
+// Mirrors CalendarController::blockedTimeConflict() client-side, for an instant warning in the booking
+// popup before Save is even clicked. Reads providerBlocks directly by provider_id - NOT through
+// calBlocksForDate(), which filters by the "Set Calendar View" picker and would wrongly report "available"
+// for a provider who isn't currently in that filter. Returns a human-readable reason string, or null when clear.
+// The server's own check remains the real enforcement point; this is a read-only mirror for early feedback.
+function calProviderAvailabilityIssue(providerId, dateStr, startTime24, endTime24) {
+    if (!providerId || !dateStr || !startTime24 || !endTime24) return null;
+    const [y, m, d] = dateStr.split('-').map(Number);
+    const dow = new Date(y, m - 1, d).getDay();
+    const mine = providerBlocks.filter(b => String(b.provider_id) === String(providerId));
+
+    const timeOff = mine.find(b => !calIsWorkingHours(b) &&
+        (b.block_date ? b.block_date === dateStr : Number(b.weekday) === dow) &&
+        b.start_time.slice(0, 5) < endTime24 && b.end_time.slice(0, 5) > startTime24);
+    if (timeOff) {
+        const reason = (timeOff.reason && timeOff.reason.trim()) ? timeOff.reason : (timeOff.category || 'Blocked time');
+        return `Provider is unavailable on ${dateStr} from ${timeOff.start_time.slice(0, 5)} to ${timeOff.end_time.slice(0, 5)} (${reason}).`;
+    }
+
+    const officeRows = mine.filter(b => calIsWorkingHours(b));
+    if (!officeRows.length) return null; // no In Office hours set = unrestricted (clinic hours apply)
+
+    let windows = officeRows.filter(b => b.block_date === dateStr);
+    if (!windows.length) windows = officeRows.filter(b => !b.block_date && Number(b.weekday) === dow);
+    const fits = windows.some(w => w.start_time.slice(0, 5) <= startTime24 && w.end_time.slice(0, 5) >= endTime24);
+    if (fits) return null;
+
+    const shown = windows.length
+        ? 'available ' + windows.map(w => `${w.start_time.slice(0, 5)}-${w.end_time.slice(0, 5)}`).join(', ')
+        : 'not working that day';
+    return `Provider is not available on ${dateStr} at ${startTime24}-${endTime24} (${shown}).`;
+}
+
 function calBlockLabel(b) {
     const what = calIsWorkingHours(b) ? 'In Office' : (b.reason || b.category || 'Unavailable');
     return `${b.start_time.slice(0, 5)}-${b.end_time.slice(0, 5)} ${what} (${b.provider_name})`;
 }
 
 function calWeekBlocksHtml(dateStr) {
-    return calBlocksForDate(dateStr).map(b => calIsWorkingHours(b)
-        ? `<div class="cal-hours-tag" title="${calEscape(calBlockLabel(b))}"><i class="fas fa-user-check"></i> ${calEscape(calBlockLabel(b))}</div>`
-        : `<div class="cal-blocked-tag" title="${calEscape(calBlockLabel(b))}"><i class="fas fa-user-clock"></i> ${calEscape(calBlockLabel(b))}</div>`).join('');
+    return '';
 }
 
 function calMonthBlocksHtml(dateStr) {
-    const oneOff = calBlocksForDate(dateStr).filter(b => b.block_date && !calIsWorkingHours(b));
-    if (!oneOff.length) return '';
-    return `<div class="cal-blocked-tag" title="${calEscape(oneOff.map(calBlockLabel).join('; '))}"><i class="fas fa-user-clock"></i> Unavailable</div>`;
+    return '';
 }
 
 // ---- Multi-provider day view ----
@@ -16551,10 +16571,24 @@ async function calGetProviderChoices() {
     const r = await ApiService.request('/api/users');
     if (r.status === 'success' && Array.isArray(r.data)) {
         return r.data.filter(u => ['Doctor', 'Nurse', 'Super Admin'].includes(u.role))
-            .map(u => ({ id: u.id, name: `${u.first_name} ${u.last_name}`.trim() }));
+            .map(u => ({
+                id: u.id,
+                name: `${u.first_name} ${u.last_name}`.trim(),
+                role: u.role,
+                specialty: u.specialty || u.role || 'Clinical',
+                npi: u.npi || '1234567890',
+                initials: `${(u.first_name || 'D')[0]}${(u.last_name || 'R')[0]}`.toUpperCase()
+            }));
     }
     const me = await ApiService.request('/api/me');
-    return (me.status === 'success' && me.user) ? [{ id: me.user.id, name: `${me.user.first_name} ${me.user.last_name}`.trim() }] : [];
+    return (me.status === 'success' && me.user) ? [{
+        id: me.user.id,
+        name: `${me.user.first_name} ${me.user.last_name}`.trim(),
+        role: me.user.role,
+        specialty: me.user.specialty || me.user.role || 'Clinical',
+        npi: me.user.npi || '1234567890',
+        initials: `${(me.user.first_name || 'U')[0]}${(me.user.last_name || 'S')[0]}`.toUpperCase()
+    }] : [];
 }
 
 async function showBlockTimePopup() {
@@ -16565,103 +16599,377 @@ async function showBlockTimePopup() {
     }
     const facilities = (facRes && facRes.status === 'success' && Array.isArray(facRes.data)) ? facRes.data : [];
     const weekdays = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
-    const categories = ['In Office', 'Out Of Office', 'Vacation', 'Lunch', 'Reserved'];
     const defaultDate = formatDateStr(currentCalendarDate.getFullYear(), currentCalendarDate.getMonth(), currentCalendarDate.getDate());
 
-    // Only the selected provider's rows are listed, split into working hours and time off
-    const renderBlockList = (providerId) => {
-        const mine = providerBlocks.filter(b => String(b.provider_id) === String(providerId));
-        const row = (b) => `
-            <div class="cal-preview-row">
-                <span>${calEscape(b.block_date ? b.block_date : 'Every ' + weekdays[Number(b.weekday)])} ${calEscape(b.start_time.slice(0, 5))}-${calEscape(b.end_time.slice(0, 5))}${calIsWorkingHours(b) ? '' : ' ' + calEscape(b.category) + (b.reason && b.reason !== b.category ? ' - ' + calEscape(b.reason) : '')}</span>
-                <button type="button" class="btn btn-secondary btn-sm cal-block-del" data-id="${calEscape(b.id)}">Remove</button>
-            </div>`;
-        const hours = mine.filter(calIsWorkingHours), off = mine.filter(b => !calIsWorkingHours(b));
-        return `
-            <div class="text-secondary-md" style="margin-top:6px;"><strong>Available (In Office) hours</strong></div>
-            ${hours.length ? hours.map(row).join('') : '<div class="text-secondary-md">None set - this provider can be booked during clinic hours.</div>'}
-            <div class="text-secondary-md" style="margin-top:10px;"><strong>Time off</strong></div>
-            ${off.length ? off.map(row).join('') : '<div class="text-secondary-md">None.</div>'}`;
+    let activeProviderId = String(providers[0].id);
+    let activeTab = 'in-office'; // 'in-office' or 'time-off'
+
+    const getInitialsBg = (name) => {
+        const colors = ['#3b82f6', '#8b5cf6', '#ec4899', '#0284c7', '#059669', '#d97706', '#6366f1'];
+        let hash = 0;
+        for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
+        return colors[Math.abs(hash) % colors.length];
     };
 
+    const buildSidebarHtml = (searchQuery = '') => {
+        const q = searchQuery.toLowerCase();
+        const filtered = providers.filter(p => p.name.toLowerCase().includes(q) || (p.specialty && p.specialty.toLowerCase().includes(q)));
+        if (!filtered.length) {
+            return `<div style="padding:12px; text-align:center; color:#94a3b8; font-size:0.8rem;">No providers found</div>`;
+        }
+        return filtered.map(p => `
+            <div class="prov-avail-item ${String(p.id) === String(activeProviderId) ? 'active' : ''}" data-id="${calEscape(p.id)}">
+                <div class="prov-avail-avatar" style="background:${getInitialsBg(p.name)};">${calEscape(p.initials)}</div>
+                <div class="prov-avail-info">
+                    <div class="prov-avail-name">${calEscape(p.name)}</div>
+                    <div class="prov-avail-spec">${calEscape(p.specialty)}</div>
+                </div>
+                <div class="prov-avail-status-dot" title="Active"></div>
+            </div>
+        `).join('');
+    };
+
+    const buildWeeklyPreviewHtml = (providerId) => {
+        const provBlocks = providerBlocks.filter(b => String(b.provider_id) === String(providerId));
+        const dayNames = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
+        
+        return dayNames.map((d, idx) => {
+            const dayBlocks = provBlocks.filter(b => !b.block_date && Number(b.weekday) === idx && calIsWorkingHours(b));
+            let timeText = '—';
+            if (dayBlocks.length) {
+                timeText = dayBlocks.map(b => `${formatTimeStr(b.start_time.slice(0, 5))} – ${formatTimeStr(b.end_time.slice(0, 5))}`).join(', ');
+            }
+            return `
+                <div class="prov-avail-preview-row">
+                    <span class="prov-avail-preview-day">${d}</span>
+                    <span class="prov-avail-preview-time">${timeText}</span>
+                </div>
+            `;
+        }).join('');
+    };
+
+    const buildExistingTableHtml = (providerId) => {
+        const provBlocks = providerBlocks.filter(b => String(b.provider_id) === String(providerId));
+        if (!provBlocks.length) {
+            return `
+                <div style="padding:16px; text-align:center; color:#94a3b8; font-size:0.8rem;">
+                    No scheduled availability or time off records for this provider.
+                </div>
+            `;
+        }
+
+        const rows = provBlocks.map(b => {
+            const isAvail = calIsWorkingHours(b);
+            const typePill = isAvail
+                ? `<span style="display:inline-flex; align-items:center; gap:5px; font-weight:600; color:#15803d; font-size:0.75rem;"><span style="width:6px; height:6px; border-radius:50%; background:#16a34a;"></span> Available</span>`
+                : `<span style="display:inline-flex; align-items:center; gap:5px; font-weight:600; color:#dc2626; font-size:0.75rem;"><span style="width:6px; height:6px; border-radius:50%; background:#dc2626;"></span> ${calEscape(b.category)}</span>`;
+
+            let dateDays = '';
+            if (b.block_date) {
+                dateDays = `<span>${calEscape(b.block_date)}</span>`;
+            } else {
+                const dayName = weekdays[Number(b.weekday)];
+                dateDays = `<div><strong>${calEscape(dayName)}</strong> <span style="color:#64748b; font-size:0.74rem;">(Every week)</span></div>`;
+            }
+
+            const timeStr = `${formatTimeStr(b.start_time.slice(0, 5))} – ${formatTimeStr(b.end_time.slice(0, 5))}`;
+            const fac = facilities.find(f => String(f.id) === String(b.facility_id));
+            const locReason = isAvail ? (fac ? fac.facility_name : 'Main Clinic') : (b.reason || b.category);
+
+            return `
+                <tr>
+                    <td>${typePill}</td>
+                    <td>${dateDays}</td>
+                    <td style="font-family:monospace; font-weight:600; color:#0f172a;">${calEscape(timeStr)}</td>
+                    <td style="color:#475569;">${calEscape(locReason)}</td>
+                    <td style="text-align:right;">
+                        <button type="button" class="prov-avail-action-btn del-btn cal-block-del-btn" data-id="${calEscape(b.id)}" title="Remove">
+                            <i class="fas fa-trash-alt"></i>
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        return `
+            <div class="prov-avail-table-wrap">
+                <table class="prov-avail-table">
+                    <thead>
+                        <tr>
+                            <th>Type</th>
+                            <th>Date / Days</th>
+                            <th>Time</th>
+                            <th>Location / Reason</th>
+                            <th style="text-align:right;">Actions</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        ${rows}
+                    </tbody>
+                </table>
+            </div>
+        `;
+    };
+
+    const buildMainPanelHtml = () => {
+        const cur = providers.find(p => String(p.id) === String(activeProviderId)) || providers[0];
+        const provBlocks = providerBlocks.filter(b => String(b.provider_id) === String(cur.id));
+
+        return `
+            <!-- Top Header Card -->
+            <div class="prov-avail-header-card">
+                <div class="prov-avail-header-avatar" style="background:${getInitialsBg(cur.name)};">${calEscape(cur.initials)}</div>
+                <div style="flex:1;">
+                    <div class="prov-avail-header-name">
+                        ${calEscape(cur.name)}
+                        <span class="prov-avail-active-badge">Active</span>
+                    </div>
+                    <div class="prov-avail-header-meta">
+                        ${calEscape(cur.specialty)} &nbsp;|&nbsp; NPI: ${calEscape(cur.npi)} &nbsp;|&nbsp; Main Clinic
+                    </div>
+                </div>
+            </div>
+
+            <!-- Tab selection -->
+            <div class="prov-avail-tabs">
+                <button type="button" class="prov-avail-tab-btn tab-in-office ${activeTab === 'in-office' ? 'active' : ''}" id="tab-btn-in-office">
+                    <i class="fas fa-calendar-check"></i> Available (In Office)
+                </button>
+                <button type="button" class="prov-avail-tab-btn tab-time-off ${activeTab === 'time-off' ? 'active' : ''}" id="tab-btn-time-off">
+                    <i class="fas fa-ban"></i> Unavailable (Time Off)
+                </button>
+            </div>
+
+            <!-- Set Availability Form + Preview -->
+            <div class="prov-avail-form-row">
+                <div class="prov-avail-form-section">
+                    <div class="prov-avail-section-title">${activeTab === 'in-office' ? 'Set Availability' : 'Set Unavailable Time'}</div>
+                    
+                    ${activeTab === 'in-office' ? `
+                    <div>
+                        <label class="label-secondary-block" for="cal-pop-facility">Facility / Location</label>
+                        <select id="cal-pop-facility" class="form-select form-select-sm">
+                            <option value="">Main Cardiology Clinic</option>
+                            ${facilities.map(f => `<option value="${calEscape(f.id)}">${calEscape(f.facility_name)}</option>`).join('')}
+                        </select>
+                    </div>
+                    ` : `
+                    <div>
+                        <label class="label-secondary-block" for="cal-pop-category">Reason / Category</label>
+                        <select id="cal-pop-category" class="form-select form-select-sm">
+                            <option value="Out Of Office">Out Of Office</option>
+                            <option value="Vacation">Vacation</option>
+                            <option value="Lunch">Lunch</option>
+                            <option value="Reserved">Reserved</option>
+                        </select>
+                    </div>
+                    `}
+
+                    <div>
+                        <label class="label-secondary-block" for="cal-pop-repeat">Repeat</label>
+                        <select id="cal-pop-repeat" class="form-select form-select-sm">
+                            <option value="weekly">Every week</option>
+                            <option value="once">Specific date</option>
+                        </select>
+                    </div>
+
+                    <div id="cal-pop-date-wrap" class="hidden">
+                        <label class="label-secondary-block" for="cal-pop-date">Date</label>
+                        <input type="date" id="cal-pop-date" class="form-control form-control-sm" value="${defaultDate}">
+                    </div>
+
+                    <div id="cal-pop-weekday-wrap">
+                        <label class="label-secondary-block">Days of week</label>
+                        <div style="display:flex; flex-wrap:wrap; gap:6px 12px;">
+                            ${weekdays.map((d, i) => `
+                                <label style="display:flex; align-items:center; gap:4px; font-size:0.8rem; cursor:pointer;">
+                                    <input type="checkbox" class="cal-pop-wd" value="${i}" ${i >= 1 && i <= 5 ? 'checked' : ''}> ${d.slice(0, 3)}
+                                </label>
+                            `).join('')}
+                        </div>
+                    </div>
+
+                    <div>
+                        <label class="label-secondary-block">Time</label>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <input type="time" id="cal-pop-start" class="form-control form-control-sm" value="09:00" style="flex:1;">
+                            <span style="color:#94a3b8; font-size:0.85rem;"><i class="fas fa-arrow-right"></i></span>
+                            <input type="time" id="cal-pop-end" class="form-control form-control-sm" value="17:00" style="flex:1;">
+                        </div>
+                    </div>
+
+                    <div id="cal-pop-reason-wrap" class="${activeTab === 'in-office' ? 'hidden' : ''}">
+                        <label class="label-secondary-block" for="cal-pop-comment">Comments (Optional)</label>
+                        <input type="text" id="cal-pop-comment" class="form-control form-control-sm" placeholder="e.g., Annual Conference">
+                    </div>
+                </div>
+
+                <!-- Right preview column -->
+                <div class="prov-avail-preview-box">
+                    <div class="prov-avail-preview-title">Preview (Weekly)</div>
+                    <div id="prov-avail-preview-list">
+                        ${buildWeeklyPreviewHtml(cur.id)}
+                    </div>
+                </div>
+            </div>
+
+            <!-- Existing Records Section -->
+            <div style="display:flex; flex-direction:column; gap:8px; margin-top:6px;">
+                <div style="display:flex; justify-content:space-between; align-items:center;">
+                    <div style="display:flex; align-items:center; gap:8px;">
+                        <span class="prov-avail-section-title">Existing Availability &amp; Unavailability</span>
+                        <span class="badge" style="background:#f1f5f9; color:#475569; font-size:0.72rem; padding:2px 8px; border-radius:10px;">${provBlocks.length} records</span>
+                    </div>
+                </div>
+                <div id="prov-avail-existing-table">
+                    ${buildExistingTableHtml(cur.id)}
+                </div>
+            </div>
+        `;
+    };
+
+    const modalHtml = `
+        <div class="prov-avail-modal-wrap">
+            <!-- Left Sidebar -->
+            <div class="prov-avail-sidebar">
+                <div class="prov-avail-sidebar-title">Provider Selection</div>
+                <div class="prov-avail-search-box">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="prov-avail-search-input" placeholder="Search provider...">
+                </div>
+                <div class="prov-avail-list" id="prov-avail-sidebar-list">
+                    ${buildSidebarHtml()}
+                </div>
+            </div>
+
+            <!-- Right Main Area -->
+            <div class="prov-avail-main" id="prov-avail-main-panel">
+                ${buildMainPanelHtml()}
+            </div>
+        </div>
+    `;
+
     BsAlert.fire({
-        title: 'Provider Availability',
-        html: `
-            <div style="text-align:left; display:flex; flex-direction:column; gap:10px;">
-                <div class="text-secondary-md">Set when the provider is available (In Office). Once In Office hours are set, only those hours can be booked. Use the other categories for lunch, vacation or time off.</div>
-                <div><label class="label-secondary-block" for="cal-block-provider">Provider</label>
-                    <select id="cal-block-provider" class="form-select form-select-sm">${providers.map(p => `<option value="${calEscape(p.id)}">${calEscape(p.name)}</option>`).join('')}</select></div>
-                <div style="display:flex; gap:10px;">
-                    <div style="flex:1;"><label class="label-secondary-block" for="cal-block-category">Category</label>
-                        <select id="cal-block-category" class="form-select form-select-sm">${categories.map(c => `<option value="${c}">${c}</option>`).join('')}</select></div>
-                    <div style="flex:1;"><label class="label-secondary-block" for="cal-block-facility">Facility</label>
-                        <select id="cal-block-facility" class="form-select form-select-sm"><option value="">-- Any --</option>${facilities.map(f => `<option value="${calEscape(f.id)}">${calEscape(f.facility_name)}</option>`).join('')}</select></div>
-                </div>
-                <div><label class="label-secondary-block" for="cal-block-repeat">Repeat</label>
-                    <select id="cal-block-repeat" class="form-select form-select-sm"><option value="weekly">Every week (days of week)</option><option value="once">One date</option></select></div>
-                <div id="cal-block-date-wrap" class="hidden"><label class="label-secondary-block" for="cal-block-date">Date</label>
-                    <input type="date" id="cal-block-date" class="form-control form-control-sm" value="${defaultDate}"></div>
-                <div id="cal-block-weekday-wrap"><label class="label-secondary-block">Days of week</label>
-                    <div style="display:flex; flex-wrap:wrap; gap:6px 14px;">${weekdays.map((d, i) => `<label style="display:flex; align-items:center; gap:4px; font-size:0.85rem;"><input type="checkbox" class="cal-block-wd" value="${i}" ${i >= 1 && i <= 5 ? 'checked' : ''}> ${d.slice(0, 3)}</label>`).join('')}</div></div>
-                <div style="display:flex; gap:10px;">
-                    <div style="flex:1;"><label class="label-secondary-block" for="cal-block-start">Start</label><input type="time" id="cal-block-start" class="form-control form-control-sm" value="09:00"></div>
-                    <div style="flex:1;"><label class="label-secondary-block" for="cal-block-end">End</label><input type="time" id="cal-block-end" class="form-control form-control-sm" value="17:00"></div>
-                </div>
-                <div id="cal-block-reason-wrap" class="hidden"><label class="label-secondary-block" for="cal-block-reason">Comments</label>
-                    <input type="text" id="cal-block-reason" class="form-control form-control-sm" placeholder="Optional"></div>
-                <div id="cal-block-list">${renderBlockList(providers[0].id)}</div>
-            </div>`,
+        title: '<div style="display:flex; align-items:center; gap:10px; color:#0f172a; font-size:1.15rem; font-weight:700;"><i class="fas fa-user-clock" style="color:#0284c7;"></i> Manage Provider Availability</div>',
+        html: modalHtml,
         showCancelButton: true,
-        confirmButtonText: 'Save Availability',
-        cancelButtonText: 'Close',
+        confirmButtonText: 'Save Changes',
+        cancelButtonText: 'Cancel',
+        confirmButtonColor: '#0284c7',
+        cancelButtonColor: '#ffffff',
+        width: '940px',
         didOpen: (mEl) => {
-            const repeat = mEl.querySelector('#cal-block-repeat');
-            const category = mEl.querySelector('#cal-block-category');
-            const provider = mEl.querySelector('#cal-block-provider');
-            const refreshList = () => { mEl.querySelector('#cal-block-list').innerHTML = renderBlockList(provider.value); };
-            repeat.onchange = () => {
-                mEl.querySelector('#cal-block-date-wrap').classList.toggle('hidden', repeat.value === 'weekly');
-                mEl.querySelector('#cal-block-weekday-wrap').classList.toggle('hidden', repeat.value !== 'weekly');
-            };
-            // Lunch/time-off defaults differ from working hours
-            category.onchange = () => {
-                const inOffice = category.value === 'In Office';
-                mEl.querySelector('#cal-block-reason-wrap').classList.toggle('hidden', inOffice);
-                if (inOffice) { mEl.querySelector('#cal-block-start').value = '09:00'; mEl.querySelector('#cal-block-end').value = '17:00'; }
-                else if (category.value === 'Lunch') { mEl.querySelector('#cal-block-start').value = '12:00'; mEl.querySelector('#cal-block-end').value = '13:00'; }
-            };
-            provider.onchange = refreshList;
-            mEl.querySelector('#cal-block-list').addEventListener('click', async (e) => {
-                const btn = e.target.closest('.cal-block-del');
-                if (!btn) return;
-                btn.disabled = true;
-                const r = await ApiService.request(`/api/provider-blocks/${btn.dataset.id}`, 'DELETE');
-                if (r.status === 'success') {
-                    await calLoadProviderBlocks();
-                    refreshList();
-                    refreshCalendarViews();
-                } else {
-                    btn.disabled = false;
-                    Toast.show(r.message || 'Could not remove this time.', 'error');
+            const confirmBtn = mEl.querySelector('.bsalert-confirm-btn');
+            if (confirmBtn) confirmBtn.style.cssText += 'background:#0284c7; color:#fff; border-radius:6px; font-weight:600; padding:9px 20px;';
+            const cancelBtn = mEl.querySelector('.bsalert-cancel-btn');
+            if (cancelBtn) cancelBtn.style.cssText += 'background:#fff; color:#0f172a; border:1px solid #cbd5e1; border-radius:6px; font-weight:600; padding:9px 18px;';
+
+            const wireMainEvents = () => {
+                const tabInOffice = mEl.querySelector('#tab-btn-in-office');
+                const tabTimeOff = mEl.querySelector('#tab-btn-time-off');
+                const repeatSelect = mEl.querySelector('#cal-pop-repeat');
+                const dateWrap = mEl.querySelector('#cal-pop-date-wrap');
+                const wdWrap = mEl.querySelector('#cal-pop-weekday-wrap');
+                const startInput = mEl.querySelector('#cal-pop-start');
+                const endInput = mEl.querySelector('#cal-pop-end');
+                const reasonWrap = mEl.querySelector('#cal-pop-reason-wrap');
+
+                if (tabInOffice && tabTimeOff) {
+                    tabInOffice.onclick = () => {
+                        activeTab = 'in-office';
+                        mEl.querySelector('#prov-avail-main-panel').innerHTML = buildMainPanelHtml();
+                        wireMainEvents();
+                    };
+                    tabTimeOff.onclick = () => {
+                        activeTab = 'time-off';
+                        mEl.querySelector('#prov-avail-main-panel').innerHTML = buildMainPanelHtml();
+                        wireMainEvents();
+                    };
                 }
-            });
+
+                if (repeatSelect) {
+                    repeatSelect.onchange = () => {
+                        dateWrap.classList.toggle('hidden', repeatSelect.value === 'weekly');
+                        wdWrap.classList.toggle('hidden', repeatSelect.value !== 'weekly');
+                    };
+                }
+
+                // Delete handlers
+                mEl.querySelectorAll('.cal-block-del-btn').forEach(btn => {
+                    btn.onclick = async (e) => {
+                        e.stopPropagation();
+                        btn.disabled = true;
+                        const blockId = btn.dataset.id;
+                        const delRes = await ApiService.request(`/api/provider-blocks/${blockId}`, 'DELETE');
+                        if (delRes.status === 'success') {
+                            await calLoadProviderBlocks();
+                            mEl.querySelector('#prov-avail-main-panel').innerHTML = buildMainPanelHtml();
+                            wireMainEvents();
+                            refreshCalendarViews();
+                            Toast.show('Record removed successfully.', 'success');
+                        } else {
+                            btn.disabled = false;
+                            Toast.show(delRes.message || 'Could not remove record.', 'error');
+                        }
+                    };
+                });
+            };
+
+            // Provider list click
+            const sidebarList = mEl.querySelector('#prov-avail-sidebar-list');
+            sidebarList.onclick = (e) => {
+                const item = e.target.closest('.prov-avail-item');
+                if (!item) return;
+                activeProviderId = item.dataset.id;
+                sidebarList.querySelectorAll('.prov-avail-item').forEach(el => el.classList.remove('active'));
+                item.classList.add('active');
+                mEl.querySelector('#prov-avail-main-panel').innerHTML = buildMainPanelHtml();
+                wireMainEvents();
+            };
+
+            // Search filter
+            const searchInput = mEl.querySelector('#prov-avail-search-input');
+            if (searchInput) {
+                searchInput.oninput = () => {
+                    sidebarList.innerHTML = buildSidebarHtml(searchInput.value);
+                };
+            }
+
+            wireMainEvents();
         },
         preConfirm: async () => {
-            const weekly = document.getElementById('cal-block-repeat').value === 'weekly';
+            const repeatVal = document.getElementById('cal-pop-repeat').value;
+            const weekly = (repeatVal === 'weekly');
+            const catSelect = document.getElementById('cal-pop-category');
+            const facSelect = document.getElementById('cal-pop-facility');
+            const commentInput = document.getElementById('cal-pop-comment');
+
+            const category = (activeTab === 'in-office') ? 'In Office' : (catSelect ? catSelect.value : 'Out Of Office');
+            const facilityId = (activeTab === 'in-office' && facSelect) ? facSelect.value : '';
+            const startTime = document.getElementById('cal-pop-start').value;
+            const endTime = document.getElementById('cal-pop-end').value;
+            const reason = (commentInput ? commentInput.value.trim() : '');
+
             const payload = {
-                provider_id: document.getElementById('cal-block-provider').value,
-                category: document.getElementById('cal-block-category').value,
-                facility_id: document.getElementById('cal-block-facility').value,
-                start_time: document.getElementById('cal-block-start').value,
-                end_time: document.getElementById('cal-block-end').value,
-                reason: document.getElementById('cal-block-reason').value.trim()
+                provider_id: activeProviderId,
+                category: category,
+                facility_id: facilityId,
+                start_time: startTime,
+                end_time: endTime,
+                reason: reason
             };
-            if (weekly) payload.weekdays = Array.from(document.querySelectorAll('.cal-block-wd:checked')).map(c => c.value);
-            else payload.block_date = document.getElementById('cal-block-date').value;
+
+            if (weekly) {
+                payload.weekdays = Array.from(document.querySelectorAll('.cal-pop-wd:checked')).map(c => c.value);
+            } else {
+                payload.block_date = document.getElementById('cal-pop-date').value;
+            }
+
             if (!payload.start_time || !payload.end_time || (!weekly && !payload.block_date) || (weekly && !payload.weekdays.length)) {
-                BsAlert.showValidationMessage(weekly ? 'Please pick at least one day and the start/end times.' : 'Please fill in the date and the start/end times.');
+                BsAlert.showValidationMessage(weekly ? 'Please select at least one day and the start/end times.' : 'Please choose a date and the start/end times.');
                 return false;
             }
+
             const r = await ApiService.request('/api/provider-blocks', 'POST', payload);
             if (r.status !== 'success') {
                 BsAlert.showValidationMessage(r.message || 'Could not save this availability.');
@@ -16671,7 +16979,7 @@ async function showBlockTimePopup() {
         }
     }).then(async (result) => {
         if (result.isConfirmed && result.value) {
-            Toast.show('Availability saved.', 'success');
+            Toast.show('Provider availability updated successfully.', 'success');
         }
         await calLoadProviderBlocks();
         refreshCalendarViews();
@@ -17393,27 +17701,43 @@ async function viewAppointmentDetails(appt) {
 
     // Build status section — locked if encounter already created, or if not today
     let statusSection = '';
+    const statusBadges = {
+        'Scheduled': '<span class="badge" style="background:#e0f2fe; color:#0284c7; font-weight:600; font-size:0.75rem; padding:4px 8px; border-radius:4px;">Scheduled</span>',
+        'Arrived': '<span class="badge" style="background:#dcfce7; color:#15803d; font-weight:600; font-size:0.75rem; padding:4px 8px; border-radius:4px;">Arrived (Checked In)</span>',
+        'Completed': '<span class="badge" style="background:#f1f5f9; color:#475569; font-weight:600; font-size:0.75rem; padding:4px 8px; border-radius:4px;">Completed</span>',
+        'Cancelled': '<span class="badge" style="background:#fee2e2; color:#b91c1c; font-weight:600; font-size:0.75rem; padding:4px 8px; border-radius:4px;">Cancelled</span>'
+    };
+
     if (!isToday) {
         statusSection = `<div class="encounter-locked-notice">
                 <i class="fas fa-calendar-day"></i>
                 <div>
                     <div class="encounter-locked-title">Restricted</div>
-                    <div class="encounter-locked-sub">Status updates and encounter creation are only available on the scheduled date of the appointment.</div>
+                    <div class="encounter-locked-sub">Status updates and encounter creation are only available on the scheduled date of the appointment. Current status: <strong>${currentStatus}</strong></div>
                 </div>
            </div>`;
     } else {
-        statusSection = `<div class="header-box-md">
-                <div>
-                    <label class="label-secondary-block" for="swal-appt-status-select">Update Visit Status</label>
-                    <select id="swal-appt-status-select" class="form-select form-select-sm" style="width: auto; min-width: 200px; font-size: 0.78rem; font-weight: 700; text-transform: uppercase; color: #0f172a; background-color: #fff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 8px 32px 8px 14px; box-shadow: none;">
-                        <option value="Scheduled" ${currentStatus === 'Scheduled' ? 'selected' : ''}>Scheduled</option>
-                        <option value="Arrived" ${currentStatus === 'Arrived' ? 'selected' : ''}>Arrived (Checked In)</option>
-                        <option value="Completed" ${currentStatus === 'Completed' ? 'selected' : ''}>Completed</option>
-                        <option value="Cancelled" ${currentStatus === 'Cancelled' ? 'selected' : ''}>Cancelled</option>
-                    </select>
+        const isArrived = (currentStatus === 'Arrived');
+        statusSection = `
+            <div class="border-bottom-pb10" style="background:#f8fafc; border:1px solid #e2e8f0; border-radius:8px; padding:12px;">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                    <span class="text-secondary-md" style="font-weight:600;">Visit Status</span>
+                    <div>${statusBadges[currentStatus] || `<span class="badge" style="background:#e2e8f0; color:#334155;">${currentStatus}</span>`}</div>
                 </div>
-                <button class="btn btn-secondary" id="swal-save-status-btn" style="background: #fff; color: #0f172a; border: 1px solid #cbd5e1; border-radius: 6px; font-weight: 600; padding: 10px 20px;">Save Status</button>
-           </div>`;
+                <div style="display:flex; gap:10px; align-items:center;">
+                    <div style="flex:1;">
+                        <select id="swal-appt-status-select" class="form-select form-select-sm" style="width: 100%; font-size: 0.8rem; font-weight: 600; text-transform: uppercase; color: #0f172a; background-color: #fff; border: 1px solid #cbd5e1; border-radius: 6px; padding: 7px 12px; box-shadow: none;">
+                            <option value="Scheduled" ${currentStatus === 'Scheduled' ? 'selected' : ''}>Scheduled</option>
+                            <option value="Arrived" ${currentStatus === 'Arrived' ? 'selected' : ''}>Arrived (Checked In)</option>
+                            <option value="Completed" ${currentStatus === 'Completed' ? 'selected' : ''}>Completed</option>
+                            <option value="Cancelled" ${currentStatus === 'Cancelled' ? 'selected' : ''}>Cancelled</option>
+                        </select>
+                    </div>
+                    <button class="btn btn-sm" id="swal-status-action-btn" style="${isArrived ? 'background:#10b981; color:#fff; border:1px solid #059669;' : 'background:#0284c7; color:#fff; border:1px solid #0284c7; opacity:0.5; pointer-events:none;'} border-radius: 6px; font-weight: 600; padding: 7px 16px; display:inline-flex; align-items:center; justify-content:center; transition: all 0.2s ease;">
+                        ${isArrived ? 'Open Encounter' : 'Save Status'}
+                    </button>
+                </div>
+            </div>`;
     }
 
     const htmlContent = `
@@ -17471,23 +17795,53 @@ async function viewAppointmentDetails(appt) {
                 if (closeBtn) closeBtn.style.cssText += 'background:#fff; color:#0f172a; border:1px solid #cbd5e1; border-radius:6px; font-weight:600; padding:10px 16px;';
                 const delBtn = modalEl.querySelector('.bsalert-deny-btn');
                 if (delBtn) delBtn.style.cssText += 'border-radius:6px; font-weight:600; padding:10px 16px;';
-                const saveStatusBtn = modalEl.querySelector('#swal-save-status-btn');
+                const actionBtn = modalEl.querySelector('#swal-status-action-btn');
                 const statusSelect = modalEl.querySelector('#swal-appt-status-select');
-                if (saveStatusBtn && statusSelect) {
-                    saveStatusBtn.onclick = async () => {
-                        const newStatus = statusSelect.value;
-                        const statusRes = await ApiService.request(`/api/appointment/${appt.id}/status`, 'PUT', { status: newStatus });
+
+                if (actionBtn && statusSelect) {
+                    statusSelect.onchange = () => {
+                        const selectedVal = statusSelect.value;
+                        if (selectedVal !== currentStatus) {
+                            actionBtn.innerText = 'Save Status';
+                            actionBtn.style.background = '#0284c7';
+                            actionBtn.style.borderColor = '#0284c7';
+                            actionBtn.style.color = '#fff';
+                            actionBtn.style.opacity = '1';
+                            actionBtn.style.pointerEvents = 'auto';
+                        } else if (currentStatus === 'Arrived') {
+                            actionBtn.innerText = 'Open Encounter';
+                            actionBtn.style.background = '#10b981';
+                            actionBtn.style.borderColor = '#059669';
+                            actionBtn.style.color = '#fff';
+                            actionBtn.style.opacity = '1';
+                            actionBtn.style.pointerEvents = 'auto';
+                        } else {
+                            actionBtn.innerText = 'Save Status';
+                            actionBtn.style.background = '#0284c7';
+                            actionBtn.style.borderColor = '#0284c7';
+                            actionBtn.style.color = '#fff';
+                            actionBtn.style.opacity = '0.5';
+                            actionBtn.style.pointerEvents = 'none';
+                        }
+                    };
+
+                    actionBtn.onclick = async () => {
+                        const selectedVal = statusSelect.value;
+                        // If already Arrived and status didn't change, just open encounter
+                        if (selectedVal === 'Arrived' && currentStatus === 'Arrived') {
+                            BsAlert.close();
+                            await window.openEncounterForArrival(appt.id, appt.patient_id);
+                            return;
+                        }
+
+                        // Otherwise save status
+                        const statusRes = await ApiService.request(`/api/appointment/${appt.id}/status`, 'PUT', { status: selectedVal });
                         if (statusRes.status === 'success') {
-                            Toast.show(`Appointment status updated to ${newStatus}.`, 'success');
+                            appt.status = selectedVal;
+                            Toast.show(`Appointment status updated to ${selectedVal}.`, 'success');
                             BsAlert.close();
 
-                            if (newStatus === 'Arrived') {
-                                // Arrived -> create (or reuse) the visit's encounter and open its SOAP form straight away.
-                                // Deliberately NOT racing this against initCalendarHandler() (below): both hit the
-                                // same slow API, and when the chart-open flow lost that race, window.openPatientChart
-                                // wasn't defined yet and openEncounterInChart crashed with an unhandled TypeError,
-                                // leaving the user on a half-rendered page behind the stuck "Opening encounter..."
-                                // overlay. The calendar grid is about to be navigated away from anyway.
+                            if (selectedVal === 'Arrived') {
                                 await window.openEncounterForArrival(appt.id, appt.patient_id);
                             } else {
                                 initCalendarHandler();
@@ -17524,7 +17878,10 @@ async function viewAppointmentDetails(appt) {
 }
 
 async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPatient = null, onSaveSuccess = null) {
-    await Promise.all([loadClinicSchedule(), loadVisitTypes()]);
+    // calLoadProviderBlocks() is otherwise only called from the Calendar page itself - fetch it here too so
+    // the provider-availability warning below works even when this popup is opened from Dashboard/Patient
+    // Directory without ever having visited Calendar first (providerBlocks would otherwise still be []).
+    await Promise.all([loadClinicSchedule(), loadVisitTypes(), calLoadProviderBlocks()]);
     // Check if the selected date is a clinic holiday or weekend closure day
     const closureReason = getClinicClosureReason(dateStr);
     if (closureReason !== null) {
@@ -17901,6 +18258,8 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
                         <span style="font-size:0.88rem; color:#64748b;">minutes</span>
                     </div>
                 </div>
+
+                <div id="swal-appt-avail-note" style="margin: -4px 0 12px 142px; font-size:0.85rem;"></div>
 
                 <div style="display: grid; grid-template-columns: 130px 1fr; gap: 12px; margin-bottom: 12px;">
                     <label style="font-weight: 600; font-size: 0.9rem; text-align: right; margin-top: 6px;">Reason</label>
@@ -18315,6 +18674,48 @@ async function scheduleOnDate(dateStr, timeStr = '', editItem = null, targetPati
                 if (mins) durInput.value = mins;
             });
             if (selVisitType) visitSel.value = selVisitType;
+
+            // Early client-side mirror of CalendarController::blockedTimeConflict() - warns before Save
+            // is clicked instead of only after, via the existing "Conflict Detected" rejection popup (which
+            // stays unchanged as the real enforcement point - see calProviderAvailabilityIssue's own comment).
+            const availNote = mEl.querySelector('#swal-appt-avail-note');
+            const providerSel = mEl.querySelector('#swal-appt-provider');
+            const dateInput = mEl.querySelector('#swal-appt-date');
+            const startHourSel = mEl.querySelector('#swal-start-hour');
+            const startMinSel = mEl.querySelector('#swal-start-min');
+            const startAmpmSel = mEl.querySelector('#swal-start-ampm');
+            const checkProviderAvailability = () => {
+                if (!availNote) return;
+                const apptFor = mEl.querySelector('input[name="swal_appt_for"]:checked')?.value || 'Single Date';
+                const category = mEl.querySelector('input[name="swal_appt_category"]:checked')?.value || 'Appointment';
+                // Waiting List uses fixed placeholder times that aren't real slots (server skips this check for
+                // it too); Period/recurring already has its own per-occurrence "Preview dates" flow for this.
+                if (category === 'Waiting List' || apptFor === 'Period') { availNote.innerHTML = ''; return; }
+
+                const providerId = providerSel.value;
+                const dStr = dateInput.value;
+                const hour12 = parseInt(startHourSel.value, 10);
+                const min = startMinSel.value;
+                const ampm = startAmpmSel.value;
+                if (!providerId || !dStr || isNaN(hour12)) { availNote.innerHTML = ''; return; }
+                let durationMins = parseInt(durInput.value, 10) || 10;
+                if (durationMins < 5) durationMins = 10;
+
+                let hour24 = hour12;
+                if (ampm === 'PM' && hour12 < 12) hour24 += 12;
+                if (ampm === 'AM' && hour12 === 12) hour24 = 0;
+                const startTime24 = `${String(hour24).padStart(2, '0')}:${min}`;
+                const endDt = new Date(`${dStr}T${startTime24}:00`);
+                endDt.setMinutes(endDt.getMinutes() + durationMins);
+                const endTime24 = `${String(endDt.getHours()).padStart(2, '0')}:${String(endDt.getMinutes()).padStart(2, '0')}`;
+
+                const issue = calProviderAvailabilityIssue(providerId, dStr, startTime24, endTime24);
+                availNote.innerHTML = issue ? `<span class="cal-flag-blocked">${calEscape(issue)}</span>` : '';
+            };
+            [providerSel, dateInput, startHourSel, startMinSel, startAmpmSel].forEach(el => el && el.addEventListener('change', checkProviderAvailability));
+            durInput.addEventListener('input', checkProviderAvailability);
+            mEl.querySelectorAll('input[name="swal_appt_category"], input[name="swal_appt_for"]').forEach(el => el.addEventListener('change', checkProviderAvailability));
+            checkProviderAvailability();
 
             const catRadios = mEl.querySelectorAll('input[name="swal_appt_category"]');
             const secAppt = mEl.querySelector('#swal-sec-appointment');

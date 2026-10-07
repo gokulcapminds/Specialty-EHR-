@@ -810,3 +810,13 @@ CREATE TABLE IF NOT EXISTS patient_cardiac_profile (
 -- data would need per-record review instead of one default for everything.
 UPDATE patients SET facility_id = 11 WHERE facility_id IS NULL;
 UPDATE users SET facility_id = 11 WHERE facility_id IS NULL;
+
+-- Migration 2026-10-07: patient_ids_json was a plain TEXT column (64KB limit), but
+-- createPatientIdRowElement() (app.js) stores each attached ID document (driver's license photo,
+-- passport scan, etc.) as a base64 data URL inside this same JSON column - any real attachment exceeds
+-- 64KB. With sql_mode empty (non-strict), MySQL silently truncated the value instead of erroring, which
+-- corrupted the JSON and made the attached document vanish on the next load (reproduced: a 203KB payload
+-- was silently cut to exactly 65,535 bytes, then failed to json_decode). Widened to LONGTEXT (matches
+-- photo_url, which already got this same fix previously). Found via manual testing of the patient wizard's
+-- "Government & Clinical Identification Documents" step.
+ALTER TABLE patients MODIFY patient_ids_json LONGTEXT;

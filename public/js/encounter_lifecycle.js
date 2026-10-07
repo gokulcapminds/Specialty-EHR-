@@ -182,14 +182,14 @@
 
         // Confirm action
         const confirmed = window.confirm(
-            '⚠️  Sign & Finalize this encounter?\n\n' +
+            '  Sign & Finalize this encounter?\n\n' +
             'Once signed, the record will be locked and can only be corrected via an Addendum.\n\n' +
             'Required before signing:\n• Chief Complaint\n• At least one ICD-10 Diagnosis\n\nProceed?'
         );
         if (!confirmed) return;
 
         btn.disabled = true;
-        btn.textContent = '⏳ Signing...';
+        btn.textContent = 'Signing...';
 
         try {
             // Collect signature data
@@ -206,9 +206,9 @@
                 applyLockedUI(true);
 
                 if (typeof Toast !== 'undefined') {
-                    Toast.show('✅ Encounter signed and locked. Sent to billing queue.', 'success');
+                    Toast.show('Encounter signed and locked. Sent to billing queue.', 'success');
                 } else if (window.Toast) {
-                    window.Toast.show('✅ Encounter signed and locked. Sent to billing queue.', 'success');
+                    window.Toast.show('Encounter signed and locked. Sent to billing queue.', 'success');
                 }
 
                 // Refresh encounter lists if available
@@ -220,14 +220,14 @@
                 }
             } else {
                 const msg = (res && res.message) ? res.message : 'Failed to sign encounter.';
-                alert('❌ Sign failed: ' + msg);
+                alert(' Sign failed: ' + msg);
             }
         } catch (err) {
             console.error('Sign & Lock error:', err);
-            alert('❌ An error occurred while signing. Please try again.');
+            alert(' An error occurred while signing. Please try again.');
         } finally {
             btn.disabled = false;
-            btn.textContent = '✅ Sign & Finalize';
+            btn.textContent = ' Sign & Finalize';
         }
     });
 
@@ -294,7 +294,7 @@
                     statusEl.style.display = 'block';
                     statusEl.style.background = 'rgba(76,175,80,0.15)';
                     statusEl.style.color = '#81c784';
-                    statusEl.textContent = '✅ Addendum submitted successfully and appended to the locked record.';
+                    statusEl.textContent = ' Addendum submitted successfully and appended to the locked record.';
                 }
                 // Close modal after 2 seconds
                 setTimeout(() => {
@@ -307,7 +307,7 @@
                     statusEl.style.display = 'block';
                     statusEl.style.background = 'rgba(244,67,54,0.15)';
                     statusEl.style.color = '#ef9a9a';
-                    statusEl.textContent = '❌ ' + msg;
+                    statusEl.textContent = ' ' + msg;
                 }
             }
         } catch (err) {

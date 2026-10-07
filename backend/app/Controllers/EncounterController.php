@@ -42,6 +42,11 @@ class EncounterController {
         try { return (string)EncryptionService::decrypt($v); } catch (\Throwable $e) { return ''; }
     }
 
+    private function age(string $dob): ?int {
+        if ($dob === '') return null;
+        try { return (new \DateTime())->diff(new \DateTime($dob))->y; } catch (\Throwable $e) { return null; }
+    }
+
     private function validDate(?string $d): bool {
         if ($d === null || $d === '') return false;
         $x = \DateTime::createFromFormat('Y-m-d', $d);
@@ -64,7 +69,8 @@ class EncounterController {
 
         // (A) appointments in the window that have no encounter yet
         $apptSql = "SELECT a.id AS appointment_id, a.status AS appointment_status, a.start_time, a.visit_type, a.specialty,
-                           a.patient_id, a.provider_id, p.first_name_encrypted, p.last_name_encrypted, u.first_name AS pf, u.last_name AS pl
+                           a.appointment_mode, a.patient_id, a.provider_id, p.first_name_encrypted, p.last_name_encrypted,
+                           p.dob_encrypted, p.gender, u.first_name AS pf, u.last_name AS pl, u.specialty AS provider_specialty
                     FROM appointments a
                     JOIN patients p ON p.id = a.patient_id
                     LEFT JOIN users u ON u.id = a.provider_id
@@ -81,16 +87,19 @@ class EncounterController {
                 'appointment_id' => (int)$a['appointment_id'], 'appointment_status' => $a['appointment_status'],
                 'note_id' => null, 'encounter_ref' => null,
                 'patient_id' => (int)$a['patient_id'], 'patient_name' => trim($this->dec($a['first_name_encrypted']) . ' ' . $this->dec($a['last_name_encrypted'])),
+                'age' => $this->age($this->dec($a['dob_encrypted'])), 'sex' => $a['gender'] ?: null,
                 'provider_id' => $a['provider_id'] ? (int)$a['provider_id'] : null, 'provider_name' => trim(($a['pf'] ?? '') . ' ' . ($a['pl'] ?? '')),
-                'visit_type' => $a['visit_type'], 'specialty' => $a['specialty'],
+                'provider_specialty' => $a['provider_specialty'] ?: null,
+                'visit_type' => $a['visit_type'], 'specialty' => $a['specialty'], 'mode' => $a['appointment_mode'] ?: null,
                 'when' => $a['start_time'], 'chief_complaint' => null, 'signed_by' => null, 'invoice_id' => null,
             ];
         }
 
         // (B) encounters: everything still open (any date) + signed/billed ones inside the window
         $noteSql = "SELECT n.id, n.patient_id, n.appointment_id, n.provider_id, n.note_date, n.visit_type, n.encounter_type, n.encounter_status,
-                           n.lock_state, n.chief_complaint, n.signed_by_name, a.status AS appointment_status,
-                           p.first_name_encrypted, p.last_name_encrypted, u.first_name AS pf, u.last_name AS pl,
+                           n.lock_state, n.chief_complaint, n.signed_by_name, n.encounter_mode, a.status AS appointment_status,
+                           p.first_name_encrypted, p.last_name_encrypted, p.dob_encrypted, p.gender,
+                           u.first_name AS pf, u.last_name AS pl, u.specialty AS provider_specialty,
                            (SELECT MIN(i.id) FROM invoices i WHERE i.encounter_id = n.id) AS invoice_id
                     FROM clinical_notes n
                     JOIN patients p ON p.id = n.patient_id
@@ -110,8 +119,10 @@ class EncounterController {
                 'appointment_id' => $n['appointment_id'] ? (int)$n['appointment_id'] : null, 'appointment_status' => $n['appointment_status'],
                 'note_id' => (int)$n['id'], 'encounter_ref' => 'ENC-' . str_pad((string)$n['id'], 5, '0', STR_PAD_LEFT),
                 'patient_id' => (int)$n['patient_id'], 'patient_name' => trim($this->dec($n['first_name_encrypted']) . ' ' . $this->dec($n['last_name_encrypted'])),
+                'age' => $this->age($this->dec($n['dob_encrypted'])), 'sex' => $n['gender'] ?: null,
                 'provider_id' => $n['provider_id'] ? (int)$n['provider_id'] : null, 'provider_name' => trim(($n['pf'] ?? '') . ' ' . ($n['pl'] ?? '')),
-                'visit_type' => $n['visit_type'], 'specialty' => $n['encounter_type'],
+                'provider_specialty' => $n['provider_specialty'] ?: null,
+                'visit_type' => $n['visit_type'], 'specialty' => $n['encounter_type'], 'mode' => $n['encounter_mode'] ?: null,
                 'when' => $n['note_date'],
                 // front desk sees the queue, not clinical content
                 'chief_complaint' => in_array($role, [Roles::RECEPTIONIST, Roles::BILLING], true) ? null : ($n['chief_complaint'] ? mb_substr($n['chief_complaint'], 0, 90) : null),
