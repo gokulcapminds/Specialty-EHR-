@@ -56,6 +56,20 @@ class ReportController {
         }
     }
 
+    private function plainComplaint($raw): string {
+        $raw = trim((string)$raw);
+        if ($raw !== '' && $raw[0] === '{') {
+            $j = json_decode($raw, true);
+            if (is_array($j)) {
+                $text = trim((string)($j['text'] ?? ''));
+                if ($text !== '') return $text;
+                $symptoms = array_filter($j['symptoms'] ?? []);
+                if (!empty($symptoms)) return implode(', ', $symptoms);
+            }
+        }
+        return $raw;
+    }
+
     /**
      * Parse date range filters (from, to). Default to current month.
      */
@@ -318,7 +332,7 @@ class ReportController {
         foreach ($rawEncounters as $r) {
             $pName = trim($this->dec($r['first_name_encrypted']) . ' ' . $this->dec($r['last_name_encrypted']));
             $docName = 'Dr. ' . $r['prov_fname'] . ' ' . $r['prov_lname'];
-            $complaint = $r['chief_complaint'] ?? '';
+            $complaint = $this->plainComplaint($r['chief_complaint'] ?? '');
             $encType = $r['encounter_type'] ?: 'Standard Visit';
             $isSigned = ((int)($r['lock_state'] ?? 0) === 1);
 
@@ -631,7 +645,7 @@ class ReportController {
                     'Dr. ' . $r['prov_fname'] . ' ' . $r['prov_lname'],
                     $r['encounter_type'] ?: 'Standard Visit',
                     ((int)$r['lock_state'] === 1) ? 'Signed & Locked' : 'Draft / Unsigned',
-                    $r['chief_complaint'] ?? ''
+                    $this->plainComplaint($r['chief_complaint'] ?? '')
                 ]);
             }
         } elseif ($type === 'appointments' || $type === 'operations') {

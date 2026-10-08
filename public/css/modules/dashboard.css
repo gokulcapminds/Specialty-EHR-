@@ -421,7 +421,7 @@
 .dash-welcome { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
 .dash-welcome-line { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .dash-welcome-line h2 { font-size: 1.25rem; font-weight: 800; color: #0f172a; margin: 0; }
-.dash-role-badge { background: #e0e7ff; color: #4338ca; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 3px 9px; border-radius: 999px; }
+.dash-role-badge { background: transparent; color: #4338ca; font-size: 0.68rem; font-weight: 700; letter-spacing: 0.04em; text-transform: uppercase; padding: 0; border-radius: 0; }
 .dash-welcome-sub { font-size: 0.8rem; color: #64748b; margin-top: 2px; }
 .dash-welcome-sub strong { color: #334155; }
 .dash-welcome-actions { display: flex; gap: 8px; flex-wrap: wrap; }

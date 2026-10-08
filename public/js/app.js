@@ -14190,8 +14190,7 @@ async function initPatientsHandler() {
                                                                                     class="btn btn-primary btn-sm"
                                                                                     id="add-patient-msg-btn"
                                                                                     style="background: #0284c7; border-color: #0284c7; font-weight: 700; font-size: 0.88rem; border-radius: 8px; padding: 8px 18px; display: flex; align-items: center; gap: 8px; color: #ffffff; cursor: pointer;">
-                                                                                    <i class="fas fa-paper-plane"></i> +
-                                                                                    Send Message
+                                                                                    + Send Message
                                                                                 </button>
                                                                             </div>
 
@@ -16624,7 +16623,6 @@ async function showBlockTimePopup() {
                     <div class="prov-avail-name">${calEscape(p.name)}</div>
                     <div class="prov-avail-spec">${calEscape(p.specialty)}</div>
                 </div>
-                <div class="prov-avail-status-dot" title="Active"></div>
             </div>
         `).join('');
     };
@@ -16733,10 +16731,10 @@ async function showBlockTimePopup() {
             <!-- Tab selection -->
             <div class="prov-avail-tabs">
                 <button type="button" class="prov-avail-tab-btn tab-in-office ${activeTab === 'in-office' ? 'active' : ''}" id="tab-btn-in-office">
-                    <i class="fas fa-calendar-check"></i> Available (In Office)
+                    Available (In Office)
                 </button>
                 <button type="button" class="prov-avail-tab-btn tab-time-off ${activeTab === 'time-off' ? 'active' : ''}" id="tab-btn-time-off">
-                    <i class="fas fa-ban"></i> Unavailable (Time Off)
+                    Unavailable (Time Off)
                 </button>
             </div>
 
@@ -27322,37 +27320,6 @@ window.openTelehealthForAppointment = async function (appointmentId) {
 async function initTelehealthHandler() {
     if (!document.getElementById('telehealth-sessions-tbody')) return;
 
-    let patientsCache = [];
-
-    // Helper to fetch and populate patients dropdown
-    const loadPatientsDropdown = async () => {
-        const select = document.getElementById('telehealth-patient-select');
-        const emailInput = document.getElementById('telehealth-patient-email');
-        if (!select) return;
-
-        try {
-            const res = await ApiService.request('/api/patients');
-            if (res.status === 'success' && Array.isArray(res.data)) {
-                patientsCache = res.data;
-                let html = '<option value="">-- Select Patient --</option>';
-                res.data.forEach(p => {
-                    html += `<option value="${p.id}" data-email="${p.email || ''}">${p.first_name} ${p.last_name} (#${p.id})</option>`;
-                });
-                select.innerHTML = html;
-
-                select.onchange = () => {
-                    const selOpt = select.options[select.selectedIndex];
-                    const em = selOpt ? selOpt.getAttribute('data-email') : '';
-                    if (emailInput && em) {
-                        emailInput.value = em;
-                    }
-                };
-            }
-        } catch (e) {
-            console.error('Failed to load patients for telehealth dropdown', e);
-        }
-    };
-
     // Helper to load and render telehealth sessions history
     const loadTelehealthSessions = async () => {
         const tbody = document.getElementById('telehealth-sessions-tbody');
@@ -27362,7 +27329,7 @@ async function initTelehealthHandler() {
             const res = await ApiService.request('/api/telehealth/sessions');
             if (res.status === 'success' && Array.isArray(res.data)) {
                 if (res.data.length === 0) {
-                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:24px; color:#64748b;">No telehealth sessions created yet. Use the form above to send an invitation.</td></tr>';
+                    tbody.innerHTML = '<tr><td colspan="6" style="text-align:center; padding:24px; color:#64748b;">No telehealth sessions yet. Book a Telehealth appointment on the Calendar to create one.</td></tr>';
                     return;
                 }
 
@@ -27479,62 +27446,13 @@ async function initTelehealthHandler() {
         }
     };
 
-    // Form Submission: Create Telehealth Session & Dispatch Email
-    const inviteForm = document.getElementById('telehealth-invite-form');
-    if (inviteForm) {
-        inviteForm.onsubmit = async (e) => {
-            e.preventDefault();
-            const patientId = document.getElementById('telehealth-patient-select').value;
-            const patientEmail = document.getElementById('telehealth-patient-email').value.trim();
-            const submitBtn = document.getElementById('create-telehealth-btn');
-
-            if (!patientId) {
-                Toast.show('Please select a patient.', 'error');
-                return;
-            }
-
-            if (!patientEmail) {
-                Toast.show('Please enter a valid email address.', 'error');
-                return;
-            }
-
-            try {
-                submitBtn.disabled = true;
-                submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Generating & Sending...';
-
-                const res = await ApiService.request('/api/telehealth/session', 'POST', {
-                    patient_id: patientId,
-                    patient_email: patientEmail
-                });
-
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = '<i class="fas fa-envelope"></i> Generate & Send Link';
-
-                if (res.status === 'success' && res.data) {
-                    Toast.show(res.message || 'Telehealth invitation sent successfully!', 'success');
-                    await loadTelehealthSessions();
-
-                    // Open the room in a new tab for the provider (may be pop-up blocked after the await; the Join button still works)
-                    if (res.data.join_url) window.openTelehealthTab(res.data.join_url);
-                } else {
-                    Toast.show(res.message || 'Failed to create telehealth session.', 'error');
-                }
-            } catch (err) {
-                submitBtn.disabled = false;
-                submitBtn.innerHTML = '<i class="fas fa-envelope"></i> Generate & Send Link';
-                Toast.show('Network error creating telehealth session.', 'error');
-            }
-        };
-    }
-
     // Refresh Button
     const refreshBtn = document.getElementById('refresh-telehealth-sessions-btn');
     if (refreshBtn) {
         refreshBtn.onclick = () => loadTelehealthSessions();
     }
 
-    // Initial loading calls
-    await loadPatientsDropdown();
+    // Initial loading call
     await loadTelehealthSessions();
 }
 
