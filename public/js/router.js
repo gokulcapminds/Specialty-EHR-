@@ -75,18 +75,33 @@ export class Router {
         }
 
         const moduleUrl = this.routes[hash] || this.routes['dashboard'];
-        
+
+        // sidebar.php is re-included inside every module fragment, so root.innerHTML below
+        // destroys and recreates the sidebar <nav> on every navigation, resetting its own
+        // scrollTop to 0 (it's the scrollable region itself, not an inner <ul>) - most visible
+        // on deep items like Reports/Administration that need scrolling to reach.
+        const prevSidebar = document.getElementById('app-sidebar');
+        const prevSidebarScrollTop = prevSidebar ? prevSidebar.scrollTop : null;
+
         try {
             // Fetch view module fragment — add cache-buster to always get fresh HTML
             const cacheBuster = Math.floor(Date.now() / 60000); // changes every 60s
             const response = await fetch(moduleUrl + '?v=' + cacheBuster);
             if (!response.ok) throw new Error('Module fetch failed.');
             const html = await response.text();
-            
+
             root.innerHTML = html;
 
             // Trigger module specific logic setup in app.js
             window.dispatchEvent(new CustomEvent('moduleLoaded', { detail: { module: hash } }));
+
+            // Restore sidebar scroll position after initSidebarGroups() (run synchronously by the
+            // moduleLoaded listener above) has re-applied the open/active classes, so the restored
+            // position matches the now-settled layout.
+            if (prevSidebarScrollTop !== null) {
+                const newSidebar = document.getElementById('app-sidebar');
+                if (newSidebar) newSidebar.scrollTop = prevSidebarScrollTop;
+            }
             
             // Announce page load for screen readers
             const announcer = document.getElementById('sr-announcer');

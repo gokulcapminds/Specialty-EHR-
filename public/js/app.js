@@ -2787,14 +2787,24 @@ function initSidebarToggle() {
 // ===== Sidebar groups (Schedule / Patient / Settings) =====
 // Top level on purpose: groups must toggle on EVERY page, not only inside one route's init*Handler.
 // The sidebar markup is re-rendered on each route change, so open groups come from PHP ($activeNav) plus this small memory.
-const SIDEBAR_OPEN_GROUPS_KEY = 'sidebarOpenGroups';
+// Accordion: at most one top-level group, and independently at most one nested subgroup, is ever
+// open at a time - opening one closes the others. Each gets its own single-value key (not an array).
+const SIDEBAR_OPEN_GROUP_KEY = 'sidebarOpenGroup';
+const SIDEBAR_OPEN_SUBGROUP_KEY = 'sidebarOpenSubgroup';
 
-function readOpenSidebarGroups() {
+function readOpenSidebarGroup() {
     try {
-        const v = JSON.parse(localStorage.getItem(SIDEBAR_OPEN_GROUPS_KEY) || '[]');
-        return Array.isArray(v) ? v : [];
+        return localStorage.getItem(SIDEBAR_OPEN_GROUP_KEY) || null;
     } catch (e) {
-        return [];
+        return null;
+    }
+}
+
+function readOpenSidebarSubgroup() {
+    try {
+        return localStorage.getItem(SIDEBAR_OPEN_SUBGROUP_KEY) || null;
+    } catch (e) {
+        return null;
     }
 }
 
@@ -2805,7 +2815,7 @@ function setSidebarGroupOpen(groupLi, open) {
     if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
-// A dropdown nested inside a group (today: "Administration" inside Settings). Remembered as 'sub:<name>'.
+// A dropdown nested inside a group (today: "Administration" inside Settings).
 function setSidebarSubgroupOpen(subLi, open) {
     if (!subLi) return;
     subLi.classList.toggle('subgroup-open', open);
@@ -2813,13 +2823,29 @@ function setSidebarSubgroupOpen(subLi, open) {
     if (toggle) toggle.setAttribute('aria-expanded', open ? 'true' : 'false');
 }
 
-function saveOpenSidebarGroups(sidebar) {
+// Closes every open top-level group except `keepLi` (pass null to close all of them).
+function closeOtherSidebarGroups(sidebar, keepLi) {
+    sidebar.querySelectorAll('.nav-item-has-submenu.submenu-open').forEach(li => {
+        if (li !== keepLi) setSidebarGroupOpen(li, false);
+    });
+}
+
+// Closes every open nested subgroup except `keepLi` (pass null to close all of them).
+function closeOtherSidebarSubgroups(sidebar, keepLi) {
+    sidebar.querySelectorAll('.nav-subgroup.subgroup-open').forEach(li => {
+        if (li !== keepLi) setSidebarSubgroupOpen(li, false);
+    });
+}
+
+function saveSidebarGroupState(sidebar) {
     try {
-        const open = [
-            ...Array.from(sidebar.querySelectorAll('.nav-item-has-submenu.submenu-open')).map(li => li.dataset.group),
-            ...Array.from(sidebar.querySelectorAll('.nav-subgroup.subgroup-open')).map(li => 'sub:' + li.dataset.subgroup)
-        ];
-        localStorage.setItem(SIDEBAR_OPEN_GROUPS_KEY, JSON.stringify(open));
+        const openGroup = sidebar.querySelector('.nav-item-has-submenu.submenu-open');
+        if (openGroup) localStorage.setItem(SIDEBAR_OPEN_GROUP_KEY, openGroup.dataset.group);
+        else localStorage.removeItem(SIDEBAR_OPEN_GROUP_KEY);
+
+        const openSubgroup = sidebar.querySelector('.nav-subgroup.subgroup-open');
+        if (openSubgroup) localStorage.setItem(SIDEBAR_OPEN_SUBGROUP_KEY, openSubgroup.dataset.subgroup);
+        else localStorage.removeItem(SIDEBAR_OPEN_SUBGROUP_KEY);
     } catch (err) { }
 }
 
@@ -2827,14 +2853,31 @@ function initSidebarGroups() {
     const sidebar = document.getElementById('app-sidebar');
     if (!sidebar) return;
 
-    // Re-apply groups the user opened earlier (additive: the active page's group is already open from PHP).
-    const remembered = readOpenSidebarGroups();
-    sidebar.querySelectorAll('.nav-item-has-submenu').forEach(li => {
-        if (remembered.includes(li.dataset.group)) setSidebarGroupOpen(li, true);
-    });
-    sidebar.querySelectorAll('.nav-subgroup').forEach(li => {
-        if (remembered.includes('sub:' + li.dataset.subgroup)) setSidebarSubgroupOpen(li, true);
-    });
+    // The current page's own group is already opened server-side (PHP $activeNav) - that wins and
+    // every other group is closed. Only fall back to the remembered group when the current page
+    // isn't inside any group at all (e.g. Dashboard, Messages, Billing), so a group picked to
+    // browse survives those in-between pages instead of just vanishing.
+    const serverActiveGroup = sidebar.querySelector('.nav-item-has-submenu.submenu-open');
+    if (serverActiveGroup) {
+        closeOtherSidebarGroups(sidebar, serverActiveGroup);
+    } else {
+        closeOtherSidebarGroups(sidebar, null);
+        const remembered = readOpenSidebarGroup();
+        const li = remembered && sidebar.querySelector(`.nav-item-has-submenu[data-group="${remembered}"]`);
+        if (li) setSidebarGroupOpen(li, true);
+    }
+
+    const serverActiveSubgroup = sidebar.querySelector('.nav-subgroup.subgroup-open');
+    if (serverActiveSubgroup) {
+        closeOtherSidebarSubgroups(sidebar, serverActiveSubgroup);
+    } else {
+        closeOtherSidebarSubgroups(sidebar, null);
+        const rememberedSub = readOpenSidebarSubgroup();
+        const subLi = rememberedSub && sidebar.querySelector(`.nav-subgroup[data-subgroup="${rememberedSub}"]`);
+        if (subLi) setSidebarSubgroupOpen(subLi, true);
+    }
+
+    saveSidebarGroupState(sidebar);
 
     // Highlight active sublink in reports group based on URL hash
     const currentHash = window.location.hash || '';
@@ -2855,14 +2898,16 @@ function initSidebarGroups() {
     document.addEventListener('click', (e) => {
         const sb = document.getElementById('app-sidebar');
 
-        // Nested dropdown (Administration): just open/close it.
+        // Nested dropdown (Administration): accordion against its own siblings (today there's only one).
         const subToggle = e.target.closest('[data-subgroup-toggle]');
         if (subToggle) {
             e.preventDefault();
             const subLi = subToggle.closest('.nav-subgroup');
             if (!sb || !subLi) return;
-            setSidebarSubgroupOpen(subLi, !subLi.classList.contains('subgroup-open'));
-            saveOpenSidebarGroups(sb);
+            const opening = !subLi.classList.contains('subgroup-open');
+            closeOtherSidebarSubgroups(sb, opening ? subLi : null);
+            setSidebarSubgroupOpen(subLi, opening);
+            saveSidebarGroupState(sb);
             return;
         }
 
@@ -2873,15 +2918,19 @@ function initSidebarGroups() {
         const groupLi = toggle.closest('.nav-item-has-submenu');
         if (!sb || !groupLi) return;
 
+        const opening = !groupLi.classList.contains('submenu-open');
+
         if (sb.classList.contains('collapsed') && window.innerWidth >= 992) {
             // Icon-only mode hides the children, so expand the sidebar and open this group.
             setSidebarCollapsed(false);
+            closeOtherSidebarGroups(sb, groupLi);
             setSidebarGroupOpen(groupLi, true);
         } else {
-            setSidebarGroupOpen(groupLi, !groupLi.classList.contains('submenu-open'));
+            closeOtherSidebarGroups(sb, opening ? groupLi : null);
+            setSidebarGroupOpen(groupLi, opening);
         }
 
-        saveOpenSidebarGroups(sb);
+        saveSidebarGroupState(sb);
     });
 }
 
