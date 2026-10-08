@@ -5902,12 +5902,11 @@ async function initEncountersHandler() {
 
     const renderRows = () => {
         if (!state.rows.length) {
-            listEl.innerHTML = `<tr><td colspan="6" class="enc-loading">No encounters ${state.stage ? 'in "' + esc(state.stage) + '"' : 'for this filter'}.</td></tr>`;
+            listEl.innerHTML = `<tr><td colspan="5" class="enc-loading">No encounters ${state.stage ? 'in "' + esc(state.stage) + '"' : 'for this filter'}.</td></tr>`;
             return;
         }
         listEl.innerHTML = state.rows.map((r) => `
             <tr>
-                <td>${fmtWhen(r.when)}</td>
                 <td><strong>${esc(r.patient_name || 'Unknown')}</strong>${ccText(r.chief_complaint) ? `<div class="enc-cc">${esc(ccText(r.chief_complaint))}</div>` : ''}</td>
                 <td>${r.encounter_ref ? esc(r.encounter_ref) : '<span class="enc-muted">Not started</span>'}<div class="enc-cc">${esc(r.visit_type || '')}${r.appointment_id ? '' : ' · walk-in / no appointment'}</div></td>
                 <td>${esc(r.provider_name || '—')}</td>
@@ -5923,7 +5922,7 @@ async function initEncountersHandler() {
         // Chip counts span every stage, so the stage filter is applied client-side.
         const res = await ApiService.request('/api/encounters/queue?' + p.toString());
         if (res.status !== 'success') {
-            listEl.innerHTML = `<tr><td colspan="6" class="enc-loading">${esc(res.message || 'Could not load encounters.')}</td></tr>`;
+            listEl.innerHTML = `<tr><td colspan="5" class="enc-loading">${esc(res.message || 'Could not load encounters.')}</td></tr>`;
             return;
         }
         state.all = res.data || [];

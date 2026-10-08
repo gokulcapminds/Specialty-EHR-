@@ -136,6 +136,30 @@
         .error-card i {
             color: #ef4444 !important;
         }
+
+        #pip-toggle-btn {
+            display: none; /* shown once Jitsi is live and the browser supports Document PiP */
+            align-items: center;
+            gap: 6px;
+            background: #334155;
+            color: #f8fafc;
+            border: 1px solid #475569;
+            border-radius: 8px;
+            padding: 7px 14px;
+            font-size: 0.82rem;
+            font-weight: 600;
+            cursor: pointer;
+            margin-left: 12px;
+        }
+
+        #pip-toggle-btn:hover {
+            background: #475569;
+        }
+
+        #pip-toggle-btn.active {
+            background: #0284c7;
+            border-color: #0284c7;
+        }
     </style>
 </head>
 <body>
@@ -148,8 +172,13 @@
                 <div class="brand-subtitle">Telehealth Consultation</div>
             </div>
         </div>
-        <div class="badge-encrypted">
-            <i class="fas fa-lock"></i> HIPAA Encrypted Session
+        <div style="display:flex; align-items:center;">
+            <div class="badge-encrypted">
+                <i class="fas fa-lock"></i> HIPAA Encrypted Session
+            </div>
+            <button type="button" id="pip-toggle-btn" title="Keep this call visible in a small floating window while you use other tabs">
+                <i class="fas fa-compress"></i> <span id="pip-toggle-label">Minimize</span>
+            </button>
         </div>
     </header>
 
@@ -230,6 +259,54 @@
                 return;
             }
 
+            // Lets the provider/patient keep seeing the call while they switch to another tab (e.g. the
+            // EHR) by moving the live call container into a real OS-level floating window via the
+            // Document Picture-in-Picture API (Chrome/Edge 116+ only - the button stays hidden elsewhere,
+            // this is a progressive enhancement, not a requirement to use the call).
+            function initPictureInPicture(container) {
+                const btn = document.getElementById('pip-toggle-btn');
+                const label = document.getElementById('pip-toggle-label');
+                if (!btn || typeof documentPictureInPicture === 'undefined') return { restore: () => {} };
+
+                btn.style.display = 'inline-flex';
+                const mainParent = container.parentElement;
+                let pipWindow = null;
+
+                const restore = () => {
+                    if (!pipWindow) return;
+                    pipWindow = null;
+                    mainParent.appendChild(container);
+                    btn.classList.remove('active');
+                    label.textContent = 'Minimize';
+                    btn.querySelector('i').className = 'fas fa-compress';
+                };
+
+                btn.addEventListener('click', async () => {
+                    if (pipWindow) {
+                        pipWindow.close(); // triggers the 'pagehide' listener below, which calls restore()
+                        return;
+                    }
+                    try {
+                        pipWindow = await documentPictureInPicture.requestWindow({ width: 420, height: 300 });
+                        // The PiP window starts with a blank document - carry over just enough styling
+                        // so the moved container fills it edge-to-edge instead of floating on white.
+                        const style = pipWindow.document.createElement('style');
+                        style.textContent = '*{box-sizing:border-box;margin:0;padding:0;}body{background:#000;height:100vh;overflow:hidden;}#patient-jitsi-container{width:100%;height:100%;display:flex;}';
+                        pipWindow.document.head.appendChild(style);
+                        pipWindow.document.body.appendChild(container);
+                        pipWindow.addEventListener('pagehide', restore, { once: true });
+
+                        btn.classList.add('active');
+                        label.textContent = 'Restore';
+                        btn.querySelector('i').className = 'fas fa-expand';
+                    } catch (e) {
+                        console.error('Picture-in-Picture failed to open', e);
+                    }
+                });
+
+                return { restore };
+            }
+
             // Function to dynamically load Jitsi API
             const loadJitsiScript = () => {
                 return new Promise((resolve, reject) => {
@@ -271,8 +348,10 @@
                 };
 
                 const api = new JitsiMeetExternalAPI(domain, options);
+                const pip = initPictureInPicture(container);
 
                 api.addEventListener('videoConferenceLeft', () => {
+                    pip.restore(); // bring the container back to the main tab before replacing its contents
                     container.innerHTML = `
                         <div class="status-card">
                             <i class="fas fa-check-circle" style="font-size:3rem; color:#0d9488; margin-bottom:16px;"></i>
@@ -281,6 +360,8 @@
                         </div>
                     `;
                     api.dispose();
+                    const pipBtn = document.getElementById('pip-toggle-btn');
+                    if (pipBtn) pipBtn.style.display = 'none';
                 });
 
             } catch (err) {

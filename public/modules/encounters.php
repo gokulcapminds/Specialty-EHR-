@@ -61,7 +61,6 @@
                 <table id="enc-table">
                     <thead>
                         <tr>
-                            <th>Time</th>
                             <th>Patient</th>
                             <th>Encounter</th>
                             <th>Provider</th>
@@ -70,7 +69,7 @@
                         </tr>
                     </thead>
                     <tbody id="enc-list">
-                        <tr><td colspan="6" class="enc-loading"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>
+                        <tr><td colspan="5" class="enc-loading"><i class="fas fa-spinner fa-spin"></i> Loading...</td></tr>
                     </tbody>
                 </table>
             </div>

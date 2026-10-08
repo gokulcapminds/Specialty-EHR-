@@ -409,11 +409,11 @@
 .agenda-time { color: #0284c7; font-weight: 700; font-size: 1.05rem; }
 .agenda-sep { color: #64748b; }
 .agenda-patient { font-weight: 700; color: #0f172a; }
-.agenda-meta { color: #64748b; font-size: 0.9rem; }
-.agenda-status { color: #fff; font-size: 0.8rem; font-weight: 700; padding: 3px 10px; border-radius: 999px; background: #5b5bd6; }
-.agenda-status-arrived { background: #0284c7; }
-.agenda-status-completed { background: #16a34a; }
-.agenda-status-cancelled, .agenda-status-no-show { background: #dc2626; }
+.agenda-status { color: #5b5bd6; font-size: 0.85rem; font-weight: 700; padding: 0; border-radius: 0; background: transparent; }
+.agenda-status-scheduled { color: #5b5bd6; background: transparent; }
+.agenda-status-arrived { color: #0284c7; background: transparent; }
+.agenda-status-completed { color: #16a34a; background: transparent; }
+.agenda-status-cancelled, .agenda-status-no-show { color: #dc2626; background: transparent; }
 .agenda-view-btn { margin-left: auto; background: #fff; border: 1px solid #cbd5e1; border-radius: 4px; padding: 8px 20px; color: #0284c7; font-weight: 700; cursor: pointer; }
 .agenda-view-btn:hover { background: #f1f5f9; }
 .agenda-empty { padding: 28px; text-align: center; color: #94a3b8; }

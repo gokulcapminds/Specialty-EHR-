@@ -21,10 +21,11 @@
 .enc-muted { font-size: 0.8rem; color: var(--text-secondary); margin-left: 8px; }
 .enc-actions { white-space: nowrap; }
 .enc-actions .btn { margin-right: 6px; }
-.enc-pill { display: inline-block; padding: 3px 12px; border-radius: 999px; font-size: 0.78rem; font-weight: 700; background: #e2e8f0; color: #334155; }
-.enc-pill.enc-stage-checked-in { background: #dbeafe; color: #1d4ed8; }
-.enc-pill.enc-stage-in-progress { background: #fef3c7; color: #b45309; }
-.enc-pill.enc-stage-ready-to-sign { background: #ede9fe; color: #6d28d9; }
-.enc-pill.enc-stage-signed { background: #dcfce7; color: #15803d; }
-.enc-pill.enc-stage-billed { background: #ccfbf1; color: #0f766e; }
+.enc-pill { display: inline-block; padding: 0; border-radius: 0; font-size: 0.82rem; font-weight: 700; background: transparent; color: #334155; }
+.enc-pill.enc-stage-scheduled { background: transparent; color: #334155; }
+.enc-pill.enc-stage-checked-in { background: transparent; color: #1d4ed8; }
+.enc-pill.enc-stage-in-progress { background: transparent; color: #b45309; }
+.enc-pill.enc-stage-ready-to-sign { background: transparent; color: #6d28d9; }
+.enc-pill.enc-stage-signed { background: transparent; color: #15803d; }
+.enc-pill.enc-stage-billed { background: transparent; color: #0f766e; }
 @media (max-width: 760px) { .enc-walkin-grid { grid-template-columns: 1fr; } .enc-filters .form-control { min-width: 0; width: 100%; } }
